@@ -1,5 +1,6 @@
 #pragma once
 #include <gadget/native_data.hpp>
+#include <rfc/storage/native_encoded_tensor.hpp>
 #include <variant>
 
 namespace gadget {
@@ -57,6 +58,8 @@ class NativeRecord {
         const NativeRecord &producer, std::vector<RawByteSource> sources = {});
     static NativeRecord from_history(rfc::storage::NativeTemporalSeries history);
     std::optional<rfc::storage::NativeTemporalSeries> publication_history() const;
+    // Select a tensor from this publication's retained binary field storage.
+    std::optional<rfc::storage::NativeEncodedTensor> encoded_tensor(std::uint64_t key) const;
     NativeRecord derive(const NativeRecordValue &value,std::vector<RawByteSource> added_sources = {}) const;
     static NativeRecord read(const std::filesystem::path &path);
     static std::optional<NativeRecord> read_if_record(const std::filesystem::path &path);

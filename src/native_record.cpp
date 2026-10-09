@@ -701,6 +701,10 @@ NativeRecord NativeRecord::from_history(storage::NativeTemporalSeries history) {
     return {state,state->root_type,state->root};
 }
 std::optional<storage::NativeTemporalSeries> NativeRecord::publication_history() const {return state_->history;}
+std::optional<storage::NativeEncodedTensor> NativeRecord::encoded_tensor(std::uint64_t key) const {
+    if(!state_->history)return std::nullopt;
+    return storage::NativeEncodedTensor::from_series(*state_->history,key,endpoint()->sequence);
+}
 NativeRecord NativeRecord::read(const std::filesystem::path &path) {
     auto limits=native_data_limits();
     if(const auto room=runtime::detect_hardware().advisory_memory_headroom())limits.temporal.declarations.max_materialized_bytes=std::max<std::size_t>(1,*room);

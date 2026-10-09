@@ -20,6 +20,11 @@ int main(int argc,char **argv) {
         {11,true,false,numeric::Rational{0},{},core::OccurrenceKey{99}},
         {11,false,true,numeric::Rational{0},{},core::OccurrenceKey{100}}});
     storage::TemporalEndpoint endpoint(builder.freeze(),4);
+    storage::TemporalTensor field;field.key=888;field.role=storage::TemporalTensorRole::OpaqueExact;
+    field.interpretation="coefficient selection fixture";
+    field.tensor=numeric::SparseRationalTensor(numeric::IndexDomain::linear(3),
+        numeric::StructuralSupport::sparse(3,{0,2}),numeric::SparseRationalVector(3,{{2,numeric::Rational{-5,13}}}));
+    endpoint.tensors.push_back(field);
     const auto original=storage::encode_rfcx(endpoint.source).bytes;
     auto collided=endpoint;
     storage::TemporalDeclarationState retained_declarations;
@@ -69,10 +74,25 @@ int main(int argc,char **argv) {
           "record directory copied an actual native publication");
     annotated.write(directory/"annotated.bin");
     const auto annotated_restart=NativeRecord::read(directory/"annotated.bin");
+    const auto encoded=annotated_restart.encoded_tensor(888);
+    check(encoded && encoded->publication().pin()==annotated_restart.endpoint() &&
+          encoded->publication().source_namespace()==811 && encoded->encoding_sequence()==4,
+          "encoded field lost its actual publication or retained base");
+    storage::EncodedTensorReadStats read_stats;
+    const auto selected=encoded->tensor().select(std::vector<std::size_t>{0,1,2},&read_stats);
+    check(selected.state(0)==numeric::Rational{0} && !selected.state(1) &&
+          selected.state(2)==numeric::Rational{-5,13} && read_stats.decoded_coefficients==1,
+          "encoded field changed support or coefficient state");
+    rejects([&]{(void)annotated_restart.encoded_tensor(999);});
     check(annotated_restart.encode()==annotated.encode() &&
           annotated_restart.at("observation").rational()==numeric::Rational{"2/7"},
           "ordered annotation changed after restart");
     const auto annotated_derived=annotated_restart.derive(N(numeric::Rational{"3/11"}));
+    const auto historical=annotated_derived.historical_publication(annotated_restart.endpoint()->sequence);
+    const auto historical_field=historical.encoded_tensor(888);
+    check(historical_field && historical_field->publication().sequence()==historical.endpoint()->sequence &&
+          historical_field->tensor().value(2)==numeric::Rational{-5,13},
+          "historical encoded field used the later publication");
     check(annotated_derived.publication_history()->segment_count()==2 &&
           annotated_derived.parent()->at("observation").rational()==numeric::Rational{"2/7"},
           "derived record discarded ordered history or parent values");
