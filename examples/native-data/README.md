@@ -83,6 +83,20 @@ cmake --build build --target gadget_native_data_tests
 build/gadget_native_data_tests "native example"
 ```
 
+`NativeStudy::from_history(history, sources, cutoff)` selects an immutable
+publication from an admitted series. Omitting `cutoff`, or supplying the final
+sequence, reuses the actual retained tail. Earlier sequences use the SDK replay
+service. The selected endpoint survives replacement or extension of the caller's
+history. Accession indexes are prepared once when requested.
+
+`NativeStudy::read(path, sources, namespace, cutoff, limits)` decodes the complete
+archive and applies the same selection rules. RFCXS retains its declared
+namespace; a supplied namespace must match. RFCX requires an explicit namespace.
+The caller's byte and codec resource limits are enforced before admission.
+
+The [native load profiler](../../tools/native-load/README.md) separates decoding
+and accession costs and reports retained component capacity.
+
 `NativeRecord` compiles application values into canonical composite declarations
 on an actual endpoint. Objects use Products, alternatives retain their chosen
 constructor, arrays declare their admitted cardinality, and exact numbers use
