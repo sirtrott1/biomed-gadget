@@ -72,6 +72,38 @@ struct ScientificStudy::State {
     std::map<std::string, std::vector<std::string>> catalog_keys;
     std::vector<rfc::storage::StableCellKey> cell_keys;
     std::vector<rfc::storage::StableOccurrenceKey> occurrence_keys;
+    bool compact{};
+    std::vector<NativeRecord> cell_bindings;
+    void admit_compact(NativeRecord publication);
+    void admit_scoped_actions(const Json &operators,const Json &sets);
+    Json cell_record(rfc::storage::StableCellKey cell) const;
+    Json occurrence_record(rfc::storage::StableOccurrenceKey occurrence) const;
+    rfc::storage::StableCellKey resolve_cell(const std::string &id) const;
+    bool has_cell(const std::string &id) const;
+    rfc::storage::StableCellKey coordinate(std::size_t grade, std::size_t index) const;
+    std::size_t grade_count() const;
+    std::size_t cell_count() const;
+    std::size_t occurrence_count() const;
+    rfc::storage::StableCellKey cell_key_at(std::size_t index) const;
+    rfc::storage::StableOccurrenceKey occurrence_key_at(std::size_t index) const;
+    struct CoordinateRange {
+        const State *owner;
+        std::size_t grade;
+        struct Iterator {
+            const State *owner;
+            std::size_t grade,index;
+            auto operator*() const {return owner->coordinate(grade,index);}
+            Iterator &operator++(){++index;return *this;}
+            bool operator!=(const Iterator &other) const {return index!=other.index;}
+        };
+        std::size_t size() const;
+        Iterator begin() const {return {owner,grade,0};}
+        Iterator end() const {return {owner,grade,size()};}
+    };
+    CoordinateRange coordinate_keys(std::size_t grade) const;
+    std::vector<CoordinateRange> coordinate_grades() const;
+    Json compact_evidence(std::size_t grade, std::size_t coordinate) const;
+    rfc::numeric::Rational metric_value(const RetainedRecord &metric, std::size_t coordinate) const;
     mutable std::mutex evidence_reference_mutex;
     mutable std::map<std::tuple<std::string, std::size_t, std::size_t>, std::string>
         evidence_reference_hashes;

@@ -31,6 +31,10 @@ Axis read_axis(const std::string &bytes);
 Matrix read_matrix(const fs::path &root, const Json &spec);
 Matrix read_h5ad(const fs::path &root, const Json &spec);
 std::vector<Interval> read_intervals(const std::string &bytes, const Json &resource);
+struct SequenceSpan {
+    std::size_t start{}, end{}, id_start{}, id_length{}, length{};
+};
+std::vector<SequenceSpan> read_sequence_spans(std::string_view bytes, const std::string &format);
 Json inspect_resource(const std::string &bytes, const Json &resource,
                       const std::string &reference_bytes = {});
 Json interval_analysis(const std::string &bytes, const Json &resource, const Json &request);

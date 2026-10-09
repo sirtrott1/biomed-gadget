@@ -852,7 +852,7 @@ struct AssayWorkspace::State {
                 "workspace manifest must be regular");
         root = fs::canonical(path).parent_path();
         this->manifest = read_record(path);
-        if(this->manifest.has("schema") && this->manifest.at("schema").text()=="gadget.assay.workspace.native.v1") {
+        if(this->manifest.has("schema") && (this->manifest.at("schema").text()=="gadget.assay.workspace.native.v1" || this->manifest.at("schema").text()=="gadget.assay.workspace.native.v2")) {
             publication=this->manifest.native();this->manifest=publication->at("manifest");
             const auto originals=publication->at("originals");
             for(std::size_t i=0;i<originals.size();++i)require(raw_artifacts.emplace(originals.at(i).at("path").text(),originals.at(i).at("bytes").byte_source()).second,"duplicate native input artifact");
@@ -868,6 +868,12 @@ struct AssayWorkspace::State {
             }
         }
         const auto manifest = this->manifest;
+        const bool compact=manifest.at("schema").text()=="gadget.assays.workspace.v2";
+        if(compact) {
+            native_members(manifest.native(),{"schema","id","design","assays","resources","links","gadget_sha256","rexgraph_sha256"});
+            require(publication && publication->at("schema").text()=="gadget.assay.workspace.native.v2","native collection publication required");
+            require(manifest.at("resources").size()==0 && manifest.at("links").size()==0,"native study collection requires separately admitted resource/link bindings");
+        } else {
         native_members(manifest.native(),
                 {"schema", "id", "design", "import_spec", "reimport", "assays", "resources",
                  "links", "gadget_sha256", "rexgraph_sha256", "manifest_sha256"},
@@ -886,12 +892,17 @@ struct AssayWorkspace::State {
         verify_artifact(manifest.at("reimport").native());
         if (manifest.has("bindings"))
             verify_artifact(manifest.at("bindings").native());
+        }
         for (std::size_t i = 0; i < manifest.at("assays").size(); ++i) {
             const auto item = manifest.at("assays").at(i);
-            native_members(item.native(), {"declaration", "originals", "features", "observations", "partitions"});
+            native_members(item.native(), compact?std::set<std::string>{"declaration", "originals", "partitions"}:std::set<std::string>{"declaration", "originals", "features", "observations", "partitions"});
             const auto declaration = static_cast<Json>(item.at("declaration"));
             const auto id = text(declaration.at("id"), source_byte_limit());
-            admit_matrix_spec(declaration);
+            if(declaration.has("schema") && declaration.at("schema").text()=="gadget.assay.native.v1") {
+                members(declaration,{"schema","id","kind","source_namespace","carrier"});
+                require(declaration.at("carrier").text()=="source_grades","native assay requires its complete source grades");
+                (void)key(declaration.at("source_namespace"));
+            } else admit_matrix_spec(declaration);
             require(assays.emplace(id, this->manifest.member("assays").element(i)).second, "duplicate workspace assay");
             const auto originals = item.at("originals");
             for (const auto &name : originals.native().names())
@@ -1014,10 +1025,11 @@ void AssayWorkspace::clear_native_novelty_preparations() {
     state_->novelty_sessions.clear();
     state_->novelty_default_cpu.reset();
 }
-std::string AssayWorkspace::digest() const { return state_->manifest.at("manifest_sha256").text(); }
+std::string AssayWorkspace::digest() const { return state_->manifest.has("manifest_sha256")?state_->manifest.at("manifest_sha256").text():native_declaration_digest(state_->manifest.native()); }
 Json AssayWorkspace::catalog() const {
     auto result = Json::parse(state_->manifest.dump());
     result.set("capabilities", bioinformatics_capabilities());
+    if(!result.has("manifest_sha256"))result.set("manifest_sha256",Json::string(digest()));
     return result;
 }
 Json AssayWorkspace::source_context(const Json &input) const {
@@ -1218,6 +1230,32 @@ Json AssayWorkspace::bind_inputs(
         }
         return source;
     };
+    bool native_selection=false;
+    for(std::size_t a=0;a<request.at("assays").size();++a) {
+        const auto selection=request.at("assays").at(a);
+        members(selection,{"input","assay","id"});
+        const auto source=source_for(selection);
+        require(source->state_->assays.contains(selection.at("assay").text()),"unknown bound assay");
+        const auto declaration=source->state_->assays.at(selection.at("assay").text()).at("declaration");
+        native_selection=native_selection || declaration.has("schema");
+    }
+    if(native_selection) {
+        require(request.at("resources").size()==0 && request.at("links").size()==0,"native study bindings require separately admitted resource and link declarations");
+        std::map<std::string,std::shared_ptr<const ScientificStudy>> selected;
+        for(std::size_t a=0;a<request.at("assays").size();++a) {
+            const auto selector=request.at("assays").at(a);const auto source=source_for(selector);
+            require(source->state_->sources.at(selector.at("assay").text()).size()==1,"native collection binding requires an indivisible admitted study");
+            require(selected.emplace(text(selector.at("id")),source->study(selector.at("assay").text())).second,"duplicate native assay alias");
+        }
+        const auto publication=publish_studies(admit_record_view(request),request.at("id").text(),selected);
+        fs::create_directories(fs::absolute(destination).parent_path());
+        const auto stage=private_directory(fs::absolute(destination).parent_path(),".gadget-native-bind-");
+        struct Cleanup {fs::path path;~Cleanup(){std::error_code ec;fs::remove_all(path,ec);}} cleanup{stage};
+        publication.write(stage/"workspace.rfcxs");
+        auto result=render_record_view(publication.at("manifest"));
+        result.set("manifest_sha256",Json::string(native_declaration_digest(publication.at("manifest"))));
+        result.set("capabilities",bioinformatics_capabilities());fs::rename(stage,destination);return result;
+    }
     // Admit all selectors before copying anything. Collection aliases are
     // request routing names; native primary identities and namespaces remain.
     std::set<std::string> assay_ids, resource_ids;
@@ -1566,7 +1604,8 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
         for (auto p : selected) {
             auto answer = Json::object();
             answer.set("partition", cardinality(p));
-            answer.set("carrier_ids", packets.at(p).at("carrier_ids"));
+            if(packets.at(p).has("carrier_ids"))answer.set("carrier_ids",packets.at(p).at("carrier_ids"));
+            else answer.set("source_index",study(id,p)->source_index());
             answer.set("certificate", session_for(p)->execute(request.at("query")));
             answers.push(answer);
         }
@@ -1842,6 +1881,7 @@ Json AssayWorkspace::materialize(const Json &request, const fs::path &destinatio
             "assay sections publication requires a view and component");
     if (!resources)
         resources = CpuResources::local();
+    if(op=="controlled_coverage")return materialize_coverage(admit_record_view(request),destination,std::move(resources));
     const auto certificate = execute(recipe, resources), result = certificate.at("result");
     fs::create_directories(fs::absolute(destination).parent_path());
     const auto stage =
@@ -2240,6 +2280,7 @@ Json AssayWorkspace::replay_derivation(const std::string &assay_id, const fs::pa
     require(!fs::exists(destination), "derivation replay destination exists");
     require(state_->assays.contains(assay_id), "unknown derived assay");
     const auto item = state_->assays.at(assay_id);
+    if(item.at("declaration").has("schema") && item.at("declaration").at("schema").text()=="gadget.assay.native.v1")return replay_native_derivation(assay_id,destination,std::move(resources));
     require(item.at("declaration").has("provenance"), "assay has no retained generating lineage");
     std::map<std::string, Json> artifacts;
     Json request, expected, lineage;
@@ -2395,10 +2436,9 @@ Json AssayWorkspace::replay_derivation(const std::string &assay_id, const fs::pa
         throw;
     }
 }
-NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
-    std::shared_ptr<CpuResources> resources) const {
-    const auto query = render_record_view(request);
-    if (query.has("operation") && query.at("operation").text() == "controlled_coverage") {
+NativeRecord AssayWorkspace::execute_coverage(const NativeRecord &request,
+    std::shared_ptr<CpuResources> resources,std::optional<std::uint64_t> source_namespace) const {
+    const auto query=render_record_view(request);
         using N=NativeRecordValue;
         require(query.at("schema").text()=="gadget.assays.query.v1","assay query schema");
         if(!resources)resources=CpuResources::local();
@@ -2430,8 +2470,13 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
             {"rexgraph_sha256",N(std::string(GADGET_REXGRAPH_SHA256))}
         }});
         fields.sources.push_back(std::move(owner));
-        return retain_operation(std::move(fields.endpoint),new_native_record_namespace(),std::move(fields.sources),request,std::move(certificate));
-    }
+        return retain_operation(std::move(fields.endpoint),source_namespace.value_or(new_native_record_namespace()),std::move(fields.sources),request,std::move(certificate));
+}
+NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
+    std::shared_ptr<CpuResources> resources) const {
+    const auto query = render_record_view(request);
+    if (query.has("operation") && query.at("operation").text() == "controlled_coverage")
+        return execute_coverage(request,std::move(resources));
     if (query.has("operation") && query.at("operation").text() == "read_quality") {
         using N = NativeRecordValue;
         require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
@@ -2586,7 +2631,10 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
                 item.set("workers", cardinality(receipt.demand.workers));
                 item.set("execution_ns", Json::string(std::to_string(receipt.execution_ns)));
                 item.set("queue_ns", Json::string(std::to_string(receipt.queue_ns)));
-                item.set("carrier_ids", packets.at(p).at("carrier_ids"));
+                if (packets.at(p).has("carrier_ids"))
+                    item.set("carrier_ids", packets.at(p).at("carrier_ids"));
+                else
+                    item.set("source_index", study(id, p)->source_index());
                 entries.push(item);
             }
             begin = end;

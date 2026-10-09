@@ -188,10 +188,10 @@ dependency fingerprint remains checked.
 ```sh
 gadget derive-assays --workspace source/workspace.json \
   --request derivation.json --out derived
-gadget assay-query --workspace derived/workspace.json --request native-query.json
-gadget replay-derivation --workspace derived/workspace.json --assay experiment \
+gadget assay-query --workspace derived/workspace.rfcxs --request native-query.json
+gadget replay-derivation --workspace derived/workspace.rfcxs --assay experiment \
   --out regenerated
-gadget workflow --workspace derived/workspace.json --assay experiment \
+gadget workflow --workspace derived/workspace.rfcxs --assay experiment \
   --request workflow.json --models roles.json
 ```
 

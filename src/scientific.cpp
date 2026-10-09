@@ -175,7 +175,7 @@ Json scientific_detail::source_evidence(const Json &value,
 }
 Json ScientificStudy::State::evidence(const Json &value) const {
     return scientific_detail::source_evidence(
-        value, documents, false, declaration.at("schema").text() == "gadget.scientific.study.v2");
+        value, documents, false, declaration.at("schema").text() != "gadget.scientific.study.v1");
 }
 ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> publication,
                              std::optional<NativeTemporalSeries> producer) {
@@ -220,6 +220,9 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
                 }
             }
         }
+    }
+    if(publication && publication->at("schema").text()=="gadget.biomedical.native.v3") {
+        root=fs::absolute(path).parent_path();admit_compact(std::move(*publication));return;
     }
     if(publication)require(publication->at("schema").text()=="gadget.biomedical.native.v1" ||
         publication->at("schema").text()=="gadget.biomedical.native.v2","unsupported native biomedical declaration");
@@ -587,80 +590,14 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
         require(fields.emplace(text(item.at("id")), Field{this->declaration.member("fields").element(i), tensor}).second,
                 "duplicate field identity");
     }
-    if (declaration.has("operators")) {
-        source_array(declaration.at("operators"), "operators");
-        for (std::size_t i = 0; i < declaration.at("operators").size(); ++i) {
-            const auto item = declaration.at("operators").at(i);
-            members(item, {"id", "key", "quantity", "units", "method", "evidence"});
-            const auto id = text(item.at("id"));
-            for (const auto *name : {"quantity", "units", "method"})
-                (void)text(item.at(name));
-            (void)evidence(item.at("evidence"));
-            NativeAccessionRequest request;
-            request.subject = key(item.at("key"));
-            require(tensors.contains(request.subject), "operator tensor key unknown");
-            const auto role = tensors.at(request.subject)->role;
-            // A stored metric is a bilinear form. Its tensor accession does
-            // not implicitly turn it into an endomorphism.
-            request.kind =
-                role == TemporalTensorRole::Metric || role == TemporalTensorRole::CrossForm
-                    ? NativeAccessionKind::Tensor
-                    : NativeAccessionKind::Operator;
-            const auto pin = directory->pin(request);
-            const auto tensor = pin.tensor_declaration();
-            require(tensor->input && tensor->output && tensor->tensor.domain().rank() == 2,
-                    "operator declaration requires an actual map with both carrier bindings");
-            require(operators.emplace(id, this->declaration.member("operators").element(i)).second, "duplicate operator identity");
-            operator_pins.emplace(id, pin);
-        }
-    }
+    const auto sets=declaration.at("field_sets");
+    admit_scoped_actions(declaration.has("operators")?declaration.at("operators"):Json{},sets);
     for (std::size_t i = 0; i < design.at("covariates").size(); ++i) {
         auto field = design.at("covariates").at(i).at("field");
         if (!json_object_is_type(field.raw(), json_type_null))
             require(fields.contains(field.text()) &&
                         fields.at(field.text()).declaration.at("channel").text() == "covariate",
                     "covariate must name a declared covariate field");
-    }
-    const auto sets = declaration.at("field_sets");
-    source_array(sets, "field sets");
-    for (std::size_t i = 0; i < sets.size(); ++i) {
-        auto item = sets.at(i);
-        members(item, {"id", "grade", "fields", "carriers", "maps"}, {"coordinate_system"});
-        NativeFieldRequest request;
-        request.upper_grade = rfc::core::Grade{static_cast<std::uint16_t>(
-            count(item.at("grade"), endpoint->source.grade_count() - 1, "field set grade"))};
-        source_array(item.at("fields"), "field set fields");
-        for (std::size_t j = 0; j < item.at("fields").size(); ++j) {
-            const auto name = item.at("fields").at(j).text();
-            require(fields.contains(name), "unknown field set member");
-            require(fields.at(name).declaration.at("value_type").text() != "categorical",
-                    "categorical fields cannot be linear native amplitudes");
-            require(!contexts.at(fields.at(name).declaration.at("context").text()).block,
-                    "native field action requires the whole declared source context");
-            NativeAccessionRequest accession;
-            accession.kind = NativeAccessionKind::Field;
-            accession.subject = fields.at(name).tensor;
-            request.fields.push_back(directory->pin(accession));
-        }
-        source_array(item.at("carriers"), "field set carriers");
-        for (std::size_t j = 0; j < item.at("carriers").size(); ++j)
-            request.stalk_carriers.push_back(key(item.at("carriers").at(j)));
-        NativeFieldRealization realization;
-        const auto maps = item.at("maps").text();
-        if (maps == "constant") {
-            require(item.has("coordinate_system"),
-                    "constant fiber requires a declared coordinate system");
-            realization = NativeFieldRealization::constant_fiber(key(item.at("coordinate_system")));
-        } else
-            require(maps == "explicit" && !item.has("coordinate_system"),
-                    "explicit maps cannot declare implicit identity transport");
-        // Canonical admission owns all map roles, complete coordinates, support,
-        // repeated/inactive occurrences, matching fibers and source identities.
-        (void)NativeFieldPlan::inspect(
-            directory->pin(NativeAccessionRequest::sparse_chain(request.upper_grade, {}, {})),
-            request, realization);
-        require(field_sets.emplace(text(item.at("id")), FieldSet{this->declaration.member("field_sets").element(i), realization}).second,
-                "duplicate field set");
     }
     digest = "sha256:" + sha256(schema + "\n" + bytes + "\n" + native_digest);
     if (declaration.has("publications")) {
@@ -688,8 +625,7 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
                     if(native_loaded.contains(owner_key)) {owner=native_loaded.at(owner_key);break;}
                     const auto b=entries.at(e).at("bytes").bytes();
                     const auto series=decode_native_series(b,native_data_limits());
-                    const auto tail=series.tail();
-                    selected=NativeRecord::from_endpoint(tail.endpoint(),series.source_namespace());
+                    selected=NativeRecord::from_history(series);
                     break;
                 }
                 require(owner || selected.has_value(),"referenced native publication bytes are missing");
@@ -750,6 +686,83 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
         }
         for(std::size_t i=0;i<declaration.at("publications").size();++i)
             publication_declarations.at(declaration.at("publications").at(i).at("id").text())=this->declaration.member("publications").element(i);
+    }
+}
+void ScientificStudy::State::admit_scoped_actions(const Json &declared_operators,
+                                                  const Json &sets) {
+    const auto endpoint = directory->pin_snapshot();
+    const auto tensors = temporal_endpoint_detail::tensors(*endpoint);
+    if (declared_operators.raw()) {
+        source_array(declared_operators, "operators");
+        for (std::size_t i = 0; i < declared_operators.size(); ++i) {
+            const auto item = declared_operators.at(i);
+            members(item, {"id", "key", "quantity", "units", "method", "evidence"});
+            const auto id = text(item.at("id"));
+            for (const auto *name : {"quantity", "units", "method"})
+                (void)text(item.at(name));
+            (void)evidence(item.at("evidence"));
+            NativeAccessionRequest request;
+            request.subject = key(item.at("key"));
+            require(tensors.contains(request.subject), "operator tensor key unknown");
+            const auto role = tensors.at(request.subject)->role;
+            // A stored metric is a bilinear form. Its tensor accession does
+            // not implicitly turn it into an endomorphism.
+            request.kind =
+                role == TemporalTensorRole::Metric || role == TemporalTensorRole::CrossForm
+                    ? NativeAccessionKind::Tensor
+                    : NativeAccessionKind::Operator;
+            const auto pin = directory->pin(request);
+            const auto tensor = pin.tensor_declaration();
+            require(tensor->input && tensor->output && tensor->tensor.domain().rank() == 2,
+                    "operator declaration requires an actual map with both carrier bindings");
+            require(operators.emplace(id, this->declaration.member("operators").element(i)).second,
+                    "duplicate operator identity");
+            operator_pins.emplace(id, pin);
+        }
+    }
+    source_array(sets, "field sets");
+    for (std::size_t i = 0; i < sets.size(); ++i) {
+        auto item = sets.at(i);
+        members(item, {"id", "grade", "fields", "carriers", "maps"}, {"coordinate_system"});
+        NativeFieldRequest request;
+        request.upper_grade = rfc::core::Grade{static_cast<std::uint16_t>(
+            count(item.at("grade"), endpoint->source.grade_count() - 1, "field set grade"))};
+        source_array(item.at("fields"), "field set fields");
+        for (std::size_t j = 0; j < item.at("fields").size(); ++j) {
+            const auto name = item.at("fields").at(j).text();
+            require(fields.contains(name), "unknown field set member");
+            require(fields.at(name).declaration.at("value_type").text() != "categorical",
+                    "categorical fields cannot be linear native amplitudes");
+            require(!contexts.at(fields.at(name).declaration.at("context").text()).block,
+                    "native field action requires the whole declared source context");
+            NativeAccessionRequest accession;
+            accession.kind = NativeAccessionKind::Field;
+            accession.subject = fields.at(name).tensor;
+            request.fields.push_back(directory->pin(accession));
+        }
+        source_array(item.at("carriers"), "field set carriers");
+        for (std::size_t j = 0; j < item.at("carriers").size(); ++j)
+            request.stalk_carriers.push_back(key(item.at("carriers").at(j)));
+        NativeFieldRealization realization;
+        const auto maps = item.at("maps").text();
+        if (maps == "constant") {
+            require(item.has("coordinate_system"),
+                    "constant fiber requires a declared coordinate system");
+            realization = NativeFieldRealization::constant_fiber(key(item.at("coordinate_system")));
+        } else
+            require(maps == "explicit" && !item.has("coordinate_system"),
+                    "explicit maps cannot declare implicit identity transport");
+        // Canonical admission owns all map roles, complete coordinates, support,
+        // repeated/inactive occurrences, matching fibers and source identities.
+        (void)NativeFieldPlan::inspect(
+            directory->pin(NativeAccessionRequest::sparse_chain(request.upper_grade, {}, {})),
+            request, realization);
+        require(
+            field_sets
+                .emplace(text(item.at("id")),
+                         FieldSet{this->declaration.member("field_sets").element(i), realization})
+                .second,
+            "duplicate field set");
     }
 }
 Json ScientificStudy::State::carrier_metadata(const TemporalCarrier &carrier) const {
@@ -887,7 +900,7 @@ Json ScientificStudy::State::catalog() const {
         identities.push(identity);
     }
     result.set("identities", identities);
-    result.set("identity_catalog_complete", Json::boolean(true));
+    result.set("identity_catalog_complete", Json::boolean(!compact));
     return result;
 }
 ScientificStudy::ScientificStudy(const fs::path &path) : ScientificStudy(std::make_unique<State>(path)) {}
@@ -933,10 +946,9 @@ Json ScientificStudy::catalog() const { return Json::parse(state_->catalog().dum
 Json ScientificStudy::declaration() const { return Json::parse(state_->declaration.dump()); }
 rfc::storage::StableCellKey ScientificStudy::cell_identity(rfc::core::Grade grade,
                                                          const std::string &id) const {
-    const auto found = state_->cell_ids.find(id);
-    require(found != state_->cell_ids.end() && found->second.grade == grade,
-            "source cell identity is absent or has a different grade");
-    return found->second;
+    const auto cell=state_->resolve_cell(id);
+    require(cell.grade==grade,"source cell identity has a different grade");
+    return cell;
 }
 Json ScientificStudy::field_declaration(const std::string &id) const {
     require(state_->fields.contains(id), "source field identity is absent");

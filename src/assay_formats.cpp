@@ -18,6 +18,7 @@ class MatrixRecords {
     bool next(std::string_view &record) {
         if (position_ == bytes_.size())
             return false;
+        last_start_=position_;
         auto end = bytes_.find('\n', position_);
         if (end == std::string_view::npos)
             end = bytes_.size();
@@ -25,12 +26,16 @@ class MatrixRecords {
         if (stop > position_ && bytes_[stop - 1] == '\r')
             --stop;
         require(stop > position_, "empty text record");
+        last_end_=stop;
         record = bytes_.substr(position_, stop - position_);
         position_ = end == bytes_.size() ? end : end + 1;
         return true;
     }
 
+    std::size_t start() const{return last_start_;}
+    std::size_t end() const{return last_end_;}
   private:
+    std::size_t last_start_{},last_end_{};
     std::string_view bytes_;
     std::size_t position_{};
 };
@@ -398,6 +403,38 @@ std::vector<Interval> read_intervals(const std::string &bytes, const Json &resou
     require(!out.empty(), "interval resource contains no observations");
     return out;
 }
+std::vector<SequenceSpan> read_sequence_spans(std::string_view bytes,const std::string &format) {
+    require(format=="fasta" || format=="fastq","sequence resource requires FASTA or FASTQ");
+    MatrixRecords reader(bytes);std::string_view line;bool available=reader.next(line);
+    std::set<std::string_view> ids;std::vector<SequenceSpan> result;
+    const auto sequence=[](std::string_view bases) {
+        require(!bases.empty(),"empty sequence");
+        for(auto c:bases)require(std::string_view("ACGTURYSWKMBDHVNacgturyswkmbdhvn").find(c)!=std::string_view::npos,"invalid IUPAC base");
+    };
+    while(available) {
+        const auto header=line;SequenceSpan record;record.start=reader.start();record.id_start=record.start+1;
+        require(header.size()>1 && header.front()==(format=="fasta"?'>':'@'),"sequence header");
+        const auto stop=header.find_first_of(" \t",1);record.id_length=(stop==std::string_view::npos?header.size():stop)-1;
+        const auto id=bytes.substr(record.id_start,record.id_length);
+        require(!id.empty() && ids.insert(id).second,"sequence identities must be nonempty and unique");
+        if(format=="fasta") {
+            available=reader.next(line);
+            while(available && line.front()!='>') {
+                sequence(line);record.length=rfc::machine::checked_size_add(record.length,line.size());record.end=reader.end();available=reader.next(line);
+            }
+            require(record.length>0,"FASTA record has no sequence");
+        } else {
+            require(reader.next(line),"truncated four-line FASTQ record");sequence(line);record.length=line.size();
+            require(reader.next(line),"truncated four-line FASTQ record");
+            require(line.starts_with("+") && (line=="+" || line.substr(1)==header.substr(1)),"FASTQ repeated header differs");
+            require(reader.next(line),"truncated four-line FASTQ record");require(line.size()==record.length,"FASTQ quality/sequence length");
+            for(auto c:line)require(c>=33 && c<=126,"FASTQ quality encoding requires printable Phred+33 tokens");
+            record.end=reader.end();available=reader.next(line);
+        }
+        result.push_back(record);
+    }
+    return result;
+}
 Json inspect_resource(const std::string &bytes, const Json &resource,
                       const std::string &reference_bytes) {
     auto out = Json::object();
@@ -437,54 +474,10 @@ Json inspect_resource(const std::string &bytes, const Json &resource,
         out.set("records", records);
         out.set("record_count", cardinality(intervals.size()));
     } else if (format == "fasta" || format == "fastq") {
-        const auto ls = lines(bytes);
-        auto records = Json::array();
-        std::set<std::string> ids;
-        const auto line = [&](std::size_t i) {
-            return bytes.substr(ls.at(i).first, ls.at(i).second - ls.at(i).first);
-        };
-        const auto sequence = [&](const std::string &s) {
-            require(!s.empty(), "empty sequence");
-            for (auto c : s)
-                require(std::string("ACGTURYSWKMBDHVNacgturyswkmbdhvn").find(c) !=
-                            std::string::npos,
-                        "invalid IUPAC base");
-        };
-        for (std::size_t i = 0; i < ls.size();) {
-            const auto start = i;
-            const auto header = line(i++);
-            require(header.size() > 1 && header[0] == (format == "fasta" ? '>' : '@'),
-                    "sequence header");
-            const auto id = header.substr(1, header.find_first_of(" \t", 1) - 1);
-            require(!id.empty() && ids.insert(id).second,
-                    "sequence identities must be nonempty and unique");
-            std::string bases;
-            if (format == "fasta") {
-                while (i < ls.size() && line(i)[0] != '>') {
-                    const auto s = line(i++);
-                    sequence(s);
-                    bases += s;
-                }
-                require(!bases.empty(), "FASTA record has no sequence");
-            } else {
-                require(i + 2 < ls.size(), "truncated four-line FASTQ record");
-                bases = line(i++);
-                sequence(bases);
-                const auto plus = line(i++), qualities = line(i++);
-                require(plus.starts_with("+"), "FASTQ separator");
-                require(plus == "+" || plus.substr(1) == header.substr(1),
-                        "FASTQ repeated header differs");
-                require(qualities.size() == bases.size(), "FASTQ quality/sequence length");
-                for (auto c : qualities)
-                    require(c >= 33 && c <= 126,
-                            "FASTQ quality encoding requires printable Phred+33 tokens");
-            }
-            auto record = Json::object();
-            record.set("id", Json::string(id));
-            record.set("length", cardinality(bases.size()));
-            record.set("source_start", cardinality(ls[start].first));
-            record.set("source_end", cardinality(ls[i - 1].second));
-            records.push(record);
+        const auto spans=read_sequence_spans(bytes,format);auto records=Json::array();
+        for(const auto &span:spans) {
+            auto record=Json::object();record.set("id",Json::string(bytes.substr(span.id_start,span.id_length)));
+            record.set("length",cardinality(span.length));record.set("source_start",cardinality(span.start));record.set("source_end",cardinality(span.end));records.push(record);
         }
         out.set("records", records);
         out.set("record_count", cardinality(records.size()));

@@ -2,6 +2,7 @@
 #include <rfc/core/builder.hpp>
 #include <rfc/storage/file_io.hpp>
 #include <rfc/storage/mapped_file.hpp>
+#include <rfc/storage/native_series_prefix.hpp>
 #include <rfc/runtime/hardware_inventory.hpp>
 #include <sys/random.h>
 #include <cerrno>
@@ -18,36 +19,70 @@ constexpr std::uint64_t format_namespace = 0x4741444745540201ULL;
 constexpr std::uint64_t header_key = 0x4741444745540201ULL;
 constexpr std::uint64_t root_key = header_key + 1, labels_key = header_key + 2,
                         sources_key = header_key + 3;
-constexpr ID integer_type{format_namespace,1,1}, boolean_type{format_namespace,2,1},
-    rational_type{format_namespace,3,1}, null_type{format_namespace,4,1},
-    text_type{format_namespace,5,1}, source_type{format_namespace,6,1},
-    sources_type{format_namespace,7,1}, label_type{format_namespace,8,1},
-    labels_type{format_namespace,9,1}, header_type{format_namespace,10,1},
-    decimal_type{format_namespace,11,1},exact_number_type{format_namespace,12,1},bytes_type{format_namespace,13,1},owned_reference_type{format_namespace,14,1};
+constexpr ID integer_type{format_namespace, 1, 1}, boolean_type{format_namespace, 2, 1},
+    rational_type{format_namespace, 3, 1}, null_type{format_namespace, 4, 1},
+    text_type{format_namespace, 5, 1}, source_type{format_namespace, 6, 1},
+    sources_type{format_namespace, 7, 1}, label_type{format_namespace, 8, 1},
+    labels_type{format_namespace, 9, 1}, header_type{format_namespace, 10, 1},
+    decimal_type{format_namespace, 11, 1}, exact_number_type{format_namespace, 12, 1},
+    bytes_type{format_namespace, 13, 1}, owned_reference_type{format_namespace, 14, 1},
+    historical_source_type{format_namespace, 15, 1}, source_payload_type{format_namespace, 16, 1},
+    referenced_source_type{format_namespace, 17, 1},
+    referenced_sources_type{format_namespace, 18, 1};
 constexpr auto addressable = std::numeric_limits<std::size_t>::max();
-void require(bool ok, const char *message) { if (!ok) throw std::invalid_argument(message); }
+void require(bool ok, const char *message) {
+    if (!ok)
+        throw std::invalid_argument(message);
+}
 V number(std::uint64_t n) { return V::integer(numeric::Integer(std::to_string(n))); }
 std::uint64_t unsigned_value(const V &value) {
     const auto &n = std::get<numeric::Integer>(value.data);
-    require(n >= 0 && n <= numeric::Integer(std::to_string(std::numeric_limits<std::uint64_t>::max())),
+    require(n >= 0 &&
+                n <= numeric::Integer(std::to_string(std::numeric_limits<std::uint64_t>::max())),
             "native record integer is outside its declared host identity domain");
     return std::stoull(n.get_str());
 }
 const auto &parts(const V &v) { return std::get<V::Product>(v.data).elements; }
-std::vector<D> definitions() {
-    return {D::integer(integer_type),D::boolean(boolean_type),D::rational(rational_type),
-        D::product(null_type,{}),
-        D::product(text_type,{{1,integer_type,{}},{2,integer_type,{}},{3,integer_type,{}}}),
-        D::product(source_type,{{1,integer_type,{}},{2,integer_type,{}},{3,integer_type,{}}}),
-        D::repeated(sources_type,source_type,0,addressable),
-        D::product(label_type,{{1,integer_type,{}},{2,text_type,{}}}),
-        D::repeated(labels_type,label_type,0,addressable),
-        D::product(header_type,{{1,integer_type,{}},{2,integer_type,{}},{3,integer_type,{}},
-                              {4,integer_type,{}},{5,integer_type,{}},{6,integer_type,{}},{7,integer_type,{}}}),
-        D::product(decimal_type,{{1,rational_type,{}},{2,text_type,{}}}),
-        D::product(exact_number_type,{{1,rational_type,{}},{2,boolean_type,{}}}),
-        D::product(bytes_type,{{1,integer_type,{}},{2,integer_type,{}},{3,integer_type,{}}}),
-        D::product(owned_reference_type,{{1,integer_type,{}},{2,integer_type,{}},{3,integer_type,{}},{4,integer_type,{}}})};
+std::vector<D> definitions(bool historical_sources = true) {
+    std::vector<D> out{
+        D::integer(integer_type),
+        D::boolean(boolean_type),
+        D::rational(rational_type),
+        D::product(null_type, {}),
+        D::product(text_type,
+                   {{1, integer_type, {}}, {2, integer_type, {}}, {3, integer_type, {}}}),
+        D::product(source_type,
+                   {{1, integer_type, {}}, {2, integer_type, {}}, {3, integer_type, {}}}),
+        D::repeated(sources_type, source_type, 0, addressable),
+        D::product(label_type, {{1, integer_type, {}}, {2, text_type, {}}}),
+        D::repeated(labels_type, label_type, 0, addressable),
+        D::product(header_type, {{1, integer_type, {}},
+                                 {2, integer_type, {}},
+                                 {3, integer_type, {}},
+                                 {4, integer_type, {}},
+                                 {5, integer_type, {}},
+                                 {6, integer_type, {}},
+                                 {7, integer_type, {}}}),
+        D::product(decimal_type, {{1, rational_type, {}}, {2, text_type, {}}}),
+        D::product(exact_number_type, {{1, rational_type, {}}, {2, boolean_type, {}}}),
+        D::product(bytes_type,
+                   {{1, integer_type, {}}, {2, integer_type, {}}, {3, integer_type, {}}}),
+        D::product(owned_reference_type, {{1, integer_type, {}},
+                                          {2, integer_type, {}},
+                                          {3, integer_type, {}},
+                                          {4, integer_type, {}}})};
+    if (historical_sources) {
+        out.push_back(
+            D::product(historical_source_type,
+                       {{1, integer_type, {}}, {2, integer_type, {}}, {3, integer_type, {}}}));
+        out.push_back(D::alternative(source_payload_type,
+                                     {{1, integer_type, {}}, {2, historical_source_type, {}}}));
+        out.push_back(D::product(
+            referenced_source_type,
+            {{1, integer_type, {}}, {2, integer_type, {}}, {3, source_payload_type, {}}}));
+        out.push_back(D::repeated(referenced_sources_type, referenced_source_type, 0, addressable));
+    }
+    return out;
 }
 struct Compiler {
     std::uint64_t ns, next{1}, pool;
@@ -164,18 +199,95 @@ struct NativeRecord::State {
     std::map<std::string,std::uint64_t> names;
     ID root_type;
     const V *root{};
-    std::uint64_t ns, root_value_key{}, parent_value_key{};
-    std::map<std::uint64_t,const storage::TemporalDeclaredValue *> values;
-    std::map<const V *,const storage::TemporalDeclaredValue *> owners;
-    State(const storage::TemporalEndpoint &endpoint,std::uint64_t source_namespace,
-          std::vector<RawByteSource> compiled_sources={})
-        :State(NativeStudy(endpoint,source_namespace),source_namespace,std::move(compiled_sources)) {}
+    std::uint64_t ns, version{}, root_value_key{}, parent_value_key{};
+    struct SourceOrigin {
+        std::uint64_t sequence, key;
+        auto operator<=>(const SourceOrigin &) const = default;
+    };
+    struct SourcePayload {
+        const numeric::Integer *integer;
+        SourceOrigin origin;
+        std::size_t length;
+    };
+    mutable std::map<std::uint64_t, storage::NativeSeriesEndpoint> source_endpoints;
+    std::map<std::uint64_t, SourcePayload> source_payloads;
+    SourcePayload source_payload(const V &entry, std::uint64_t sequence) const {
+        const V *current = &entry;
+        const storage::TemporalEndpoint *endpoint = study.endpoint().get();
+        const auto expected_length = machine::checked_size(unsigned_value(parts(entry).at(1)));
+        for (;;) {
+            const auto &items = parts(*current);
+            const auto key = unsigned_value(items.at(0));
+            const auto length = machine::checked_size(unsigned_value(items.at(1)));
+            require(length == expected_length, "historical byte source length mismatch");
+            if (const auto *integer = std::get_if<numeric::Integer>(&items.at(2).data))
+                return {integer, {sequence, key}, length};
+            const auto &alternative = std::get<V::Alternative>(items.at(2).data);
+            require(alternative.element.size() == 1, "invalid byte source alternative");
+            if (alternative.key == 1)
+                return {&std::get<numeric::Integer>(alternative.element[0].data),
+                        {sequence, key},
+                        length};
+            require(alternative.key == 2 && history.has_value(),
+                    "historical byte source requires its owning history");
+            const auto &reference = parts(alternative.element[0]);
+            const auto source_namespace = unsigned_value(reference.at(0)),
+                       previous = unsigned_value(reference.at(1)),
+                       source_key = unsigned_value(reference.at(2));
+            require(source_namespace == ns && source_key && previous < sequence &&
+                        previous >= history->first_sequence(),
+                    "historical byte source is outside its owning prefix");
+            if (!source_endpoints.contains(previous))
+                source_endpoints.emplace(
+                    previous, storage::NativeSeriesPrefix::capture(*history, previous).tail());
+            const auto &publication = source_endpoints.at(previous);
+            require(publication.source_namespace() == source_namespace,
+                    "historical byte source namespace mismatch");
+            endpoint = &publication.endpoint();
+            sequence = previous;
+            require(endpoint->declarations.has_value(),
+                    "historical byte source declarations missing");
+            const storage::TemporalDeclaredValue *header = nullptr, *sources = nullptr;
+            for (const auto &value : endpoint->declarations->values) {
+                if (value.key == header_key)
+                    header = &value;
+                if (value.key == sources_key)
+                    sources = &value;
+            }
+            require(header && sources && header->type == header_type,
+                    "historical record control missing");
+            const auto &h = parts(header->value);
+            const auto revision = unsigned_value(h.at(0));
+            require((revision == 2 || revision == 3) && unsigned_value(h.at(1)) == ns,
+                    "historical record identity mismatch");
+            for (const auto &definition : definitions(revision == 3))
+                require(endpoint->declarations->registry.at(definition.id) == definition,
+                        "historical record declaration changed");
+            require(sources->type == (revision == 3 ? referenced_sources_type : sources_type),
+                    "historical byte source declaration mismatch");
+            current = nullptr;
+            for (const auto &item : std::get<V::Repeated>(sources->value.data).elements)
+                if (unsigned_value(parts(item).at(0)) == source_key) {
+                    require(!current, "duplicate historical byte source");
+                    current = &item;
+                }
+            require(current, "historical byte source key unavailable");
+        }
+    }
+    std::map<std::uint64_t, const storage::TemporalDeclaredValue *> values;
+    std::map<const V *, const storage::TemporalDeclaredValue *> owners;
+    State(const storage::TemporalEndpoint &endpoint, std::uint64_t source_namespace,
+          std::vector<RawByteSource> compiled_sources = {})
+        : State(NativeStudy(endpoint, source_namespace), source_namespace,
+                std::move(compiled_sources)) {}
     State(const storage::NativeSeriesEndpoint &endpoint,
-          std::vector<RawByteSource> compiled_sources, storage::NativeTemporalSeries retained)
-        :State(NativeStudy::from_publication(endpoint),endpoint.source_namespace(),std::move(compiled_sources),std::move(retained)) {}
+          std::vector<RawByteSource> compiled_sources, storage::NativeTemporalSeries retained,
+          const State *reuse = nullptr)
+        : State(NativeStudy::from_publication(endpoint), endpoint.source_namespace(),
+                std::move(compiled_sources), std::move(retained), reuse) {}
     State(NativeStudy admitted,std::uint64_t source_namespace,
           std::vector<RawByteSource> compiled_sources,
-          std::optional<storage::NativeTemporalSeries> retained={})
+          std::optional<storage::NativeTemporalSeries> retained={}, const State *reuse=nullptr)
         :study(std::move(admitted)),history(std::move(retained)),ns(source_namespace) {
         const auto &endpoint=*study.endpoint();
         // Only the private compiler supplies these immutable owners. Every
@@ -186,8 +298,6 @@ struct NativeRecord::State {
             require(sources.emplace(source.key(),std::move(source)).second,"duplicate compiled byte source");
         require(endpoint.declarations.has_value(),"native record has no declaration channel");
         for(const auto &v:study.endpoint()->declarations->values) {values.emplace(v.key,&v);if(v.cell || v.occurrence || v.block)owners.emplace(&v.value,&v);}
-        for(const auto &definition:definitions())
-            require(endpoint.declarations->registry.at(definition.id)==definition,"native record format declaration was changed");
         const auto declared=[&](std::uint64_t key) -> const storage::TemporalDeclaredValue & {
             require(values.contains(key),"native record control declaration is missing");
             return *values.at(key);
@@ -195,36 +305,75 @@ struct NativeRecord::State {
         const auto &header=declared(header_key);
         require(header.type==header_type,"native record header declaration mismatch");
         const auto &h=parts(header.value);
-        require(unsigned_value(h.at(0))==2 && unsigned_value(h.at(1))==source_namespace,"native record version/namespace mismatch");
-        root_type={unsigned_value(h.at(2)),unsigned_value(h.at(3)),unsigned_value(h.at(4))};
-        root_value_key=unsigned_value(h.at(5));parent_value_key=unsigned_value(h.at(6));
-        require(root_value_key && root_value_key!=header_key && root_value_key!=labels_key && root_value_key!=sources_key,"invalid native root selector");
-        const auto &raw=declared(sources_key);
-        require(raw.type==sources_type,"native record source declaration mismatch");
+        version = unsigned_value(h.at(0));
+        require((version == 2 || version == 3) && unsigned_value(h.at(1)) == source_namespace,
+                "native record version/namespace mismatch");
+        for (const auto &definition : definitions(version == 3))
+            require(endpoint.declarations->registry.at(definition.id) == definition,
+                    "native record format declaration was changed");
+        root_type = {unsigned_value(h.at(2)), unsigned_value(h.at(3)), unsigned_value(h.at(4))};
+        root_value_key = unsigned_value(h.at(5));
+        parent_value_key = unsigned_value(h.at(6));
+        require(root_value_key && root_value_key != header_key && root_value_key != labels_key &&
+                    root_value_key != sources_key,
+                "invalid native root selector");
+        const auto &raw = declared(sources_key);
+        require(raw.type == (version == 3 ? referenced_sources_type : sources_type),
+                "native record source declaration mismatch");
         std::size_t raw_materialization{};
-        for(const auto &entry:std::get<V::Repeated>(raw.value.data).elements) {
-            const auto &p=parts(entry);const auto key=unsigned_value(p.at(0));const auto length=machine::checked_size(unsigned_value(p.at(1)));
-            const auto &integer=std::get<numeric::Integer>(p.at(2).data);
-            require(integer>=0,"negative opaque native byte payload");
-            require(composite::declaration_detail::integer_bits(integer)<=machine::checked_size_mul(length,8),"opaque native byte payload exceeds length");
-            raw_materialization=machine::checked_size_add(raw_materialization,length);
-            require(raw_materialization<=endpoint.declarations->resource_limits.max_materialized_bytes,"native raw source materialization exceeds caller resources");
-            if(compiled) {
-                require(sources.contains(key) && sources.at(key).bytes().size()==length,
+        std::map<SourceOrigin, RawByteSource> materialized;
+        for (const auto &entry : std::get<V::Repeated>(raw.value.data).elements) {
+            const auto &p = parts(entry);
+            const auto key = unsigned_value(p.at(0));
+            const auto length = machine::checked_size(unsigned_value(p.at(1)));
+            const auto payload = source_payload(entry, endpoint.sequence);
+            require(source_payloads.emplace(key, payload).second, "duplicate native byte source");
+            const auto &integer = *payload.integer;
+            require(integer >= 0, "negative opaque native byte payload");
+            require(composite::declaration_detail::integer_bits(integer) <=
+                        machine::checked_size_mul(length, 8),
+                    "opaque native byte payload exceeds length");
+            if (!materialized.contains(payload.origin))
+                raw_materialization = machine::checked_size_add(raw_materialization, length);
+            require(raw_materialization <=
+                        endpoint.declarations->resource_limits.max_materialized_bytes,
+                    "native raw source materialization exceeds caller resources");
+            if (compiled) {
+                require(sources.contains(key) && sources.at(key).bytes().size() == length,
                         "compiled byte source identity/length mismatch");
             } else {
-                std::vector<std::byte> bytes(length,std::byte{0});std::size_t count{};
-                if(length)mpz_export(bytes.data(),&count,-1,1,0,0,integer.get_mpz_t());
-                require(sources.emplace(key,RawByteSource::adopt_fresh(key,std::move(bytes))).second,"duplicate native byte source");
+                if (materialized.contains(payload.origin)) {
+                    require(sources.emplace(key, materialized.at(payload.origin).rekey(key)).second,
+                            "duplicate native byte source");
+                } else if (reuse && reuse->sources.contains(key) &&
+                           reuse->sources.at(key).bytes().size() == length &&
+                           *reuse->source_payloads.at(key).integer == integer) {
+                    require(sources.emplace(key, reuse->sources.at(key)).second,
+                            "duplicate native byte source");
+                } else {
+                    std::vector<std::byte> bytes(length, std::byte{0});
+                    std::size_t count{};
+                    if (length)
+                        mpz_export(bytes.data(), &count, -1, 1, 0, 0, integer.get_mpz_t());
+                    require(sources.emplace(key, RawByteSource::adopt_fresh(key, std::move(bytes)))
+                                .second,
+                            "duplicate native byte source");
+                }
             }
+            materialized.emplace(payload.origin, sources.at(key));
         }
-        require(!compiled || sources.size()==std::get<V::Repeated>(raw.value.data).elements.size(),
+        require(!compiled ||
+                    sources.size() == std::get<V::Repeated>(raw.value.data).elements.size(),
                 "compiled byte source count mismatch");
-        const auto &label=declared(labels_key);
-        require(label.type==labels_type,"native record label declaration mismatch");
-        for(const auto &entry:std::get<V::Repeated>(label.value.data).elements) {
-            const auto &p=parts(entry);const auto key=unsigned_value(p.at(0));const auto s=span(p.at(1));
-            const std::string text=s.empty()?std::string{}:std::string(reinterpret_cast<const char *>(s.data()),s.size());
+        const auto &label = declared(labels_key);
+        require(label.type == labels_type, "native record label declaration mismatch");
+        for (const auto &entry : std::get<V::Repeated>(label.value.data).elements) {
+            const auto &p = parts(entry);
+            const auto key = unsigned_value(p.at(0));
+            const auto s = span(p.at(1));
+            const std::string text =
+                s.empty() ? std::string{}
+                          : std::string(reinterpret_cast<const char *>(s.data()), s.size());
             require(key && labels.emplace(key,text).second && names.emplace(text,key).second,"duplicate native factor name");
         }
         const auto &data=declared(root_value_key);
@@ -357,7 +506,7 @@ NativeRecordValue operation_value(const std::vector<RawByteSource> &sources,
     for(const auto &s:request.raw_sources()) {
         const auto target=next();bindings.emplace(s.key(),target);raw.push_back(s.rekey(target));
     }
-    const auto archive_key=next();auto archive=request.archive_source(archive_key);const auto count=archive.bytes().size();
+    const auto archive_key=next();auto archive=request.owning_publication().archive_source(archive_key);const auto count=archive.bytes().size();
     raw.push_back(std::move(archive));
     return N(N::Object{{{"schema",N(std::string("gadget.operation.native.v1"))},
         {"request",request.unbound_value(bindings)},{"result",std::move(result)},
@@ -400,7 +549,7 @@ NativeRecord NativeRecord::create_owned(const NativeRecordValue &value,std::uint
     if(retained_parent)previous=*retained_parent;
     else if(endpoint.declarations)for(const auto &v:endpoint.declarations->values) if(v.key==header_key) {
         require(v.type==header_type,"source value collides with native record header identity");
-        previous=from_endpoint(endpoint,ns);
+        previous=history?from_history(*history):from_endpoint(endpoint,ns);
     }
     auto declarations=endpoint.declarations?std::move(*endpoint.declarations):storage::TemporalDeclarationState{};
     declarations.resource_limits=native_data_limits().temporal.declarations;
@@ -432,33 +581,69 @@ NativeRecord NativeRecord::create_owned(const NativeRecordValue &value,std::uint
     std::set<ID> ids;for(const auto &d:all_definitions)ids.insert(d.id);
     for(auto &d:compiler.defs) {
         if(ids.contains(d.id))require(declarations.registry.at(d.id)==d,"immutable application declaration redefined");
-        else {ids.insert(d.id);all_definitions.push_back(std::move(d));}
+        else {
+            ids.insert(d.id);
+            all_definitions.push_back(std::move(d));
+        }
     }
-    declarations.registry=composite::DeclarationRegistry(std::move(all_definitions),declarations.resource_limits);
+    declarations.registry =
+        composite::DeclarationRegistry(std::move(all_definitions), declarations.resource_limits);
     std::vector<V> raw;
-    if(previous)for(auto &v:declarations.values)if(v.key==sources_key)
-        raw=std::move(std::get<V::Repeated>(v.value.data).elements);
-    const auto old_sources=previous?previous->state_->sources.size():0;
-    for(std::size_t i=old_sources;i<sources.size();++i) {
-        const auto &source_bytes=sources[i];numeric::Integer integer;const auto b=source_bytes.bytes();
-        if(!b.empty())mpz_import(integer.get_mpz_t(),b.size(),-1,1,0,0,b.data());
-        raw.push_back(V::product({number(source_bytes.key()),number(b.size()),V::integer(std::move(integer))}));
+    require(!history || history->last_sequence() != std::numeric_limits<std::uint64_t>::max(),
+            "native annotation publication sequence exhausted");
+    const auto current_sequence = history ? history->last_sequence() + 1 : endpoint.sequence;
+    for (const auto &source_bytes : sources) {
+        const auto bytes = source_bytes.bytes();
+        const RawByteSource *retained = nullptr;
+        std::optional<State::SourceOrigin> origin;
+        if (previous && history)
+            for (const auto &[key, old] : previous->state_->sources)
+                if (source_bytes.shares_owner(old)) {
+                    retained = &old;
+                    origin = previous->state_->source_payloads.at(key).origin;
+                    break;
+                }
+        V payload;
+        if (retained) {
+            require(origin->sequence < current_sequence,
+                    "byte source origin must precede its reference");
+            payload = V::alternative(
+                2, V::product({number(ns), number(origin->sequence), number(origin->key)}));
+        } else {
+            numeric::Integer integer;
+            if (!bytes.empty())
+                mpz_import(integer.get_mpz_t(), bytes.size(), -1, 1, 0, 0, bytes.data());
+            payload = V::alternative(1, V::integer(std::move(integer)));
+        }
+        raw.push_back(
+            V::product({number(source_bytes.key()), number(bytes.size()), std::move(payload)}));
     }
-    for(auto &v:compiler.owned_values)declarations.values.push_back(std::move(v));
-    std::uint64_t data_key=root_key;
-    if(previous) {
-        std::set<std::uint64_t> used;for(const auto &v:declarations.values)used.insert(v.key);
-        while(used.contains(data_key)) {require(data_key!=std::numeric_limits<std::uint64_t>::max(),"native data identity exhausted");++data_key;}
+    for (auto &v : compiler.owned_values)
+        declarations.values.push_back(std::move(v));
+    std::uint64_t data_key = root_key;
+    if (previous) {
+        std::set<std::uint64_t> used;
+        for (const auto &v : declarations.values)
+            used.insert(v.key);
+        while (used.contains(data_key)) {
+            require(data_key != std::numeric_limits<std::uint64_t>::max(),
+                    "native data identity exhausted");
+            ++data_key;
+        }
     }
-    const auto replace=[&](std::uint64_t key,ID declared_type,V v) {
-        auto found=std::find_if(declarations.values.begin(),declarations.values.end(),[&](const auto &x){return x.key==key;});
+    const auto replace = [&](std::uint64_t key, ID declared_type, V v) {
+        auto found = std::find_if(declarations.values.begin(), declarations.values.end(),
+                                  [&](const auto &x) { return x.key == key; });
         storage::TemporalDeclaredValue next{key,declared_type,0,0,{},{},std::move(v)};
-        if(found==declarations.values.end())declarations.values.push_back(std::move(next));else *found=std::move(next);
+        if(found==declarations.values.end())
+            declarations.values.push_back(std::move(next));
+        else
+            *found = std::move(next);
     };
-    replace(header_key,header_type,V::product({number(2),number(ns),number(type.name_space),number(type.key),number(type.version),number(data_key),number(previous?previous->state_->root_value_key:0)}));
+    replace(header_key,header_type,V::product({number(3),number(ns),number(type.name_space),number(type.key),number(type.version),number(data_key),number(previous?previous->state_->root_value_key:0)}));
     replace(data_key,type,std::move(data));
     replace(labels_key,labels_type,V::repeated(std::move(compiler.labels)));
-    replace(sources_key,sources_type,V::repeated(std::move(raw)));
+    replace(sources_key,referenced_sources_type,V::repeated(std::move(raw)));
     endpoint.declarations=std::move(declarations);
     if(history) {
         require(history->last_sequence()!=std::numeric_limits<std::uint64_t>::max(),
@@ -486,6 +671,12 @@ NativeRecord NativeRecord::annotate(const NativeRecordValue &value,storage::Nati
     const auto ns=history.source_namespace();
     return create_owned(value,ns,std::move(sources),tail.endpoint(),nullptr,std::move(history));
 }
+NativeRecord NativeRecord::annotate(const NativeRecordValue &value,const NativeRecord &producer,
+                                   std::vector<RawByteSource> sources) {
+    require(producer.is_root() && producer.state_->history.has_value(),"annotation requires an owning producer history");
+    return create_owned(value,producer.source_namespace(),std::move(sources),*producer.endpoint(),
+        &producer,*producer.state_->history);
+}
 NativeRecord NativeRecord::derive(const NativeRecordValue &value,std::vector<RawByteSource> sources) const {
     const auto source=endpoint();
     auto history=state_->history && state_->history->segment_count()!=0?state_->history:std::nullopt;
@@ -495,7 +686,7 @@ std::vector<std::uint64_t> NativeRecord::source_keys(const storage::TemporalEndp
     std::vector<std::uint64_t> keys;
     if(!endpoint.declarations)return keys;
     for(const auto &record:endpoint.declarations->values)if(record.key==sources_key) {
-        require(record.type==sources_type,"retained byte source declaration mismatch");
+        require(record.type==sources_type || record.type==referenced_sources_type,"retained byte source declaration mismatch");
         for(const auto &entry:std::get<V::Repeated>(record.value.data).elements)
             keys.push_back(unsigned_value(parts(entry).at(0)));
     }
@@ -552,6 +743,15 @@ void NativeRecord::write(const std::filesystem::path &path) const {
     });
 }
 bool NativeRecord::is_root() const noexcept {return root_view_;}
+std::uint64_t NativeRecord::format_version() const noexcept {return state_->version;}
+NativeRecord NativeRecord::owning_publication() const {return {state_,state_->root_type,state_->root};}
+NativeRecord NativeRecord::historical_publication(std::uint64_t cutoff) const {
+    require(state_->history.has_value(),"record has no immutable history");
+    auto history=storage::NativeSeriesPrefix::capture(*state_->history,cutoff).history();
+    const auto tail=history.tail();
+    auto state=std::make_shared<const State>(tail,std::vector<RawByteSource>{},std::move(history),state_.get());
+    return {state,state->root_type,state->root};
+}
 NativeRecordKind NativeRecord::kind() const {
     if(type_==null_type)return NativeRecordKind::Null;
     if(type_==integer_type)return NativeRecordKind::Integer;

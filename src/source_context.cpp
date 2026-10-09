@@ -22,19 +22,19 @@ Json ScientificStudy::source_target(const Json &input, const Json &evidence) con
     };
     if (kind == "cell") {
         const auto id = text(target.at("id"), source_byte_limit());
-        require(state_->cell_ids.contains(id), "source cell is undeclared");
-        declaration(state_->cells.at(state_->cell_ids.at(id)));
+        require(state_->has_cell(id), "source cell is undeclared");
+        declaration(state_->cell_record(state_->resolve_cell(id)));
     } else if (kind == "occurrence") {
         const auto grade = rfc::core::Grade{static_cast<std::uint16_t>(
             count(target.at("grade"), state_->grade_pins.size() - 1, "source occurrence grade"))};
         const rfc::storage::StableOccurrenceKey stable{
             grade, rfc::core::OccurrenceKey{key(target.at("key"))}};
-        require(state_->occurrences.contains(stable), "source occurrence is undeclared");
-        declaration(state_->occurrences.at(stable));
+        if(!state_->compact)require(state_->occurrences.contains(stable), "source occurrence is undeclared");
+        declaration(state_->occurrence_record(stable));
         // Canonical pinned access retains zero coefficients and inactive flags.
         const auto occurrence = state_->directory->occurrence(stable);
-        descriptor.set("upper", state_->cells.at(occurrence.parent()).at("id"));
-        descriptor.set("lower", state_->cells.at(occurrence.participant()).at("id"));
+        descriptor.set("upper", state_->cell_record(occurrence.parent()).at("id"));
+        descriptor.set("lower", state_->cell_record(occurrence.participant()).at("id"));
         descriptor.set("coefficient", Json::string(occurrence.coefficient().get_str()));
         auto aspects = Json::object();
         const auto endpoint = state_->directory->pin_snapshot();

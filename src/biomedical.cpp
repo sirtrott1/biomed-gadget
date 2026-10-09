@@ -563,8 +563,7 @@ struct EvidenceStore::State {
         require(receipt.at("native_sha256").text()=="sha256:"+sha256(std::string_view(reinterpret_cast<const char *>(bytes.data()),bytes.size())),"native evidence/source mismatch");
         if(fs::exists(directory/"evidence.rfcxi"))require(read_text(directory/"evidence.rfcxi")==archive(native),"external native evidence differs from publication");
         const auto source_series=rfc::storage::decode_native_series(publication.at("source_database").bytes(),native_data_limits());
-        const auto source_endpoint=source_series.tail();
-        const auto source=NativeRecord::from_endpoint(source_endpoint.endpoint(),source_series.source_namespace());
+        const auto source=NativeRecord::from_history(source_series);
         const auto expected=normalize(source,static_cast<std::uint32_t>(count(receipt.at("adapter_version"),2,"adapter version")));
         auto expected_entities=Json::object();for(const auto &[id,value]:expected.entities)expected_entities.set(id,value);
         require(expected.manifest.dump()==manifest.dump() && expected.records.dump()==render_record_view(normalized).dump() && expected_entities.dump()==render_record_view(publication.at("entities")).dump(),"biomedical declarations differ from retained original responses");

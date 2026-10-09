@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
                    "       assay-source-read --workspace MANIFEST --request FILE\n"
                    "       plan|annotate|proposal --study DECLARATION --request FILE\n"
                    "       import-table --spec DECLARATION --out NEW_DIRECTORY; resources|devices\n"
-                   "       bioinformatics; inspect-file --spec DECLARATION\n"
+                   "       bioinformatics; inspect-file --spec DECLARATION [--out RECORD.rfcxs]\n"
                    "       import-assays --spec DECLARATION --out NEW_DIRECTORY\n"
                    "       assay-query --workspace MANIFEST --request FILE [--out NEW_DIRECTORY | --out-record FILE.rfcxs]\n"
                    "       derive-assays --workspace MANIFEST --request FILE --out NEW_DIRECTORY\n"
@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
             {"plan-pipeline",
              {"--workspace", "--model", "--prompt", "--out", "--threads", "--context-tokens",
               "--output-tokens", "--gpu-layers", "--profile"}},
-            {"inspect-file", {"--spec"}},
+            {"inspect-file", {"--spec", "--out"}},
             {"import-assays", {"--spec", "--out"}},
             {"assay-query", {"--workspace", "--request", "--out", "--out-record"}},
             {"derive-assays", {"--workspace", "--request", "--out"}},
@@ -146,7 +146,7 @@ int main(int argc, char **argv) {
             {"evidence-query", {"--evidence", "--query"}},
             {"import-table", {"--spec", "--out"}},
             {"native-record", {"--input","--out"}},
-            {"record-view", {"--input","--member","--format"}},
+            {"record-view", {"--input","--member","--format","--assay"}},
             {"native-study", {"--study","--out"}},
             {"native-workspace", {"--workspace","--out"}},
             {"resources", {}},
@@ -223,6 +223,10 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (command == "inspect-file") {
+            if(options.contains("--out")) {
+                const auto publication=gadget::inspect_bioinformatics_record(required("--spec"));
+                publication.write(required("--out"));return 0;
+            }
             std::cout << gadget::inspect_bioinformatics_file(required("--spec")).dump() << '\n';
             return 0;
         }
@@ -416,8 +420,8 @@ int main(int argc, char **argv) {
         if (command == "derive-assays") {
             gadget::AssayWorkspace workspace(required("--workspace"));
             std::cout << workspace
-                             .materialize(
-                                 static_cast<gadget::Json>(gadget::read_record(required("--request"))),
+                             .materialize_record(
+                                 gadget::read_record(required("--request")).native(),
                                  required("--out"))
                              .dump()
                       << '\n';
@@ -607,7 +611,9 @@ int main(int argc, char **argv) {
         }
         if(command=="native-record") {gadget::read_record(required("--input")).native().write(required("--out"));return 0;}
         if(command=="record-view") {
-            const auto retained=gadget::read_record(required("--input"));
+            const auto retained=options.contains("--assay")
+                ? gadget::RetainedRecord(gadget::AssayWorkspace(required("--input")).derivation_certificate(options.at("--assay")))
+                : gadget::read_record(required("--input"));
             const auto view=options.contains("--member")?static_cast<gadget::Json>(retained.at(options.at("--member"))):static_cast<gadget::Json>(retained);
             const auto format=options.contains("--format")?options.at("--format"):"pretty";
             if(format!="pretty" && format!="compact")throw std::invalid_argument("record view format must be pretty or compact");

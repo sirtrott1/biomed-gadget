@@ -184,7 +184,99 @@ int main(int argc,char **argv) {
     const auto booleans=NativeRecord::create(N(N::Array{{N(true),N(false),N(true)}}),814);
     const auto truth=NativeRecord::decode(booleans.encode());
     check(truth.size()==3 && truth.at(0).boolean() && !truth.at(1).boolean(),"fixed-width array declaration overflowed or lost values");
-    std::cout<<"native records preserve owned descriptions, original bytes and source relations\n";
+    {
+        std::vector<std::byte> large_bytes(2 * 1024 * 1024);
+        for (std::size_t i = 0; i < large_bytes.size(); ++i)
+            large_bytes[i] = std::byte(i % 251);
+        const auto bulk = NativeRecord::create(
+            N(N::Object{{{"raw", N(N::ByteSpan{91, 0, large_bytes.size(), false})}}}), 771234,
+            {RawByteSource(91, large_bytes)});
+        const auto body = N(N::Object{{{"raw", N(N::ByteSpan{91, 0, large_bytes.size(), false})},
+                                       {"message", N(std::string("Updated description"))}}});
+        const auto reference = NativeRecord::annotate(body, bulk);
+        const auto ref_history = *reference.publication_history();
+        check(reference.format_version() == 3 &&
+                  ref_history.segment_bytes(0).size() < large_bytes.size() / 8,
+              "annotation repeated unchanged raw payloads");
+        check(storage::encode_native_series(
+                  storage::NativeSeriesPrefix::capture(ref_history, bulk.endpoint()->sequence)
+                      .history()) == bulk.encode(),
+              "historical byte references changed the original publication");
+        const auto alias = reference.derive(
+            N(N::Object{{{"raw", N(N::ByteSpan{91, 0, large_bytes.size(), false})},
+                         {"alias", N(N::ByteSpan{92, 0, large_bytes.size(), false})}}}),
+            {reference.at("raw").byte_source().rekey(92)});
+        const auto aliases = NativeRecord::decode(alias.encode());
+        check(aliases.at("raw").bytes().data() == aliases.at("alias").bytes().data() &&
+                  std::equal(large_bytes.begin(), large_bytes.end(),
+                             aliases.at("raw").bytes().begin()),
+              "historical aliases duplicated or changed their actual byte owner");
+        rejects([&] {
+            (void)NativeRecord::from_endpoint(*reference.endpoint(), reference.source_namespace());
+        });
+        auto legacy_endpoint = *bulk.endpoint();
+        constexpr std::uint64_t control = 0x4741444745540201ULL;
+        for (auto &value : legacy_endpoint.declarations->values) {
+            if (value.key == control)
+                std::get<composite::DeclaredValue::Product>(value.value.data).elements[0] =
+                    composite::DeclaredValue::integer(numeric::Integer{2});
+            if (value.key == control + 3) {
+                value.type = {control, 7, 1};
+                for (auto &entry :
+                     std::get<composite::DeclaredValue::Repeated>(value.value.data).elements) {
+                    auto &payload =
+                        std::get<composite::DeclaredValue::Product>(entry.data).elements[2];
+                    payload =
+                        std::get<composite::DeclaredValue::Alternative>(payload.data).element.at(0);
+                }
+            }
+        }
+        const auto legacy = NativeRecord::from_endpoint(legacy_endpoint, bulk.source_namespace());
+        const auto legacy_bytes = legacy.encode();
+        const auto upgraded = NativeRecord::annotate(body, legacy);
+        check(legacy.format_version() == 2 && upgraded.format_version() == 3 &&
+                  storage::encode_native_series(
+                      storage::NativeSeriesPrefix::capture(*upgraded.publication_history(),
+                                                           legacy.endpoint()->sequence)
+                          .history()) == legacy_bytes &&
+                  std::equal(large_bytes.begin(), large_bytes.end(),
+                             NativeRecord::decode(upgraded.encode()).at("raw").bytes().begin()),
+              "legacy source migration lost bytes or rewrote its original history");
+        for (const auto field : {0, 1, 2}) {
+            auto invalid = *reference.endpoint();
+            for (auto &value : invalid.declarations->values)
+                if (value.key == control + 3) {
+                    auto &entry =
+                        std::get<composite::DeclaredValue::Repeated>(value.value.data).elements[0];
+                    auto &payload =
+                        std::get<composite::DeclaredValue::Product>(entry.data).elements[2];
+                    auto &address =
+                        std::get<composite::DeclaredValue::Product>(
+                            std::get<composite::DeclaredValue::Alternative>(payload.data)
+                                .element[0]
+                                .data)
+                            .elements;
+                    address[field] = composite::DeclaredValue::integer(
+                        numeric::Integer(std::to_string(field == 0   ? bulk.source_namespace() + 1
+                                                        : field == 1 ? invalid.sequence
+                                                                     : 999999)));
+                }
+            auto malformed = *bulk.publication_history();
+            const auto malformed_tail = malformed.tail();
+            auto update = storage::make_temporal_declaration_update(
+                malformed_tail.endpoint().declarations, invalid.declarations,
+                composite::identity_declaration_maps(
+                    malformed_tail.endpoint().declarations->registry));
+            malformed.append_target(invalid, {}, {}, storage::RelationalCodeEncoding::Automatic, {},
+                                    std::move(update));
+            rejects([&] { (void)NativeRecord::from_history(malformed); });
+        }
+    }
+    std::cout
+        << "native records preserve owned descriptions, original bytes and source relations\n";
     return 0;
- }catch(const std::exception &e){std::cerr<<e.what()<<'\n';return 1;}
+ } catch (const std::exception &e) {
+     std::cerr << e.what() << '\n';
+     return 1;
+ }
 }

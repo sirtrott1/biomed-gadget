@@ -37,6 +37,7 @@ class RawByteSource {
     static RawByteSource read(std::uint64_t key, const std::filesystem::path &path);
     // Independent declared identity sharing the same immutable byte owner.
     RawByteSource rekey(std::uint64_t key) const;
+    bool shares_owner(const RawByteSource &other) const noexcept { return bytes_ == other.bytes_; }
     std::uint64_t key() const noexcept { return key_; }
     std::span<const std::byte> bytes() const noexcept { return *bytes_; }
 };

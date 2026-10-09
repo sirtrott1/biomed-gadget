@@ -53,6 +53,8 @@ class NativeRecord {
     // fields stay in its original base; the canonical frame retains the update.
     static NativeRecord annotate(const NativeRecordValue &value,
         rfc::storage::NativeTemporalSeries history, std::vector<RawByteSource> sources = {});
+    static NativeRecord annotate(const NativeRecordValue &value,
+        const NativeRecord &producer, std::vector<RawByteSource> sources = {});
     static NativeRecord from_history(rfc::storage::NativeTemporalSeries history);
     std::optional<rfc::storage::NativeTemporalSeries> publication_history() const;
     NativeRecord derive(const NativeRecordValue &value,std::vector<RawByteSource> added_sources = {}) const;
@@ -62,6 +64,7 @@ class NativeRecord {
         rfc::storage::NativeSeriesLimits limits = native_data_limits());
     // Inspect retained byte identities without copying or materializing their payloads.
     static std::vector<std::uint64_t> source_keys(const rfc::storage::TemporalEndpoint &endpoint);
+    // Historical byte references require from_history; a bare endpoint must be self-contained.
     static NativeRecord from_endpoint(const rfc::storage::TemporalEndpoint &endpoint,
                                       std::uint64_t source_namespace);
     void write(const std::filesystem::path &path) const;
@@ -69,6 +72,11 @@ class NativeRecord {
     // Encode once into a fresh immutable byte owner for archive composition.
     RawByteSource archive_source(std::uint64_t source_key) const;
     bool is_root() const noexcept;
+    std::uint64_t format_version() const noexcept;
+    // The root declaration shares this view's actual immutable publication.
+    NativeRecord owning_publication() const;
+    // Capture an actual ancestor; unchanged byte owners are validated and shared.
+    NativeRecord historical_publication(std::uint64_t cutoff) const;
     NativeRecordKind kind() const;
     std::size_t size() const;
     bool has(std::string_view name) const;

@@ -150,7 +150,7 @@ struct ScientificSession::State {
             else {
                 Vector diagonal;
                 for (const auto coordinate : coordinates)
-                    diagonal.push_back(exact_decimal(metric.at("values").at(coordinate).text()));
+                    diagonal.push_back(source.metric_value(metric,coordinate));
                 metrics.push_back(rfc::field::ExactMetric::diagonal(std::move(diagonal)));
             }
         }
@@ -224,7 +224,7 @@ struct ScientificSession::State {
                     auto value = Json::object();
                     value.set("ambient_coordinate", cardinality(coordinate));
                     value.set("native_key", Json::string(std::to_string(cell.key)));
-                    value.set("entity", source.cells.at(cell).at("id"));
+                    value.set("entity", source.cell_record(cell).at("id"));
                     coordinates_.push(value);
                 }
                 grades.push(coordinates_);
@@ -284,8 +284,8 @@ struct ScientificSession::State {
             require(block_ids.insert(text(declaration.at("id"), source_byte_limit())).second,
                     "duplicate exchange block identity");
             const auto relation = declaration.at("relation").text();
-            require(source.cell_ids.contains(relation), "unknown exchange relation");
-            const auto retained = index.cell(source.cell_ids.at(relation));
+            require(source.has_cell(relation), "unknown exchange relation");
+            const auto retained = index.cell(source.resolve_cell(relation));
             require(retained && retained->grade.value == grade.value + 1u,
                     "exchange block must name a retained primary relation directly above its field "
                     "grade");
@@ -298,7 +298,7 @@ struct ScientificSession::State {
                     participants.insert(arena.lower_index[slot]);
                 const StableOccurrenceKey occurrence{retained->grade,
                                                      arena.occurrence_identities[slot]};
-                auto witness = Json::parse(source.occurrences.at(occurrence).dump_compact());
+                auto witness = Json::parse(source.occurrence_record(occurrence).dump_compact());
                 witness.set("coordinate", cardinality(arena.lower_index[slot]));
                 witness.set("exists", Json::boolean(arena.aspects.get(
                                           complex.signature().existence_aspect(), slot)));
@@ -313,8 +313,8 @@ struct ScientificSession::State {
             research_detail::ExchangeBlock block;
             for (std::size_t c = 0; c < cells.size(); ++c) {
                 const auto id = cells.at(c).text();
-                require(source.cell_ids.contains(id), "unknown exchange participant");
-                const auto cell = index.cell(source.cell_ids.at(id));
+                require(source.has_cell(id), "unknown exchange participant");
+                const auto cell = index.cell(source.resolve_cell(id));
                 require(cell && cell->grade == grade && declared.insert(cell->index).second &&
                             used.insert(cell->index).second,
                         "exchange participants must be distinct retained coordinates in disjoint "
@@ -328,7 +328,7 @@ struct ScientificSession::State {
             block.witness.set("coordinates", Json::array());
             for (const auto coordinate : block.coordinates)
                 block.witness.at("coordinates").push(cardinality(coordinate));
-            block.witness.set("source_relation", source.cells.at(source.cell_ids.at(relation)));
+            block.witness.set("source_relation", source.cell_record(source.resolve_cell(relation)));
             block.witness.set("source_occurrences", occurrences);
             blocks.push_back(std::move(block));
         }
@@ -343,7 +343,7 @@ struct ScientificSession::State {
                 record.set("coordinate", cardinality(i));
                 record.set("ambient_coordinate",
                            cardinality(prepared.to_ambient.at(grade.value).at(i)));
-                record.set("source_cell", source.cells.at(cell));
+                record.set("source_cell", source.cell_record(cell));
                 coordinates.push(record);
             }
             result.set("coordinate_carrier", coordinates);
@@ -465,12 +465,12 @@ struct ScientificSession::State {
                 require(declaration.at("cells").size(), "source role must retain a cell binding");
                 for (std::size_t c = 0; c < declaration.at("cells").size(); ++c) {
                     const auto id = declaration.at("cells").at(c).text();
-                    require(source.cell_ids.contains(id) && seen.insert(id).second,
+                    require(source.has_cell(id) && seen.insert(id).second,
                             "unknown or duplicate role cell");
-                    const auto cell = index.cell(source.cell_ids.at(id));
+                    const auto cell = index.cell(source.resolve_cell(id));
                     require(cell.has_value(), "role cell is outside the actual context source");
                     role.cells.push_back(*cell);
-                    auto record = Json::parse(source.cells.at(source.cell_ids.at(id)).dump());
+                    auto record = Json::parse(source.cell_record(source.resolve_cell(id)).dump());
                     record.set("context_coordinate", cardinality(cell->index));
                     binding.push(record);
                 }
@@ -505,8 +505,7 @@ struct ScientificSession::State {
             const auto &arena = prepared.source->grade(g);
             for (std::size_t i = 0; i < arena.cell_count(); ++i) {
                 auto record = Json::parse(
-                    source.cells
-                        .at(stable_cell_key(*prepared.source, {g, static_cast<std::uint32_t>(i)}))
+                    source.cell_record(stable_cell_key(*prepared.source, {g, static_cast<std::uint32_t>(i)}))
                         .dump());
                 record.set("context_coordinate", cardinality(i));
                 record.set("ambient_coordinate", cardinality(prepared.to_ambient[k][i]));
@@ -515,7 +514,7 @@ struct ScientificSession::State {
             cells.push(grade_cells);
             for (std::size_t i = 0; i < arena.incidence_count(); ++i) {
                 auto record =
-                    Json::parse(source.occurrences.at({g, arena.occurrence_identities[i]}).dump());
+                    Json::parse(source.occurrence_record({g, arena.occurrence_identities[i]}).dump());
                 record.set("exists", Json::boolean(arena.aspects.get(
                                          prepared.source->signature().existence_aspect(), i)));
                 record.set("coefficient",
@@ -580,9 +579,7 @@ struct ScientificSession::State {
             (void)source.evidence(query.at("reference_law").at("evidence"));
         auto coordinates = Json::array();
         for (std::size_t i = 0; i < prepared.to_ambient.at(grade->value).size(); ++i) {
-            auto c = Json::parse(source.cells
-                                     .at(source.coordinate_cells.at(grade->value)
-                                             .at(prepared.to_ambient.at(grade->value)[i]))
+            auto c = Json::parse(source.cell_record(source.coordinate(grade->value,prepared.to_ambient.at(grade->value)[i]))
                                      .dump());
             c.set("context_coordinate", cardinality(i));
             coordinates.push(c);
@@ -593,7 +590,7 @@ struct ScientificSession::State {
     Json temporal_coordinates(const PreparedContext &p, std::uint16_t grade) const {
         auto out = Json::array();
         for (auto i : p.to_ambient.at(grade))
-            out.push(source.cells.at(source.coordinate_cells.at(grade).at(i)));
+            out.push(source.cell_record(source.coordinate(grade,i)));
         return out;
     }
     void temporal_times(const std::string &old_name, const std::string &new_name) const {
@@ -643,9 +640,9 @@ struct ScientificSession::State {
         }
         const auto op = s.operator_pins.at(operation);
         const auto grade = op.carrier()->grade.value;
-        require(grade < s.coordinate_cells.size(), "observation source grade absent");
-        for (const auto &cell : s.coordinate_cells[grade])
-            coordinates.push(s.referenced(s.cells.at(cell)));
+        require(grade < s.grade_count(), "observation source grade absent");
+        for (const auto &cell : s.coordinate_keys(grade))
+            coordinates.push(s.referenced(s.cell_record(cell)));
         declarations.set("source_digest", Json::string(s.digest));
         declarations.set("native_sha256", Json::string(s.native_digest));
         auto declaration = Json::object(), documents = Json::array();
@@ -728,8 +725,8 @@ struct ScientificSession::State {
                     documents.push(doc.metadata);
                 }
                 out.set("documents", documents);
-                for (const auto &cell : s.coordinate_cells.at(pin.carrier()->grade.value))
-                    coordinates.push(s.referenced(s.cells.at(cell)));
+                for (const auto &cell : s.coordinate_keys(pin.carrier()->grade.value))
+                    coordinates.push(s.referenced(s.cell_record(cell)));
                 out.set("source_coordinates", coordinates);
                 return out;
             };
@@ -770,10 +767,10 @@ struct ScientificSession::State {
                 metric_meanings.push(s.operators.at(id));
             }
         }
-        for (const auto &grade : s.coordinate_cells) {
+        for (const auto &grade : s.coordinate_grades()) {
             auto cells = Json::array();
             for (const auto &cell : grade)
-                cells.push(s.cells.at(cell));
+                cells.push(s.cell_record(cell));
             coordinates.push(cells);
         }
         declarations.set("source_digest", Json::string(s.digest));
@@ -840,7 +837,7 @@ struct ScientificSession::State {
                     for (std::size_t i = 0; i < c.domain.logical_size(); ++i) {
                         auto cell = stable_cell_key(u.endpoint()->source,
                                                     {c.grade, static_cast<std::uint32_t>(i)});
-                        coordinates.push(s.cells.at(cell));
+                        coordinates.push(s.cell_record(cell));
                     }
                 } else {
                     for (std::size_t i = 0; i < c.domain.logical_size(); ++i)
@@ -895,9 +892,9 @@ struct ScientificSession::State {
             require(!declaration.has("entries"), "retained identity cannot contain matrix entries");
             std::map<StableCellKey, std::size_t> target;
             for (std::size_t i = 0; i < bc.size(); ++i)
-                target.emplace(new_owner.source.coordinate_cells.at(grade).at(bc[i]), i);
+                target.emplace(new_owner.source.coordinate(grade,bc[i]), i);
             for (std::size_t i = 0; i < ac.size(); ++i) {
-                auto key_ = old_owner.source.coordinate_cells.at(grade).at(ac[i]);
+                auto key_ = old_owner.source.coordinate(grade,ac[i]);
                 if (target.contains(key_))
                     j.set(target.at(key_), i, Rational{1});
             }
@@ -906,13 +903,13 @@ struct ScientificSession::State {
             std::map<std::string, std::size_t> rows, cols;
             for (std::size_t i = 0; i < bc.size(); ++i)
                 rows.emplace(
-                    new_owner.source.cells.at(new_owner.source.coordinate_cells.at(grade).at(bc[i]))
+                    new_owner.source.cell_record(new_owner.source.coordinate(grade,bc[i]))
                         .at("id")
                         .text(),
                     i);
             for (std::size_t i = 0; i < ac.size(); ++i)
                 cols.emplace(
-                    old_owner.source.cells.at(old_owner.source.coordinate_cells.at(grade).at(ac[i]))
+                    old_owner.source.cell_record(old_owner.source.coordinate(grade,ac[i]))
                         .at("id")
                         .text(),
                     i);
@@ -982,7 +979,7 @@ struct ScientificSession::State {
         observations = Json::array();
         for (auto coordinate : p.to_ambient.at(grade)) {
             const auto entity =
-                source.cells.at(source.coordinate_cells.at(grade).at(coordinate)).at("id").text();
+                source.cell_record(source.coordinate(grade,coordinate)).at("id").text();
             const auto present = t.tensor.support().contains(coordinate);
             require(!present || !supplied.contains(entity),
                     "declared extension cannot overwrite an observed coordinate");
@@ -1050,7 +1047,7 @@ struct ScientificSession::State {
                 const auto &arena = p.source->grade(grade);
                 for (std::size_t i = 0; i < arena.incidence_count(); ++i) {
                     auto record = Json::parse(
-                        owner_.source.occurrences.at({grade, arena.occurrence_identities[i]})
+                        owner_.source.occurrence_record({grade, arena.occurrence_identities[i]})
                             .dump());
                     record.set("parent_key",
                                Json::string(std::to_string(
@@ -1325,8 +1322,7 @@ struct ScientificSession::State {
             const auto &prepared = context(query.at("context").text());
             for (std::size_t i = 0; i < x.size(); ++i)
                 require(key(declaration.at("cells").at(i)) ==
-                            source.coordinate_cells.at(grade)
-                                .at(prepared.to_ambient.at(grade).at(i))
+                            source.coordinate(grade,prepared.to_ambient.at(grade).at(i))
                                 .key,
                         "Green coordinate witness differs from source order");
             const auto binding = std::to_string(grade) + "|" + declaration.at("cells").dump();
@@ -1446,7 +1442,7 @@ struct ScientificSession::State {
         }
         if (operation == "provenance") {
             members(query, {"operation", "entity"});
-            require(source.cell_ids.contains(query.at("entity").text()),
+            require(source.has_cell(query.at("entity").text()),
                     "unknown declared entity identity");
             return;
         }
@@ -1554,8 +1550,8 @@ struct ScientificSession::State {
     Json provenance(StableCellKey cell) const {
         const auto endpoint = source.directory->pin_snapshot();
         auto result = Json::object();
-        result.set("entity", source.cells.at(cell));
-        result.set("evidence", source.evidence(source.cells.at(cell).at("evidence")));
+        result.set("entity", source.cell_record(cell));
+        result.set("evidence", source.evidence(source.cell_record(cell).at("evidence")));
         auto retained = Json::array();
         for (std::size_t k = 1; k < endpoint->source.grade_count(); ++k) {
             const auto grade = rfc::core::Grade{static_cast<std::uint16_t>(k)};
@@ -1575,8 +1571,8 @@ struct ScientificSession::State {
                         StableOccurrenceKey{grade, arena.occurrence_identities[slot]};
                     item.set("key", Json::string(std::to_string(occurrence.key.value)));
                     item.set("grade", cardinality(k));
-                    item.set("upper", source.cells.at(upper).at("id"));
-                    item.set("lower", source.cells.at(lower).at("id"));
+                    item.set("upper", source.cell_record(upper).at("id"));
+                    item.set("lower", source.cell_record(lower).at("id"));
                     item.set("coefficient",
                              rational(endpoint->source.incidence_coefficient(grade, slot)));
                     item.set("magnitude",
@@ -1591,7 +1587,7 @@ struct ScientificSession::State {
                                         static_cast<rfc::composite::AspectId>(a), slot)));
                     item.set("aspects", aspects);
                     item.set("evidence",
-                             source.evidence(source.occurrences.at(occurrence).at("evidence")));
+                             source.evidence(source.occurrence_record(occurrence).at("evidence")));
                     retained.push(item);
                     require(retained.size() <= coordinate_limit, "provenance occurrence budget");
                 }
@@ -1611,7 +1607,7 @@ struct ScientificSession::State {
             auto item = Json::object();
             item.set("coordinate", cardinality(i));
             item.set("native_key", Json::string(std::to_string(cell.key)));
-            item.set("entity", source.cells.at(cell).at("id"));
+            item.set("entity", source.cell_record(cell).at("id"));
             item.set("value", rational(values[i]));
             result.push(item);
         }
@@ -1779,8 +1775,8 @@ struct ScientificSession::State {
             auto row = Json::object();
             row.set("coordinate", cardinality(i));
             if (carrier.kind == TemporalCarrierKind::SourceGrade) {
-                const auto cell = source.coordinate_cells.at(carrier.grade.value).at(i);
-                row.set("entity", source.cells.at(cell).at("id"));
+                const auto cell = source.coordinate(carrier.grade.value,i);
+                row.set("entity", source.cell_record(cell).at("id"));
             }
             const bool present = t.tensor.support().contains(i);
             row.set("reported", Json::boolean(present));
@@ -1896,9 +1892,9 @@ struct ScientificSession::State {
             auto coordinates = out.at("coordinates");
             for (std::size_t i = 0; i < coordinates.size(); ++i) {
                 const auto stable =
-                    source.coordinate_cells.at(grade).at(prepared.to_ambient.at(grade).at(i));
-                coordinates.at(i).set("entity", source.cells.at(stable).at("id"));
-                coordinates.at(i).set("evidence", source.cells.at(stable).at("evidence"));
+                    source.coordinate(grade,prepared.to_ambient.at(grade).at(i));
+                coordinates.at(i).set("entity", source.cell_record(stable).at("id"));
+                coordinates.at(i).set("evidence", source.cell_record(stable).at("evidence"));
             }
             if (out.has("occurrences")) {
                 auto occurrences = out.at("occurrences");
@@ -1906,7 +1902,7 @@ struct ScientificSession::State {
                     const StableOccurrenceKey stable{
                         rfc::core::Grade{grade},
                         rfc::core::OccurrenceKey{key(occurrences.at(i).at("key"))}};
-                    occurrences.at(i).set("evidence", source.occurrences.at(stable).at("evidence"));
+                    occurrences.at(i).set("evidence", source.occurrence_record(stable).at("evidence"));
                 }
             }
             result.set("result", out);
@@ -2015,7 +2011,7 @@ struct ScientificSession::State {
         } else if (operation == "inspect")
             result.set("result", source.catalog());
         else if (operation == "provenance")
-            result.set("result", provenance(source.cell_ids.at(query.at("entity").text())));
+            result.set("result", provenance(source.resolve_cell(query.at("entity").text())));
         else if (operation == "coverage") {
             result.set("result", coverage(query.at("field").text()));
         } else if (operation == "field_summary") {
@@ -2092,8 +2088,8 @@ struct ScientificSession::State {
             derived.outputs.at(0).for_each_set([&](std::size_t i) {
                 auto row = Json::object();
                 row.set("coordinate", cardinality(i));
-                const auto cell = source.coordinate_cells.at(carrier->grade.value).at(i);
-                row.set("entity", source.cells.at(cell).at("id"));
+                const auto cell = source.coordinate(carrier->grade.value,i);
+                row.set("entity", source.cell_record(cell).at("id"));
                 row.set("native_key", Json::string(std::to_string(cell.key)));
                 rows.push(row);
             });
@@ -2247,7 +2243,7 @@ struct ScientificSession::State {
             auto output = Json::array();
             for (const auto &binding : analysis.binding().outputs()) {
                 auto row = Json::object();
-                row.set("entity", source.cells.at(binding.cell).at("id"));
+                row.set("entity", source.cell_record(binding.cell).at("id"));
                 row.set("carrier", Json::string(std::to_string(binding.carrier)));
                 row.set("coordinate_system", Json::string(std::to_string(binding.coordinates)));
                 row.set("values",
@@ -2283,8 +2279,8 @@ struct ScientificSession::State {
                 auto occurrence = Json::object();
                 occurrence.set("grade", cardinality(binding.occurrence.upper_grade.value));
                 occurrence.set("key", Json::string(std::to_string(binding.occurrence.key.value)));
-                occurrence.set("upper", source.cells.at(binding.upper).at("id"));
-                occurrence.set("lower", source.cells.at(binding.lower).at("id"));
+                occurrence.set("upper", source.cell_record(binding.upper).at("id"));
+                occurrence.set("lower", source.cell_record(binding.lower).at("id"));
                 occurrence.set("active", Json::boolean(binding.active));
                 occurrence.set("coefficient", rational(binding.coefficient));
                 occurrence.set("map",
@@ -2298,7 +2294,7 @@ struct ScientificSession::State {
                                             : "coefficient_independent")));
                 occurrence.set(
                     "evidence",
-                    source.evidence(source.occurrences.at(binding.occurrence).at("evidence")));
+                    source.evidence(source.occurrence_record(binding.occurrence).at("evidence")));
                 retained.push(occurrence);
             }
             result.set("retained_occurrences", retained);
@@ -2604,8 +2600,8 @@ Json ScientificSession::propose_annotations(const Json &annotations) {
         auto item = Json::parse(mentions.at(i).dump());
         members(item, {"entity", "kind", "polarity", "evidence"});
         const auto name = item.at("entity").text();
-        require(state_->source.cell_ids.contains(name), "semantic proposal entity is undeclared");
-        const auto &cell = state_->source.cells.at(state_->source.cell_ids.at(name));
+        require(state_->source.has_cell(name), "semantic proposal entity is undeclared");
+        const auto &cell = state_->source.cell_record(state_->source.resolve_cell(name));
         require(item.at("kind").text() == cell.at("kind").text(), "semantic entity kind mismatch");
         const auto polarity = item.at("polarity").text();
         require(polarity == "asserted" || polarity == "negated" || polarity == "uncertain",

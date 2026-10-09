@@ -206,7 +206,7 @@ Json reference(const std::string &path, const std::string &digest, const Json &c
     return out;
 }
 } // namespace
-std::string checked_answer_bytes(const fs::path &directory, const Json &record) {
+fs::path checked_answer_path(const fs::path &directory, const Json &record) {
     const fs::path path(record.at("path").text());
     require(!path.empty() && !path.is_absolute(), "answer artifact must be relative");
     for (const auto &part : path)
@@ -214,15 +214,35 @@ std::string checked_answer_bytes(const fs::path &directory, const Json &record) 
     const auto resolved = fs::canonical(directory / path), root = fs::canonical(directory);
     const auto relative = resolved.lexically_relative(root);
     require(!relative.empty() && *relative.begin() != "..", "answer artifact escapes owner");
+    return resolved;
+}
+std::string checked_answer_bytes(const fs::path &directory, const Json &record) {
+    const auto resolved = checked_answer_path(directory, record);
     const auto bytes = read_text(resolved);
     require(record.at("sha256").text() == "sha256:" + sha256(bytes),
             "answer artifact hash mismatch");
     return bytes;
 }
 Json checked_answer_view(const fs::path &directory,const Json &record) {
-    const auto bytes=checked_answer_bytes(directory,record);
-    const auto retained=decode_record(std::span<const std::byte>{reinterpret_cast<const std::byte *>(bytes.data()),bytes.size()});
-    if(retained.has("schema") && retained.at("schema").text()=="gadget.operation.native.v1")return retained.at("result");
+    if (record.has("native_selection")) {
+        const auto selection = record.at("native_selection");
+        keys(selection, {"kind", "assay"});
+        require(selection.at("kind").text() == "generating_result",
+                "unsupported native answer selection");
+        const auto resolved = checked_answer_path(directory, record);
+        const AssayWorkspace workspace(resolved);
+        const auto history = *workspace.native_publication().publication_history();
+        const auto digest = "sha256:" + sha256_chunks([&](const auto &sink) {
+                                rfc::storage::stream_native_series(history, sink);
+                            });
+        require(record.at("sha256").text() == digest, "native answer publication hash mismatch");
+        return workspace.derivation_certificate(selection.at("assay").text());
+    }
+    const auto bytes = checked_answer_bytes(directory, record);
+    const auto retained = decode_record(std::span<const std::byte>{
+        reinterpret_cast<const std::byte *>(bytes.data()), bytes.size()});
+    if (retained.has("schema") && retained.at("schema").text() == "gadget.operation.native.v1")
+        return retained.at("result");
     return static_cast<Json>(retained);
 }
 Json observable_catalog() {
@@ -419,18 +439,35 @@ Json answer_witnesses(const Json &planning, const Json &pipeline, const Json &re
                 const AssayWorkspace workspace(job / "workspace/workspace.rfcxs");
                 require(workspace.digest() == receipt.at("derived_digest").text(),
                         "answer derived workspace owner mismatch");
-                const auto original =
-                    workspace.catalog().at("assays").at(0).at("originals").at("provenance-0");
-                const auto certificate =
-                    checked_answer_view(job/"workspace",original);
-                require(certificate.at("schema").text() == "gadget.assay.result.v1" &&
-                            certificate.at("source_digest").text() ==
-                                receipt.at("source_digest").text() &&
-                            certificate.at("query").dump() == effective.at("recipe").dump(),
-                        "answer generating certificate owner/request mismatch");
-                references.push(
-                    reference(node.at("id").text() + "/workspace/" + original.at("path").text(),
-                              original.at("sha256").text(), certificate));
+                if (workspace.native_publication().at("schema").text() ==
+                    "gadget.assay.workspace.native.v2") {
+                    const auto assay = effective.at("id").text();
+                    const auto certificate = workspace.derivation_certificate(assay);
+                    require(certificate.at("source_digest").text() ==
+                                    receipt.at("source_digest").text() &&
+                                certificate.at("query").dump() == effective.at("recipe").dump(),
+                            "native generating certificate owner/request mismatch");
+                    const auto path = job / "workspace/workspace.rfcxs";
+                    auto ref = reference(node.at("id").text() + "/workspace/workspace.rfcxs",
+                                         "sha256:" + sha256_file(path), certificate);
+                    auto selection = Json::object();
+                    selection.set("kind", Json::string("generating_result"));
+                    selection.set("assay", Json::string(assay));
+                    ref.set("native_selection", selection);
+                    references.push(ref);
+                } else {
+                    const auto original =
+                        workspace.catalog().at("assays").at(0).at("originals").at("provenance-0");
+                    const auto certificate = checked_answer_view(job / "workspace", original);
+                    require(certificate.at("schema").text() == "gadget.assay.result.v1" &&
+                                certificate.at("source_digest").text() ==
+                                    receipt.at("source_digest").text() &&
+                                certificate.at("query").dump() == effective.at("recipe").dump(),
+                            "answer generating certificate owner/request mismatch");
+                    references.push(
+                        reference(node.at("id").text() + "/workspace/" + original.at("path").text(),
+                                  original.at("sha256").text(), certificate));
+                }
             } else if (effective.at("operation").text() == "native_query") {
                 require(result.at("schema").text() == "gadget.assays.run.v1" &&
                             result.at("source_digest").text() ==

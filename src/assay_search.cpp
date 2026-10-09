@@ -7,13 +7,12 @@ namespace gadget::assay_detail {
 std::vector<SequenceRecord> sequence_records(const ResourceImage &resource) {
     const auto format = resource.declaration.at("format").text();
     require(format == "fasta" || format == "fastq", "sequence resource requires FASTA or FASTQ");
-    const auto records = inspect_resource(resource.bytes, resource.declaration).at("records");
+    const auto records = read_sequence_spans(resource.bytes,format);
     const auto resource_sha256 = "sha256:" + sha256(resource.bytes);
     std::vector<SequenceRecord> out;
     for (std::size_t i = 0; i < records.size(); ++i) {
-        const auto record = records.at(i);
-        const auto start = record.at("source_start").integer(),
-                   end = record.at("source_end").integer();
+        const auto &record = records.at(i);
+        const auto start = record.start, end = record.end;
         const auto bytes = resource.bytes.substr(start, end - start);
         const auto ls = lines(bytes);
         std::string bases;
@@ -23,9 +22,9 @@ std::vector<SequenceRecord> sequence_records(const ResourceImage &resource) {
         auto evidence = Json::object();
         evidence.set("source_sha256", Json::string(resource_sha256));
         evidence.set("record_index", cardinality(i));
-        evidence.set("source_start", record.at("source_start"));
-        evidence.set("source_end", record.at("source_end"));
-        out.push_back({record.at("id").text(), std::move(bases), evidence});
+        evidence.set("source_start", cardinality(record.start));
+        evidence.set("source_end", cardinality(record.end));
+        out.push_back({resource.bytes.substr(record.id_start,record.id_length), std::move(bases), evidence});
     }
     return out;
 }

@@ -93,22 +93,32 @@ ScientificFacts::ScientificFacts(const AssayWorkspace &workspace, const Json &in
     using N=NativeRecordValue;
     std::vector<RawByteSource> retained_bytes;
     N::Array originals;
-    std::set<fs::path> retained_paths;
+    std::map<fs::path, std::size_t> retained_paths;
     std::uint64_t next_source=1;
     for(const auto &raw:workspace.native_publication().raw_sources()) {
         require(raw.key()!=std::numeric_limits<std::uint64_t>::max(),"fact byte identity space exhausted");
-        next_source=std::max(next_source,raw.key()+1);
+        next_source = std::max(next_source, raw.key() + 1);
     }
-    const auto retain_artifact=[&](const fs::path &root,const Json &record) {
-        const auto path=fs::canonical(root/record.at("path").text());
-        const auto bytes=pipeline_detail::checked_answer_bytes(root,record);
-        if(retained_paths.insert(path).second) {
-            require(next_source!=std::numeric_limits<std::uint64_t>::max(),"fact byte identity space exhausted");
-            const auto key=next_source++;
-            retained_bytes.emplace_back(key,std::span<const std::byte>{reinterpret_cast<const std::byte *>(bytes.data()),bytes.size()});
-            originals.elements.emplace_back(N::Object{{{"reference",import_record_view(record)},
-                {"bytes",N(N::ByteSpan{key,0,bytes.size(),false})}}});
+    const auto retain_artifact = [&](const fs::path &root, const Json &record) {
+        const auto path = pipeline_detail::checked_answer_path(root, record);
+        if (!retained_paths.contains(path)) {
+            require(next_source != std::numeric_limits<std::uint64_t>::max(),
+                    "fact byte identity space exhausted");
+            const auto key = next_source++;
+            const auto source = RawByteSource::read(key, path);
+            retained_paths.emplace(path, retained_bytes.size());
+            retained_bytes.push_back(source);
+            originals.elements.emplace_back(
+                N::Object{{{"reference", import_record_view(record)},
+                           {"bytes", N(N::ByteSpan{key, 0, source.bytes().size(), false})}}});
         }
+        const auto source = retained_bytes.at(retained_paths.at(path));
+        const auto bytes = source.bytes();
+        require(record.at("sha256").text() ==
+                    "sha256:" + sha256(std::string_view(
+                                    reinterpret_cast<const char *>(bytes.data()), bytes.size())),
+                "fact artifact byte hash mismatch");
+        return source;
     };
     if (request.has("context")) {
         context = workspace.source_context(request.at("context"));
@@ -152,8 +162,9 @@ ScientificFacts::ScientificFacts(const AssayWorkspace &workspace, const Json &in
     require(selections.size(), "scientific facts require selected values");
     // Each referenced certificate is captured once; the admitted object owns it
     // independently of later filesystem edits or model execution.
-    std::map<std::string, Json> loaded;
-    std::map<std::string, std::string> loaded_hashes;
+    using ResultKey = std::pair<std::string, std::string>;
+    std::map<ResultKey, Json> loaded;
+    std::map<ResultKey, std::string> loaded_hashes;
     std::set<std::string> selected_ids;
     for (std::size_t i = 0; i < selections.size(); ++i) {
         const auto selection = selections.at(i), from = selection.at("from");
@@ -191,25 +202,36 @@ ScientificFacts::ScientificFacts(const AssayWorkspace &workspace, const Json &in
             require(reference.at("pointer").text() == "/result",
                     "answer fact requires complete result pointer");
             const auto path = reference.at("path").text();
-            if (!loaded.contains(path)) {
-                retain_artifact(answer_root,reference);
-                const auto bytes = pipeline_detail::checked_answer_bytes(answer_root, reference);
-                const auto certificate = pipeline_detail::checked_answer_view(answer_root,reference);
+            const ResultKey result_key{path, reference.has("native_selection")
+                                                 ? reference.at("native_selection").dump()
+                                                 : std::string{}};
+            if (!loaded.contains(result_key)) {
+                const auto retained_source = retain_artifact(answer_root, reference);
+                const auto certificate =
+                    reference.has("native_selection")
+                        ? pipeline_detail::checked_answer_view(answer_root, reference)
+                        : [&] {
+                              const auto value = decode_record(retained_source.bytes());
+                              if (value.has("schema") &&
+                                  value.at("schema").text() == "gadget.operation.native.v1")
+                                  return static_cast<Json>(value.at("result"));
+                              return static_cast<Json>(value);
+                          }();
                 verify_seal(certificate, "certificate_sha256");
                 const auto schema = certificate.at("schema").text();
                 require(schema == "gadget.assay.result.v1" ||
                             schema == "gadget.scientific.certificate.v1" ||
                             schema == "gadget.biomedical.certificate.v1",
                         "unsupported answer certificate");
-                loaded.emplace(path, certificate);
-                loaded_hashes.emplace(path, "sha256:" + sha256(bytes));
+                loaded.emplace(result_key, certificate);
+                loaded_hashes.emplace(result_key, reference.at("sha256").text());
                 auto retained = Json::object();
                 retained.set("reference", reference);
                 retained.set("certificate", certificate);
                 certificates.push(retained);
             }
-            const auto certificate = loaded.at(path);
-            require(reference.at("sha256").text() == loaded_hashes.at(path) &&
+            const auto certificate = loaded.at(result_key);
+            require(reference.at("sha256").text() == loaded_hashes.at(result_key) &&
                         certificate.at("source_digest").dump() ==
                             reference.at("source_digest").dump() &&
                         certificate.at("query").dump() == reference.at("query").dump() &&

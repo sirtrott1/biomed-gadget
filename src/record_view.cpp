@@ -2,6 +2,7 @@
 #include "assay_quality_detail.hpp"
 #include "assay_coverage_detail.hpp"
 #include <rfc/storage/mapped_file.hpp>
+#include <rfc/storage/declaration_codec.hpp>
 #include <cmath>
 
 namespace gadget {
@@ -60,6 +61,27 @@ NativeRecord admit_record_view(const Json &input,RecordByteBindings bytes,const 
                               std::optional<std::uint64_t> source_namespace) {
     const auto data=import(input,bytes);
     return NativeRecord::create(data,source_namespace.value_or(new_native_record_namespace()),std::move(bytes.sources),source);
+}
+std::string native_declaration_digest(const NativeRecord &record) {
+    const auto &declaration=record.endpoint()->declarations.value();
+    const rfc::composite::CompiledLayout layout(declaration.registry,record.type(),
+        declaration.profile,declaration.resource_limits);
+    const auto schema=rfc::storage::encode_declarations(layout);
+    const auto bits=rfc::storage::encode_declared_bits(layout,record.value());
+    return "sha256:"+sha256_chunks([&](const auto &sink) {
+        const auto count=std::to_string(schema.size())+"\n"+std::to_string(bits.bit_count)+"\n";
+        sink(std::as_bytes(std::span(count.data(),count.size())));sink(schema);sink(bits.bytes);
+        std::vector<NativeRecord> pending{record};
+        while(!pending.empty()) {
+            const auto item=pending.back();pending.pop_back();
+            if(item.kind()==NativeRecordKind::Text || item.kind()==NativeRecordKind::Bytes)sink(item.bytes());
+            else if(item.kind()==NativeRecordKind::Object) {
+                const auto names=item.names();for(auto name=names.rbegin();name!=names.rend();++name)pending.push_back(item.at(*name));
+            } else if(item.kind()==NativeRecordKind::Array) {
+                for(auto i=item.size();i>0;--i)pending.push_back(item.at(i-1));
+            }
+        }
+    });
 }
 Json render_record_view(const NativeRecord &record) {
     switch(record.kind()) {

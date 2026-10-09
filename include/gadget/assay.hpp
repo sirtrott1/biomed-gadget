@@ -8,6 +8,8 @@ namespace gadget {
 // Each assay's numerical storage is canonical RFCXS, not an application matrix format.
 Json bioinformatics_capabilities();
 Json inspect_bioinformatics_file(const fs::path &specification);
+// Native physical records retain source spans and typed source-grade columns.
+NativeRecord inspect_bioinformatics_record(const fs::path &specification);
 void import_assays(const fs::path &specification, const fs::path &destination);
 class AssayWorkspace {
     struct State;
@@ -16,9 +18,19 @@ class AssayWorkspace {
         std::map<std::string, std::vector<std::shared_ptr<const ScientificStudy>>>;
     AssayWorkspace(const fs::path &manifest, AdmittedSources sources);
     friend void import_assays(const fs::path &, const fs::path &);
+    NativeRecord execute_coverage(const NativeRecord &, std::shared_ptr<CpuResources>,
+        std::optional<std::uint64_t> source_namespace = {}) const;
+    Json materialize_coverage(const NativeRecord &, const fs::path &,
+        std::shared_ptr<CpuResources>) const;
+    Json replay_native_derivation(const std::string &, const fs::path &,
+        std::shared_ptr<CpuResources>) const;
 
   public:
     explicit AssayWorkspace(const fs::path &manifest);
+    static NativeRecord publish_studies(const NativeRecord &request, const std::string &id,
+        const std::map<std::string, std::shared_ptr<const ScientificStudy>> &studies);
+    Json materialize_record(const NativeRecord &request, const fs::path &destination,
+        std::shared_ptr<CpuResources> resources = {}) const;
     ~AssayWorkspace();
     AssayWorkspace(const AssayWorkspace &) = delete;
     AssayWorkspace &operator=(const AssayWorkspace &) = delete;
@@ -46,6 +58,7 @@ class AssayWorkspace {
                      std::shared_ptr<CpuResources> resources = {}) const;
     Json replay_derivation(const std::string &assay, const fs::path &destination,
                            std::shared_ptr<CpuResources> resources = {}) const;
+    Json derivation_certificate(const std::string &assay) const;
     // Writes bounded per-partition certificates for large assays, then seals a
     // complete result index. Failed runs do not leave a published result directory.
     Json run(const Json &request, const fs::path &destination,

@@ -25,6 +25,11 @@ class ScientificStudy {
   public:
     explicit ScientificStudy(const fs::path &declaration);
     explicit ScientificStudy(NativeRecord publication);
+    // Bind application declarations to an unchanged, complete producer history.
+    // Document byte spans must name raw sources already retained by the producer.
+    static NativeRecord publish_annotations(const NativeRecord &producer,
+        NativeRecordValue study, NativeRecordValue documents);
+    NativeRecord producer_publication() const;
     ~ScientificStudy();
     ScientificStudy(const ScientificStudy &) = delete;
     ScientificStudy &operator=(const ScientificStudy &) = delete;

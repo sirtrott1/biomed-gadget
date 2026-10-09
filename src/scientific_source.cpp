@@ -63,8 +63,8 @@ Json ScientificStudy::source_index() const {
     result.set("native_sha256", Json::string(s.native_digest));
     result.set("design", s.declaration.at("design"));
     counts.set("fields", cardinality(s.fields.size()));
-    counts.set("cells", cardinality(s.cells.size()));
-    counts.set("occurrences", cardinality(s.occurrences.size()));
+    counts.set("cells", cardinality(s.cell_count()));
+    counts.set("occurrences", cardinality(s.occurrence_count()));
     counts.set("contexts", cardinality(s.contexts.size()));
     counts.set("operators", cardinality(s.operators.size()));
     counts.set("carriers", cardinality(endpoint->carriers.size()));
@@ -124,12 +124,16 @@ Json ScientificStudy::read_source(const Json &input, rfc::runtime::ExecutionLeas
                 result.set("definition", s.referenced(item.second.declaration));
                 return result;
             });
-        else if (section == "cells")
-            bind(s.cells, s.cell_keys, [&](const auto &item) { return s.referenced(item.second); });
-        else if (section == "occurrences")
-            bind(s.occurrences, s.occurrence_keys, [&](const auto &item) {
-                auto result = s.referenced(item.second);
-                const auto pin = s.directory->occurrence(item.first);
+        else if (section == "cells") {
+            total=s.cell_count();
+            record=[&s](std::size_t at){return s.referenced(s.cell_record(s.cell_key_at(at)));};
+        }
+        else if (section == "occurrences") {
+            total=s.occurrence_count();
+            record=[&s,endpoint](std::size_t at) {
+                const auto key=s.occurrence_key_at(at);
+                auto result = s.referenced(s.occurrence_record(key));
+                const auto pin = s.directory->occurrence(key);
                 auto identity = [](const auto &cell) {
                     auto value = Json::object();
                     value.set("grade", Json::integer(cell.grade.value));
@@ -152,8 +156,8 @@ Json ScientificStudy::read_source(const Json &input, rfc::runtime::ExecutionLeas
                 }
                 result.set("aspects", aspects);
                 return result;
-            });
-        else if (section == "contexts")
+            };
+        } else if (section == "contexts")
             bind(s.contexts, s.catalog_keys.at(section),
                  [&](const auto &item) { return s.referenced(item.second.declaration); });
         else if (section == "operators")
@@ -182,8 +186,8 @@ Json ScientificStudy::read_source(const Json &input, rfc::runtime::ExecutionLeas
             });
         else
             throw std::invalid_argument("unknown source catalogue section");
-        descriptor.set("ordering", Json::string(section == "carriers" ? "native_declaration_order"
-                                                                      : "stable_key_order"));
+        descriptor.set("ordering",Json::string(section=="carriers"?"native_declaration_order":
+            s.compact && (section=="cells" || section=="occurrences")?"native_attaching_order":"stable_key_order"));
     } else if (kind == "document") {
         members(stream, {"kind", "id"});
         const auto id = text(stream.at("id"));
@@ -226,7 +230,7 @@ Json ScientificStudy::read_source(const Json &input, rfc::runtime::ExecutionLeas
             const auto carrier = pin.carrier();
             if (kind == "field" &&
                 carrier->kind == rfc::storage::TemporalCarrierKind::SourceGrade) {
-                const auto cell = s.coordinate_cells.at(carrier->grade.value).at(index);
+                const auto cell = s.coordinate(carrier->grade.value,index);
                 auto identity = Json::object();
                 identity.set("grade", Json::integer(cell.grade.value));
                 identity.set("key", Json::string(std::to_string(cell.key)));

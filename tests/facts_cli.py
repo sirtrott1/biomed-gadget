@@ -254,7 +254,10 @@ chrom_answers = command('record-view','--input',chrom_answer_path,'--member','re
 chrom_intent = json.loads((chromatin / 'inputs/intent.json').read_text())
 first = chrom_answers['answers'][0]
 artifact = first['artifacts'][0]
-certificate = command('record-view','--input',chrom_answer_path.parent/artifact['results'][0]['path'])
+reference = artifact['results'][0]
+selection = reference.get('native_selection')
+selectors = ['--assay', selection['assay']] if selection else []
+certificate = command('record-view','--input',chrom_answer_path.parent/reference['path'], *selectors)
 if certificate.get('schema')=='gadget.operation.native.v1':certificate=certificate['result']
 # Select a complete declared field/result fact supported by this independent protocol.
 def scalar_path(value, path=()):

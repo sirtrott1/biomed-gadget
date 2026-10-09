@@ -12,6 +12,8 @@ NativeRecord admit_record_view(const Json &input, RecordByteBindings bytes = {},
                               std::optional<std::uint64_t> source_namespace = {});
 NativeRecordValue import_record_view(const Json &input, const RecordByteBindings &bytes = {});
 Json render_record_view(const NativeRecord &record);
+// Canonical layout/payload and their actual referenced byte spans.
+std::string native_declaration_digest(const NativeRecord &record);
 // A retained record is always a native owner or a pinned member of one. JSON
 // is generated only for the existing external views and adapter calls.
 class RetainedRecord {

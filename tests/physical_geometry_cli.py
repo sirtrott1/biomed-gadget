@@ -255,7 +255,7 @@ for label,values in [('short',['2','3']),('nonpositive',['2','0','5','7'])]:
 original_result=query('materialize-oracle',workspace,request)
 material=dict(schema='gadget.assays.materialize.v1',id='fields',source_namespace='771992',design=design,recipe=request,channel='E')
 run('derive-assays','--workspace',workspace,'--request',save('materialize.json',material),'--out',root/'derived')
-w=root/'derived/workspace.json'
+w=root/'derived/workspace.rfcxs'
 for method in ['inspect','hodge','green_action']:
     inner=dict(operation=method)
     if method!='inspect':inner.update(context='all',field='all.interval-contrast:0' if method=='hodge' else 'all.contrast:0:residual')
@@ -309,7 +309,7 @@ plan=run('pipeline-prepare','--workspace',root/'public/workspace.json','--reques
 save('public-plan.json',plan)
 run('pipeline','--workspace',root/'public/workspace.json','--request',root/'public-plan.json','--out',root/'public-run')
 shutil.rmtree(root/'public')
-receipt=run('replay-derivation','--workspace',root/'public-run/contrast/workspace/workspace.json','--assay','coverage-fields','--out',root/'public-replay')
+receipt=run('replay-derivation','--workspace',root/'public-run/contrast/workspace/workspace.rfcxs','--assay','coverage-fields','--out',root/'public-replay')
 check(receipt['status']=='PASS','Public selected pipeline replay')
 save('schema-requests.json',requests)
 save('checks.json',dict(status='PASS',independent_checks=checks,actual_query_schemas=len(requests)))

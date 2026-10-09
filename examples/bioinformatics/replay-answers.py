@@ -56,7 +56,7 @@ def main():
 
     stage(declaration)
     run('import-assays', '--spec', inputs / 'import.json', '--out', root / 'source')
-    manifest = root / 'source/workspace.json'
+    manifest = root / 'source/workspace.rfcxs'
     intent = json.loads((inputs / 'intent.json').read_text())
     question = intent['answer_contract']['question']
     catalog = run('recipe-catalog', '--workspace', manifest, '--intent', inputs / 'intent.json')
@@ -88,7 +88,9 @@ def main():
                 if path.is_absolute() or '..' in path.parts:
                     raise ValueError('Answer artifact escapes the pipeline')
                 data = (directory / path).read_bytes()
-                certificate = run('record-view','--input',directory/path)
+                selection = ref.get('native_selection')
+                selectors = ['--assay', selection['assay']] if selection else []
+                certificate = run('record-view','--input',directory/path, *selectors)
                 if certificate.get('schema')=='gadget.operation.native.v1':certificate=certificate['result']
                 if (ref['sha256'] != 'sha256:' + hashlib.sha256(data).hexdigest()
                     or ref['source_digest'] != certificate['source_digest']
@@ -103,7 +105,7 @@ def main():
         if 'output' not in goal:
             continue
         name, assay = binding['id'], goal['output']['id']
-        replay = run('replay-derivation', '--workspace', directory / name / 'workspace/workspace.json',
+        replay = run('replay-derivation', '--workspace', directory / name / 'workspace/workspace.rfcxs',
                      '--assay', assay, '--out', root / ('replayed-' + name))
         if replay['status'] != 'PASS':
             raise ValueError('Derivation replay failed: ' + name)
