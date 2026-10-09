@@ -74,6 +74,9 @@ int main(int argc,char **argv) {
           "record directory copied an actual native publication");
     annotated.write(directory/"annotated.bin");
     const auto annotated_restart=NativeRecord::read(directory/"annotated.bin");
+    const auto& retained_field=annotated_restart.endpoint()->tensors.front().tensor.values();
+    check(retained_field.retained_source() && !retained_field.materialized_entries(),
+          "record loading expanded an unchanged field");
     const auto encoded=annotated_restart.encoded_tensor(888);
     check(encoded && encoded->publication().pin()==annotated_restart.endpoint() &&
           encoded->publication().source_namespace()==811 && encoded->encoding_sequence()==4,
@@ -83,6 +86,7 @@ int main(int argc,char **argv) {
     check(selected.state(0)==numeric::Rational{0} && !selected.state(1) &&
           selected.state(2)==numeric::Rational{-5,13} && read_stats.decoded_coefficients==1,
           "encoded field changed support or coefficient state");
+    check(!retained_field.materialized_entries(),"selected operation expanded the publication field");
     rejects([&]{(void)annotated_restart.encoded_tensor(999);});
     check(annotated_restart.encode()==annotated.encode() &&
           annotated_restart.at("observation").rational()==numeric::Rational{"2/7"},

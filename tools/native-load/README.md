@@ -33,7 +33,10 @@ count encoded component vectors once by actual owner. Source measurements count
 the selected endpoint's cells, ordered occurrences, incidence arrays, reverse
 indexes, identities, aspect planes, scale storage and lattice coefficients.
 Field measurements separate logical coordinates, structural support, nonzero
-entries, vector capacity and GMP limb capacity. Declaration tensors have their
+entries, retained and materialized value fields, vector capacity and GMP limb capacity.
+Accounting inspects existing allocations without materializing an encoded field.
+Zero entry and limb capacities indicate that the coefficients remain in the
+counted history component; they do not indicate missing data. Declaration tensors have their
 own counts. Record byte owners are deduplicated by shared owner identity.
 
 These measurements do not form a complete allocation total. Allocator overhead,

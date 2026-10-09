@@ -63,10 +63,15 @@ void tensor_counts(Counts &counts, const std::string &prefix,
     add(counts, prefix + ".tensors", 1);
     add(counts, prefix + ".logical_coordinates", tensor.domain().logical_size());
     add(counts, prefix + ".supported_coordinates", tensor.support().count());
-    add(counts, prefix + ".nonzero_entries", tensor.values().entries().size());
-    capacity(counts, prefix + ".entry_capacity_bytes", tensor.values().entries());
+    add(counts, prefix + ".nonzero_entries", tensor.values().nonzeros());
+    const auto* entries = tensor.values().materialized_entries();
+    add(counts, prefix + ".retained_value_fields", tensor.values().retained_source() ? 1 : 0);
+    add(counts, prefix + ".materialized_value_fields", entries ? 1 : 0);
+    if (entries) capacity(counts, prefix + ".entry_capacity_bytes", *entries);
+    else add(counts, prefix + ".entry_capacity_bytes", 0);
     capacity(counts, prefix + ".domain_capacity_bytes", tensor.domain().extents());
-    for (const auto &entry : tensor.values().entries())
+    add(counts, prefix + ".limb_capacity_bytes", 0);
+    if (entries) for (const auto &entry : *entries)
         add(counts, prefix + ".limb_capacity_bytes", numeric::rational_limb_bytes(entry.value));
     if (const auto *indices = tensor.support().sparse_indices())
         capacity(counts, prefix + ".support_capacity_bytes", *indices);

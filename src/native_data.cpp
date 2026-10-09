@@ -41,6 +41,7 @@ storage::NativeSeriesLimits native_data_limits() {
         limits.max_analysis_steps = limits.max_analysis_dimension = limits.max_analysis_scalars =
         limits.max_analysis_work = addressable;
     auto &read = limits.temporal;
+    read.retain_encoded_values = true;
     read.max_file_bytes = read.max_records = read.max_dimension = read.max_rank =
         read.max_integer_bytes = addressable;
     read.source_declarations = {addressable, addressable};

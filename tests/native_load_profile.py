@@ -60,7 +60,8 @@ def main():
     assert values["fields.tensors"] == 2 and values["fields.logical_coordinates"] == 7
     assert values["fields.supported_coordinates"] == 7 and values["fields.nonzero_entries"] == 6
     assert values["fields.support_capacity_bytes"] == 0
-    assert values["fields.entry_capacity_bytes"] > 0 and values["fields.limb_capacity_bytes"] > 0
+    assert values["fields.entry_capacity_bytes"] == 0 and values["fields.limb_capacity_bytes"] == 0
+    assert values["fields.retained_value_fields"] == 2 and values["fields.materialized_value_fields"] == 0
     for extra in [["--cutoff", "3"], ["--cutoff", "6"], ["--cutoff", "-1"],
                   ["--cutoff", "18446744073709551616"], ["--record"],
                   ["--accessions", "--accessions"], ["--unknown"]]:
