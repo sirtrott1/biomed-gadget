@@ -1,0 +1,82 @@
+{
+  "schema": "gadget.pipeline.intent.v1",
+  "profile": "sequence",
+  "recipes": [
+    {
+      "id": "splice",
+      "purpose": "splice chains",
+      "goal": {
+        "method": "sequence_splice_discovery",
+        "parameters": {
+          "query_resource": "queries",
+          "reference_resource": "reference",
+          "strands": [
+            "+",
+            "-"
+          ],
+          "minimum_exon_bases": 3,
+          "minimum_intron_bases": 4,
+          "maximum_intron_bases": 10,
+          "maximum_junctions": 6,
+          "motifs": [
+            "GT-AG"
+          ],
+          "evidence": "Complete exact exon chains from the retained reference"
+        }
+      }
+    },
+    {
+      "id": "reconstruction",
+      "purpose": "read cover reconstructions",
+      "goal": {
+        "method": "read_overlap_reconstruction",
+        "parameters": {
+          "resource": "reads",
+          "minimum_overlap": 2,
+          "objective": "minimum_suffix_prefix_read_cover",
+          "evidence": "Every original read in its retained orientation"
+        }
+      }
+    },
+    {
+      "id": "kmers",
+      "purpose": "kmer structure",
+      "goal": {
+        "method": "sequence_assembly_graph",
+        "parameters": {
+          "resource": "reads",
+          "k": 3,
+          "ambiguity": "literal_tokens",
+          "evidence": "Every source literal k-mer occurrence"
+        }
+      }
+    }
+  ],
+  "answer_contract": {
+    "schema": "gadget.pipeline.answer.contract.v1",
+    "question": "Which exact exon chains and minimum read covers are supported by the declared sequences, and what branching structure do their observed k-mers retain? Select splice, reconstruction and kmers.",
+    "requirements": [
+      {
+        "id": "splice",
+        "observable": "splice_chains",
+        "bindings": [
+          "splice"
+        ]
+      },
+      {
+        "id": "reconstruction",
+        "observable": "read_cover_reconstructions",
+        "bindings": [
+          "reconstruction"
+        ]
+      },
+      {
+        "id": "kmers",
+        "observable": "kmer_structure",
+        "bindings": [
+          "kmers"
+        ]
+      }
+    ]
+  }
+}

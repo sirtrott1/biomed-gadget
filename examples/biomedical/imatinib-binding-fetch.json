@@ -1,0 +1,63 @@
+{
+  "schema": "gadget.database.fetch.v1",
+  "id": "imatinib-binding-cross-database",
+  "requests": [
+    {
+      "id": "chembl-status",
+      "provider": "chembl",
+      "resource": "status",
+      "identifier": "current"
+    },
+    {
+      "id": "imatinib-kd-page",
+      "provider": "chembl",
+      "resource": "activity",
+      "identifier": "CHEMBL941",
+      "endpoint": "Kd",
+      "limit": 30
+    },
+    {
+      "id": "imatinib-molecule",
+      "provider": "chembl",
+      "resource": "molecule",
+      "identifier": "CHEMBL941"
+    },
+    {
+      "id": "abl1-target",
+      "provider": "chembl",
+      "resource": "target",
+      "identifier": "CHEMBL1862"
+    },
+    {
+      "id": "abl1-protein",
+      "provider": "uniprot",
+      "resource": "protein",
+      "identifier": "P00519"
+    },
+    {
+      "id": "imatinib-compound",
+      "provider": "pubchem",
+      "resource": "compound",
+      "identifier": "5291"
+    },
+    {
+      "id": "abl1-structure",
+      "provider": "pdb",
+      "resource": "entry",
+      "identifier": "1IEP"
+    },
+    {
+      "id": "abl1-structure-polymer",
+      "provider": "pdb",
+      "resource": "polymer",
+      "identifier": "1IEP_1"
+    },
+    {
+      "id": "abl1-binding-cutoff",
+      "provider": "bindingdb",
+      "resource": "uniprot",
+      "identifier": "P00519",
+      "cutoff_nm": 1
+    }
+  ]
+}

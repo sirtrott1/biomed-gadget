@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.assays.source.read.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "gadget.assays.source.read.v1"
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "assay": {
+      "type": "string",
+      "minLength": 1
+    },
+    "partition": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "read": {
+      "oneOf": [
+        {
+          "$ref": "scientific-source-read.schema.json"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema": {
+              "const": "gadget.scientific.source.index.v1"
+            }
+          },
+          "required": [
+            "schema"
+          ]
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "source_digest",
+    "assay",
+    "partition",
+    "read"
+  ]
+}

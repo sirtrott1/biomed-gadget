@@ -1,0 +1,10 @@
+{
+  "schema": "gadget.measurements.v1",
+  "context": "AD",
+  "path": "effects.csv",
+  "identity_column": "gene",
+  "fields": [
+    {"id": "AD.log2FC", "column": "log2FC", "kind": "effect_size", "units": "log2 ratio", "method": "fixture contrast", "null_model": "not supplied", "missing_policy": "zero_extension"},
+    {"id": "AD.padj", "column": "padj", "kind": "adjusted_p_value", "units": "probability", "method": "fixture upstream adjustment", "null_model": "fixture test family", "missing_policy": "zero_extension"}
+  ]
+}

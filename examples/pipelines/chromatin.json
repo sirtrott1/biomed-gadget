@@ -1,0 +1,62 @@
+{
+  "schema": "gadget.pipeline.default.v1",
+  "profile": "chip_seq",
+  "question": "Where does the declared treated-minus-input interval field change?",
+  "goals": [
+    {
+      "id": "contrast",
+      "method": "chromatin_contrast",
+      "parameters": {
+        "samples": [
+          {
+            "id": "treated",
+            "resource": "treated",
+            "scale": "1",
+            "scale_provenance": "Explicit identity scale"
+          },
+          {
+            "id": "input",
+            "resource": "input",
+            "scale": "1",
+            "scale_provenance": "Explicit identity scale"
+          }
+        ],
+        "contrasts": [
+          {
+            "id": "matched",
+            "treated": "treated",
+            "control": "input"
+          }
+        ],
+        "strand_policy": "separate",
+        "thresholds": [
+          "0",
+          "1"
+        ],
+        "absence_policy": "measured_zero_within_union"
+      },
+      "output": {
+        "id": "interval_contrasts",
+        "source_namespace": "10102",
+        "design": {
+          "question": "Compare the explicitly declared experimental units",
+          "population": "Declared specimens",
+          "selection": "All reported inputs required by the declared maps",
+          "limitations": [
+            "Interpretation follows the supplied experimental design"
+          ]
+        },
+        "channel": "observation"
+      }
+    },
+    {
+      "method": "coverage",
+      "input": "contrast",
+      "parameters": {
+        "fields": [
+          "all.matched"
+        ]
+      }
+    }
+  ]
+}

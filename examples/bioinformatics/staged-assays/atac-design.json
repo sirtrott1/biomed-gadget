@@ -1,0 +1,143 @@
+{
+  "schema": "gadget.assays.query.v1",
+  "operation": "design_aggregation",
+  "assay": "atac",
+  "feature_design": {
+    "mode": "identity"
+  },
+  "observation_design": {
+    "mode": "groups",
+    "groups": [
+      {
+        "id": "before",
+        "where": [
+          {
+            "column": "specimen",
+            "values": [
+              "S1"
+            ]
+          },
+          {
+            "column": "state",
+            "values": [
+              "before"
+            ]
+          },
+          {
+            "column": "cell_type",
+            "values": [
+              "malignant"
+            ]
+          }
+        ],
+        "coefficient": "1"
+      },
+      {
+        "id": "after",
+        "where": [
+          {
+            "column": "specimen",
+            "values": [
+              "S1"
+            ]
+          },
+          {
+            "column": "state",
+            "values": [
+              "after"
+            ]
+          },
+          {
+            "column": "cell_type",
+            "values": [
+              "malignant"
+            ]
+          }
+        ],
+        "coefficient": "1"
+      },
+      {
+        "id": "partial",
+        "where": [
+          {
+            "column": "specimen",
+            "values": [
+              "S1"
+            ]
+          },
+          {
+            "column": "state",
+            "values": [
+              "partial"
+            ]
+          },
+          {
+            "column": "cell_type",
+            "values": [
+              "malignant"
+            ]
+          }
+        ],
+        "coefficient": "1"
+      },
+      {
+        "id": "zero",
+        "where": [
+          {
+            "column": "specimen",
+            "values": [
+              "S1"
+            ]
+          },
+          {
+            "column": "state",
+            "values": [
+              "zero"
+            ]
+          },
+          {
+            "column": "cell_type",
+            "values": [
+              "malignant"
+            ]
+          }
+        ],
+        "coefficient": "1"
+      },
+      {
+        "id": "unobserved",
+        "where": [
+          {
+            "column": "specimen",
+            "values": [
+              "S1"
+            ]
+          },
+          {
+            "column": "state",
+            "values": [
+              "unobserved"
+            ]
+          },
+          {
+            "column": "cell_type",
+            "values": [
+              "malignant"
+            ]
+          }
+        ],
+        "coefficient": "1"
+      }
+    ],
+    "missing_tokens": [
+      "NA"
+    ],
+    "unassigned_policy": "exclude",
+    "overlap_policy": "error"
+  },
+  "map_method": "Dictionary-defined disjoint specimen groups",
+  "map_evidence": "Authored exact predicates over specimen, state and cell_type columns",
+  "support_policy": "require_all_nonzero_inputs",
+  "count_policy": "disjoint_count_sum",
+  "workers": 2
+}

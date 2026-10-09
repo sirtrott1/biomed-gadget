@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.pipeline.source.context.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.pipeline.source.context.v1"
+    },
+    "context": {
+      "$ref": "assays-source-context.schema.json"
+    },
+    "annotations": {
+      "$ref": "assays-annotation-proposal.schema.json"
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mentions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "id",
+          "mentions"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "context",
+    "annotations",
+    "requirements"
+  ],
+  "additionalProperties": false
+}

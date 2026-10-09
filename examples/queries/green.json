@@ -1,0 +1,11 @@
+{
+  "operation": "green",
+  "context": "AD",
+  "realization": "support",
+  "grade": 0,
+  "field": "AD.G",
+  "lambda": "1",
+  "tolerance": "1e-9",
+  "mode": "numerical",
+  "top_k": 10
+}

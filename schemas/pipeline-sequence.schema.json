@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.pipeline.sequence.v1",
+  "allOf": [
+    {
+      "$ref": "pipeline.schema.json"
+    },
+    {
+      "properties": {
+        "profile": {
+          "const": "sequence"
+        }
+      }
+    }
+  ]
+}

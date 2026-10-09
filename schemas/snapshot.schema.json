@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GADGET completed native study snapshot",
+  "description": "Local staged export. Hashes establish integrity, not authenticity or crash durability. The native codec owns all mathematical serialization.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "profile", "codec", "source_digest", "study_digest", "artifacts", "rexgraph_headers_sha256", "gadget_sources_sha256"],
+  "properties": {
+    "schema": {"const": "gadget.snapshot.v1"},
+    "profile": {"const": "pager_get.v1"},
+    "codec": {"const": "rfc.native_series.v1"},
+    "source_digest": {"$ref": "#/$defs/digest"},
+    "study_digest": {"$ref": "#/$defs/digest"},
+    "rexgraph_headers_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gadget_sources_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifacts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["study.rfcxs", "metadata.json"],
+      "properties": {
+        "study.rfcxs": {"$ref": "#/$defs/artifact"},
+        "metadata.json": {"$ref": "#/$defs/artifact"}
+      }
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["bytes", "sha256"],
+      "properties": {
+        "bytes": {"type": "integer", "minimum": 0, "maximum": 268435456},
+        "sha256": {"$ref": "#/$defs/digest"}
+      }
+    }
+  }
+}

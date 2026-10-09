@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.pipeline.design.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.pipeline.design.v1"
+    },
+    "source_digest": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "profile": {
+      "enum": [
+        "rna_seq",
+        "single_cell",
+        "atac_seq",
+        "chip_seq",
+        "spatial",
+        "multi_omics",
+        "variants",
+        "sequence",
+        "custom"
+      ]
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "type": {
+            "enum": [
+              "query",
+              "derive",
+              "workflow",
+              "bind"
+            ]
+          },
+          "input": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "request": {
+            "type": "object"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "uniqueItems": true
+          },
+          "assay": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "partition": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "workers": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "normalization_evidence_field": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recipe_binding": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "not": {
+              "const": "source"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "input",
+          "request"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "concurrent_jobs": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "schema",
+    "profile",
+    "question",
+    "steps"
+  ],
+  "additionalProperties": false
+}

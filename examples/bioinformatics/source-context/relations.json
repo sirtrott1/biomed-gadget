@@ -1,0 +1,30 @@
+{
+  "relations": [
+    {
+      "id": "declared-response",
+      "grade": 1,
+      "participants": [
+        {
+          "cell": "f1",
+          "exists": true,
+          "negative": true,
+          "magnitude": "1"
+        },
+        {
+          "cell": "f1",
+          "exists": true,
+          "negative": false,
+          "magnitude": "1"
+        },
+        {
+          "cell": "f2",
+          "exists": false,
+          "negative": false,
+          "magnitude": "7"
+        }
+      ],
+      "meaning": "Authored cancelling response relation with a retained inactive participant"
+    }
+  ],
+  "fields": []
+}

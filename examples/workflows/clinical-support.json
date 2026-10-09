@@ -1,0 +1,80 @@
+{
+  "schema": "gadget.scientific.workflow.v1",
+  "id": "clinical-support-followup",
+  "source_digest": "sha256:e31e27f02af6e2c77752fd9267d2866ada4fe8f0aec0c12683e39c9d7baceef3",
+  "limits": {
+    "depth": 12,
+    "nodes": 64,
+    "model_calls": 8,
+    "parallel_workers": 2
+  },
+  "definitions": [],
+  "entry": {
+    "id": "clinical",
+    "type": "sequence",
+    "steps": [
+      {
+        "id": "ca-support",
+        "type": "query",
+        "query": {
+          "operation": "coverage",
+          "field": "all.ca"
+        }
+      },
+      {
+        "id": "support-fanout",
+        "type": "parallel",
+        "workers": 2,
+        "steps": [
+          {
+            "id": "complete-ca-chol",
+            "type": "query",
+            "query": {
+              "operation": "support_mask",
+              "fields": [
+                "all.ca",
+                "all.chol"
+              ],
+              "mode": "all_reported",
+              "backend": "cpu_tiles",
+              "workers": 4,
+              "tile_words": 1
+            }
+          },
+          {
+            "id": "chol-summary",
+            "type": "query",
+            "query": {
+              "operation": "field_summary",
+              "field": "all.chol",
+              "support": "reported_only"
+            }
+          }
+        ]
+      },
+      {
+        "id": "missingness-followup",
+        "type": "branch",
+        "from": "ca-support",
+        "member": "missing",
+        "at_least": 1,
+        "on_true": {
+          "id": "planner-followup",
+          "type": "model",
+          "role": "planner",
+          "prompt": "Inspect the certified missing counts for all.ca in this data context. Execute exactly one query: coverage for all.chol. Do not claim significance, causality, or impute any missing value.",
+          "context": [
+            "ca-support"
+          ]
+        },
+        "on_false": {
+          "id": "complete",
+          "type": "query",
+          "query": {
+            "operation": "inspect"
+          }
+        }
+      }
+    ]
+  }
+}

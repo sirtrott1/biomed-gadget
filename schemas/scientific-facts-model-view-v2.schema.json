@@ -1,0 +1,383 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.scientific.facts.model.view.v2",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.scientific.facts.model.view.v2"
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "report_values"
+        },
+        "comparison": {
+          "const": "equal"
+        },
+        "scope": {
+          "const": "all_selected_facts"
+        }
+      },
+      "required": [
+        "action",
+        "comparison",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "question_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "facts_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "fact_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "meaning": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "source"
+                  },
+                  "target": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "target"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "answer"
+                  },
+                  "answer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "binding": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "step": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "result": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "kind",
+                  "answer",
+                  "binding",
+                  "step",
+                  "result"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "path": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ]
+            }
+          },
+          "value_type": {
+            "enum": [
+              "boolean",
+              "count",
+              "rational",
+              "text",
+              "integer"
+            ]
+          },
+          "value": {},
+          "fact_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "owner_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "meaning",
+          "from",
+          "path",
+          "value_type",
+          "value",
+          "fact_sha256",
+          "owner_sha256"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "value_type": {
+                  "const": "boolean"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "value_type": {
+                  "const": "count"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "value_type": {
+                  "const": "integer"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "value_type": {
+                  "const": "rational"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "value_type": {
+                  "const": "text"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "owners": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "owner_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "kind": {
+                "const": "source"
+              },
+              "owner": {
+                "type": "object",
+                "properties": {
+                  "context_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  },
+                  "binding_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  },
+                  "target": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "context_sha256",
+                  "binding_sha256",
+                  "target"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "owner_sha256",
+              "kind",
+              "owner"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "owner_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "kind": {
+                "const": "answer"
+              },
+              "owner": {
+                "type": "object",
+                "properties": {
+                  "answers_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  },
+                  "observable": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reference": {
+                    "type": "object",
+                    "properties": {
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^sha256:[a-f0-9]{64}$"
+                      },
+                      "source_digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[a-f0-9]{64}$"
+                      },
+                      "certificate_sha256": {
+                        "type": "string",
+                        "pattern": "^sha256:[a-f0-9]{64}$"
+                      },
+                      "query_sha256": {
+                        "type": "string",
+                        "pattern": "^sha256:[a-f0-9]{64}$"
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "pointer": {
+                        "const": "/result"
+                      }
+                    },
+                    "required": [
+                      "sha256",
+                      "source_digest",
+                      "certificate_sha256",
+                      "query_sha256",
+                      "path",
+                      "pointer"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "answers_sha256",
+                  "observable",
+                  "reference"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "owner_sha256",
+              "kind",
+              "owner"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "task",
+    "question",
+    "source_digest",
+    "question_sha256",
+    "facts_sha256",
+    "fact_count",
+    "facts",
+    "owners"
+  ],
+  "additionalProperties": false
+}

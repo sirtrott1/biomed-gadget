@@ -1,0 +1,638 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.scientific.study.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "enum": [
+        "gadget.scientific.study.v1",
+        "gadget.scientific.study.v2"
+      ]
+    },
+    "id": {
+      "$ref": "#/$defs/text"
+    },
+    "native": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/text"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "source_namespace": {
+          "$ref": "#/$defs/key"
+        },
+        "cutoff": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "description": "Explicit native publication sequence; required for archives containing temporal frames."
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "source_namespace"
+      ]
+    },
+    "design": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "$ref": "#/$defs/text"
+        },
+        "population": {
+          "$ref": "#/$defs/text"
+        },
+        "selection": {
+          "$ref": "#/$defs/text"
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "covariates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/text"
+              },
+              "description": {
+                "$ref": "#/$defs/text"
+              },
+              "field": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "$ref": "#/$defs/evidence"
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "field",
+              "evidence"
+            ]
+          }
+        }
+      },
+      "required": [
+        "question",
+        "population",
+        "selection",
+        "covariates",
+        "limitations"
+      ]
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "path": {
+            "$ref": "#/$defs/text"
+          },
+          "sha256": {
+            "$ref": "#/$defs/digest"
+          },
+          "format": {
+            "enum": [
+              "utf8",
+              "opaque"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "sha256",
+          "format"
+        ]
+      }
+    },
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "grade": {
+            "$ref": "#/$defs/grade"
+          },
+          "key": {
+            "$ref": "#/$defs/key"
+          },
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "kind": {
+            "$ref": "#/$defs/text"
+          },
+          "label": {
+            "$ref": "#/$defs/text"
+          },
+          "evidence": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "required": [
+          "grade",
+          "key",
+          "id",
+          "kind",
+          "label",
+          "evidence"
+        ]
+      }
+    },
+    "occurrences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "grade": {
+            "$ref": "#/$defs/grade"
+          },
+          "key": {
+            "$ref": "#/$defs/key"
+          },
+          "evidence": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "required": [
+          "grade",
+          "key",
+          "evidence"
+        ]
+      }
+    },
+    "contexts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "block": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/key"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "identity"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "const": "diagonal"
+                    },
+                    "values": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/decimal"
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "values"
+                  ]
+                }
+              ]
+            }
+          },
+          "time": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "axis": {
+                    "$ref": "#/$defs/text"
+                  },
+                  "position": {
+                    "$ref": "#/$defs/decimal"
+                  },
+                  "unit": {
+                    "$ref": "#/$defs/text"
+                  },
+                  "population": {
+                    "$ref": "#/$defs/text"
+                  }
+                },
+                "required": [
+                  "axis",
+                  "position",
+                  "unit",
+                  "population"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "block",
+          "metrics",
+          "time"
+        ]
+      }
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "key": {
+            "$ref": "#/$defs/key"
+          },
+          "context": {
+            "$ref": "#/$defs/text"
+          },
+          "channel": {
+            "enum": [
+              "G",
+              "E",
+              "T",
+              "covariate",
+              "observation"
+            ]
+          },
+          "quantity": {
+            "$ref": "#/$defs/text"
+          },
+          "units": {
+            "$ref": "#/$defs/text"
+          },
+          "method": {
+            "$ref": "#/$defs/text"
+          },
+          "value_type": {
+            "enum": [
+              "quantitative",
+              "indicator",
+              "categorical"
+            ]
+          },
+          "evidence": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "context",
+          "channel",
+          "quantity",
+          "units",
+          "method",
+          "value_type",
+          "evidence"
+        ]
+      }
+    },
+    "field_sets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "grade": {
+            "$ref": "#/$defs/grade"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "carriers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/key"
+            }
+          },
+          "maps": {
+            "enum": [
+              "explicit",
+              "constant"
+            ]
+          },
+          "coordinate_system": {
+            "$ref": "#/$defs/key"
+          }
+        },
+        "required": [
+          "id",
+          "grade",
+          "fields",
+          "carriers",
+          "maps"
+        ]
+      }
+    },
+    "publications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "study": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "$ref": "#/$defs/digest"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "source_digest": {
+            "$ref": "#/$defs/digest"
+          },
+          "meaning": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "required": [
+          "id",
+          "study",
+          "source_digest",
+          "meaning",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "operators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/text"
+          },
+          "key": {
+            "$ref": "#/$defs/key"
+          },
+          "quantity": {
+            "$ref": "#/$defs/text"
+          },
+          "units": {
+            "$ref": "#/$defs/text"
+          },
+          "method": {
+            "$ref": "#/$defs/text"
+          },
+          "evidence": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "required": [
+          "id",
+          "key",
+          "quantity",
+          "units",
+          "method",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "native",
+    "design",
+    "documents",
+    "cells",
+    "occurrences",
+    "contexts",
+    "fields",
+    "field_sets"
+  ],
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 20
+    },
+    "grade": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "decimal": {
+      "type": "string",
+      "pattern": "^[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "$ref": "#/$defs/text"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "document",
+          "start",
+          "end"
+        ]
+      }
+    }
+  },
+  "description": "Complete native scientific study. Version 1 requires exact quotations; version 2 also admits document-bound byte references. Both retain complete original documents.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema": {
+            "const": "gadget.scientific.study.v1"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "cells": {
+            "items": {
+              "properties": {
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "required": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "occurrences": {
+            "items": {
+              "properties": {
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "required": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "fields": {
+            "items": {
+              "properties": {
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "required": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "publications": {
+            "items": {
+              "properties": {
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "required": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "operators": {
+            "items": {
+              "properties": {
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "required": [
+                      "text"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "design": {
+            "properties": {
+              "covariates": {
+                "items": {
+                  "properties": {
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "required": [
+                          "text"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

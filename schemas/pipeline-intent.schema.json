@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.pipeline.intent.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.pipeline.intent.v1"
+    },
+    "profile": {
+      "enum": [
+        "rna_seq",
+        "single_cell",
+        "atac_seq",
+        "chip_seq",
+        "spatial",
+        "multi_omics",
+        "variants",
+        "sequence",
+        "custom"
+      ]
+    },
+    "assay": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "concurrent_jobs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "recipes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "minLength": 1,
+            "maxLength": 128,
+            "not": {
+              "const": "source"
+            }
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "goal": {
+            "allOf": [
+              {
+                "$ref": "pipeline-default.schema.json#/properties/goals/items"
+              },
+              {
+                "type": "object",
+                "not": {
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "purpose",
+          "goal"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "answer_contract": {
+      "$ref": "pipeline-answer-contract.schema.json"
+    },
+    "source_context": {
+      "$ref": "pipeline-source-context.schema.json"
+    }
+  },
+  "required": [
+    "schema",
+    "profile",
+    "recipes"
+  ],
+  "additionalProperties": false
+}

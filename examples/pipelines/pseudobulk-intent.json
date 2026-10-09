@@ -1,0 +1,91 @@
+{
+  "schema": "gadget.pipeline.intent.v1",
+  "profile": "single_cell",
+  "recipes": [
+    {
+      "id": "pseudobulk",
+      "purpose": "Sum the explicitly declared cell groups to experimental-unit counts",
+      "goal": {
+        "method": "aggregation",
+        "parameters": {
+          "assay": "cells",
+          "feature_groups": [
+            {
+              "id": "gene_A",
+              "members": [
+                {
+                  "id": "gene_A",
+                  "coefficient": "1"
+                }
+              ]
+            }
+          ],
+          "observation_groups": [
+            {
+              "id": "donor_1_treated",
+              "members": [
+                {
+                  "id": "cell_A",
+                  "coefficient": "1"
+                }
+              ]
+            },
+            {
+              "id": "donor_1_control",
+              "members": [
+                {
+                  "id": "cell_B",
+                  "coefficient": "1"
+                }
+              ]
+            }
+          ],
+          "map_method": "Explicit donor, condition and cell membership sums",
+          "map_evidence": "Declared cell identities and specimen membership",
+          "support_policy": "require_all_nonzero_inputs",
+          "count_policy": "disjoint_count_sum"
+        },
+        "output": {
+          "id": "donor_counts",
+          "source_namespace": "10101",
+          "design": {
+            "question": "Compare the explicitly declared experimental units",
+            "population": "Declared specimens",
+            "selection": "All reported inputs required by the declared maps",
+            "limitations": [
+              "Interpretation follows the supplied experimental design"
+            ]
+          },
+          "channel": "E"
+        }
+      }
+    },
+    {
+      "id": "expression_contrast",
+      "purpose": "Compare matched experimental units with signed feature differences and heterogeneity",
+      "goal": {
+        "method": "expression_contrast",
+        "input": "pseudobulk",
+        "parameters": {
+          "pairs": [
+            {
+              "id": "donor_1",
+              "left": "all.donor_1_treated",
+              "right": "all.donor_1_control",
+              "left_scale": "1",
+              "right_scale": "1"
+            }
+          ],
+          "selection": [],
+          "support": "joint_reported",
+          "normalization": {
+            "method": "Declared identity scales; no fitted normalization"
+          },
+          "output_units": "counts",
+          "workers": 1
+        },
+        "normalization_evidence_field": "all.donor_1_treated"
+      }
+    }
+  ]
+}

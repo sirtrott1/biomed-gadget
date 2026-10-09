@@ -1,0 +1,4 @@
+PAG ID,Type,Name,Size,Species,Data source,Overlap,Similarity score,CoCo score,p-value,FDR
+P1,G,shared assertion,2,Homo sapiens,fixture,1,0.5,2,1e-12,2e-12
+PD,G,changed assertion,1,Homo sapiens,fixture,1,1,2,0.2,0.3
+PC,G,distinct identity same column,2,Homo sapiens,fixture,1,0.5,2,0.4,0.5

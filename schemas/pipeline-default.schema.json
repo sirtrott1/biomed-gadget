@@ -1,0 +1,4468 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.pipeline.default.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.pipeline.default.v1"
+    },
+    "profile": {
+      "enum": [
+        "rna_seq",
+        "single_cell",
+        "atac_seq",
+        "chip_seq",
+        "spatial",
+        "multi_omics",
+        "variants",
+        "sequence",
+        "custom"
+      ]
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "goals": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "oneOf": [
+          {
+            "enum": [
+              "quality",
+              "coverage"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "quality"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/6/properties/resource"
+                  },
+                  "quality_thresholds": {
+                    "$ref": "assays-query.schema.json#/oneOf/6/properties/quality_thresholds"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "quality_thresholds"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "coverage"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "fields": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "alignment_evidence"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/8/properties/resource"
+                  },
+                  "filter": {
+                    "$ref": "assays-query.schema.json#/oneOf/8/properties/filter"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "filter"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "annotation_features"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/7/properties/resource"
+                  },
+                  "feature_type": {
+                    "$ref": "assays-query.schema.json#/oneOf/7/properties/feature_type"
+                  },
+                  "group_attribute": {
+                    "$ref": "assays-query.schema.json#/oneOf/7/properties/group_attribute"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "feature_type",
+                  "group_attribute"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "feature_counts"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/resource"
+                  },
+                  "annotation": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/annotation"
+                  },
+                  "feature_type": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/feature_type"
+                  },
+                  "group_attribute": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/group_attribute"
+                  },
+                  "unit": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/unit"
+                  },
+                  "overlap": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/overlap"
+                  },
+                  "strand_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/strand_policy"
+                  },
+                  "filter": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/filter"
+                  },
+                  "candidate_search": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/candidate_search"
+                  },
+                  "junction_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/9/properties/junction_policy"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "annotation",
+                  "feature_type",
+                  "group_attribute",
+                  "unit",
+                  "overlap",
+                  "strand_policy",
+                  "filter",
+                  "candidate_search"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "allocation_bounds"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/4/properties/resource"
+                  },
+                  "targets": {
+                    "$ref": "assays-query.schema.json#/oneOf/4/properties/targets"
+                  },
+                  "candidate_search": {
+                    "$ref": "assays-query.schema.json#/oneOf/4/properties/candidate_search"
+                  },
+                  "scale": {
+                    "$ref": "assays-query.schema.json#/oneOf/4/properties/scale"
+                  },
+                  "scale_provenance": {
+                    "$ref": "assays-query.schema.json#/oneOf/4/properties/scale_provenance"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "targets",
+                  "candidate_search",
+                  "scale",
+                  "scale_provenance"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "expression_contrast"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "pairs": {
+                    "$ref": "scientific-query.schema.json#/oneOf/14/properties/pairs"
+                  },
+                  "selection": {
+                    "$ref": "scientific-query.schema.json#/oneOf/14/properties/selection"
+                  },
+                  "support": {
+                    "$ref": "scientific-query.schema.json#/oneOf/14/properties/support"
+                  },
+                  "normalization": {
+                    "type": "object",
+                    "properties": {
+                      "method": {
+                        "$ref": "scientific-query.schema.json#/oneOf/14/properties/normalization/properties/method"
+                      },
+                      "evidence": {
+                        "$ref": "scientific-query.schema.json#/oneOf/14/properties/normalization/properties/evidence"
+                      }
+                    },
+                    "required": [
+                      "method"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "output_units": {
+                    "$ref": "scientific-query.schema.json#/oneOf/14/properties/output_units"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/14/properties/workers"
+                  },
+                  "benchmark": {
+                    "$ref": "scientific-query.schema.json#/oneOf/14/properties/benchmark"
+                  }
+                },
+                "required": [
+                  "pairs",
+                  "selection",
+                  "support",
+                  "normalization",
+                  "output_units",
+                  "workers"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "normalization_evidence_field": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "normalization_evidence_field"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "parameters": {
+                      "properties": {
+                        "normalization": {
+                          "not": {
+                            "required": [
+                              "evidence"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "parameters": {
+                      "properties": {
+                        "normalization": {
+                          "required": [
+                            "evidence"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "controlled_relations"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "fields": {
+                    "$ref": "scientific-query.schema.json#/oneOf/11/properties/fields"
+                  },
+                  "endpoint": {
+                    "$ref": "scientific-query.schema.json#/oneOf/11/properties/endpoint"
+                  },
+                  "controls": {
+                    "$ref": "scientific-query.schema.json#/oneOf/11/properties/controls"
+                  },
+                  "selection": {
+                    "$ref": "scientific-query.schema.json#/oneOf/11/properties/selection"
+                  },
+                  "support": {
+                    "$ref": "scientific-query.schema.json#/oneOf/11/properties/support"
+                  },
+                  "metric": {
+                    "$ref": "scientific-query.schema.json#/oneOf/11/properties/metric"
+                  },
+                  "intercept": {
+                    "$ref": "scientific-query.schema.json#/oneOf/11/properties/intercept"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/11/properties/workers"
+                  },
+                  "gram_fields": {
+                    "$ref": "scientific-query.schema.json#/oneOf/11/properties/gram_fields"
+                  }
+                },
+                "required": [
+                  "fields",
+                  "endpoint",
+                  "controls",
+                  "selection",
+                  "support",
+                  "metric",
+                  "intercept"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "aggregation"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "assay": {
+                    "$ref": "assays-query.schema.json#/oneOf/13/properties/assay"
+                  },
+                  "feature_groups": {
+                    "$ref": "assays-query.schema.json#/oneOf/13/properties/feature_groups"
+                  },
+                  "observation_groups": {
+                    "$ref": "assays-query.schema.json#/oneOf/13/properties/observation_groups"
+                  },
+                  "map_method": {
+                    "$ref": "assays-query.schema.json#/oneOf/13/properties/map_method"
+                  },
+                  "map_evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/13/properties/map_evidence"
+                  },
+                  "support_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/13/properties/support_policy"
+                  },
+                  "count_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/13/properties/count_policy"
+                  },
+                  "workers": {
+                    "$ref": "assays-query.schema.json#/oneOf/13/properties/workers"
+                  }
+                },
+                "required": [
+                  "assay",
+                  "feature_groups",
+                  "observation_groups",
+                  "map_method",
+                  "map_evidence",
+                  "support_policy"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "interval_coverage"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/2/properties/resource"
+                  },
+                  "thresholds": {
+                    "$ref": "assays-query.schema.json#/oneOf/2/properties/thresholds"
+                  },
+                  "strand_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/2/properties/strand_policy"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "thresholds",
+                  "strand_policy"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "chromatin_contrast"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "samples": {
+                    "$ref": "assays-query.schema.json#/oneOf/11/properties/samples"
+                  },
+                  "contrasts": {
+                    "$ref": "assays-query.schema.json#/oneOf/11/properties/contrasts"
+                  },
+                  "strand_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/11/properties/strand_policy"
+                  },
+                  "thresholds": {
+                    "$ref": "assays-query.schema.json#/oneOf/11/properties/thresholds"
+                  },
+                  "absence_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/11/properties/absence_policy"
+                  }
+                },
+                "required": [
+                  "samples",
+                  "contrasts",
+                  "strand_policy",
+                  "thresholds",
+                  "absence_policy"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "spatial_relations"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "assay": {
+                    "$ref": "assays-query.schema.json#/oneOf/12/properties/assay"
+                  },
+                  "coordinates": {
+                    "$ref": "assays-query.schema.json#/oneOf/12/properties/coordinates"
+                  },
+                  "frame": {
+                    "$ref": "assays-query.schema.json#/oneOf/12/properties/frame"
+                  },
+                  "units": {
+                    "$ref": "assays-query.schema.json#/oneOf/12/properties/units"
+                  },
+                  "metric_diagonal": {
+                    "$ref": "assays-query.schema.json#/oneOf/12/properties/metric_diagonal"
+                  },
+                  "radius_squared": {
+                    "$ref": "assays-query.schema.json#/oneOf/12/properties/radius_squared"
+                  },
+                  "relation_type": {
+                    "$ref": "assays-query.schema.json#/oneOf/12/properties/relation_type"
+                  },
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/12/properties/evidence"
+                  },
+                  "execution_certificate": {
+                    "$ref": "assays-query.schema.json#/oneOf/12/properties/execution_certificate"
+                  }
+                },
+                "required": [
+                  "assay",
+                  "coordinates",
+                  "frame",
+                  "units",
+                  "metric_diagonal",
+                  "radius_squared",
+                  "relation_type",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "field_transfer"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "left": {
+                    "$ref": "assays-query.schema.json#/oneOf/5/properties/left"
+                  },
+                  "right": {
+                    "$ref": "assays-query.schema.json#/oneOf/5/properties/right"
+                  },
+                  "metric": {
+                    "$ref": "assays-query.schema.json#/oneOf/5/properties/metric"
+                  },
+                  "map": {
+                    "$ref": "assays-query.schema.json#/oneOf/5/properties/map"
+                  }
+                },
+                "required": [
+                  "left",
+                  "right",
+                  "metric",
+                  "map"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "genotypes"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/10/properties/resource"
+                  },
+                  "filter_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/10/properties/filter_policy"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "filter_policy"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "motifs"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/3/properties/resource"
+                  },
+                  "motifs": {
+                    "$ref": "assays-query.schema.json#/oneOf/3/properties/motifs"
+                  },
+                  "strands": {
+                    "$ref": "assays-query.schema.json#/oneOf/3/properties/strands"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "motifs",
+                  "strands"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "hodge"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/3/properties/context"
+                  },
+                  "field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/3/properties/field"
+                  }
+                },
+                "required": [
+                  "context",
+                  "field"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "green_action"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/20/properties/context"
+                  },
+                  "field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/20/properties/field"
+                  },
+                  "lambda": {
+                    "$ref": "scientific-query.schema.json#/oneOf/20/properties/lambda"
+                  }
+                },
+                "required": [
+                  "context",
+                  "field",
+                  "lambda"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "local_sections"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/15/properties/context"
+                  },
+                  "construction": {
+                    "$ref": "scientific-query.schema.json#/oneOf/15/properties/construction"
+                  },
+                  "stalks": {
+                    "$ref": "scientific-query.schema.json#/oneOf/15/properties/stalks"
+                  },
+                  "maps": {
+                    "$ref": "scientific-query.schema.json#/oneOf/15/properties/maps"
+                  },
+                  "sections": {
+                    "$ref": "scientific-query.schema.json#/oneOf/15/properties/sections"
+                  },
+                  "metric": {
+                    "$ref": "scientific-query.schema.json#/oneOf/15/properties/metric"
+                  }
+                },
+                "required": [
+                  "context",
+                  "construction",
+                  "stalks",
+                  "maps",
+                  "sections",
+                  "metric"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "exact_sequence_alignment"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query_resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/14/properties/query_resource"
+                  },
+                  "query_id": {
+                    "$ref": "assays-query.schema.json#/oneOf/14/properties/query_id"
+                  },
+                  "reference_resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/14/properties/reference_resource"
+                  },
+                  "reference_id": {
+                    "$ref": "assays-query.schema.json#/oneOf/14/properties/reference_id"
+                  },
+                  "scoring": {
+                    "$ref": "assays-query.schema.json#/oneOf/14/properties/scoring"
+                  },
+                  "ambiguity": {
+                    "$ref": "assays-query.schema.json#/oneOf/14/properties/ambiguity"
+                  },
+                  "mode": {
+                    "$ref": "assays-query.schema.json#/oneOf/14/properties/mode"
+                  }
+                },
+                "required": [
+                  "query_resource",
+                  "query_id",
+                  "reference_resource",
+                  "reference_id",
+                  "scoring",
+                  "ambiguity",
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "reference_sequence_matches"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query_resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/17/properties/query_resource"
+                  },
+                  "reference_resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/17/properties/reference_resource"
+                  },
+                  "strands": {
+                    "$ref": "assays-query.schema.json#/oneOf/17/properties/strands"
+                  },
+                  "ambiguity": {
+                    "$ref": "assays-query.schema.json#/oneOf/17/properties/ambiguity"
+                  },
+                  "maximum_mismatches": {
+                    "$ref": "assays-query.schema.json#/oneOf/17/properties/maximum_mismatches"
+                  },
+                  "minimum_overhang": {
+                    "$ref": "assays-query.schema.json#/oneOf/17/properties/minimum_overhang"
+                  },
+                  "junctions": {
+                    "$ref": "assays-query.schema.json#/oneOf/17/properties/junctions"
+                  },
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/17/properties/evidence"
+                  }
+                },
+                "required": [
+                  "query_resource",
+                  "reference_resource",
+                  "strands",
+                  "ambiguity",
+                  "maximum_mismatches",
+                  "minimum_overhang",
+                  "junctions",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "indexed_sequence_alignment"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/19/properties/evidence"
+                  },
+                  "query_resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/19/properties/query_resource"
+                  },
+                  "reference_resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/19/properties/reference_resource"
+                  },
+                  "strands": {
+                    "$ref": "assays-query.schema.json#/oneOf/19/properties/strands"
+                  },
+                  "scoring": {
+                    "$ref": "assays-query.schema.json#/oneOf/19/properties/scoring"
+                  },
+                  "maximum_edits": {
+                    "$ref": "assays-query.schema.json#/oneOf/19/properties/maximum_edits"
+                  }
+                },
+                "required": [
+                  "evidence",
+                  "query_resource",
+                  "reference_resource",
+                  "strands",
+                  "scoring",
+                  "maximum_edits"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "sequence_splice_discovery"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/evidence"
+                  },
+                  "query_resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/query_resource"
+                  },
+                  "reference_resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/reference_resource"
+                  },
+                  "strands": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/strands"
+                  },
+                  "minimum_exon_bases": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/minimum_exon_bases"
+                  },
+                  "minimum_intron_bases": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/minimum_intron_bases"
+                  },
+                  "maximum_intron_bases": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/maximum_intron_bases"
+                  },
+                  "maximum_junctions": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/maximum_junctions"
+                  },
+                  "motifs": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/motifs"
+                  }
+                },
+                "required": [
+                  "evidence",
+                  "query_resource",
+                  "reference_resource",
+                  "strands",
+                  "minimum_exon_bases",
+                  "minimum_intron_bases",
+                  "maximum_intron_bases",
+                  "maximum_junctions",
+                  "motifs"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "sequence_assembly_graph"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/18/properties/resource"
+                  },
+                  "k": {
+                    "$ref": "assays-query.schema.json#/oneOf/18/properties/k"
+                  },
+                  "ambiguity": {
+                    "$ref": "assays-query.schema.json#/oneOf/18/properties/ambiguity"
+                  },
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/18/properties/evidence"
+                  },
+                  "route": {
+                    "$ref": "assays-query.schema.json#/oneOf/18/properties/route"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "k",
+                  "ambiguity",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "read_overlap_reconstruction"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/21/properties/evidence"
+                  },
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/21/properties/resource"
+                  },
+                  "minimum_overlap": {
+                    "$ref": "assays-query.schema.json#/oneOf/21/properties/minimum_overlap"
+                  },
+                  "objective": {
+                    "$ref": "assays-query.schema.json#/oneOf/21/properties/objective"
+                  }
+                },
+                "required": [
+                  "evidence",
+                  "resource",
+                  "minimum_overlap",
+                  "objective"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "constrained_allocations"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "domain": {
+                    "$ref": "assays-query.schema.json#/oneOf/15/properties/domain"
+                  },
+                  "variables": {
+                    "$ref": "assays-query.schema.json#/oneOf/15/properties/variables"
+                  },
+                  "constraints": {
+                    "$ref": "assays-query.schema.json#/oneOf/15/properties/constraints"
+                  },
+                  "objective": {
+                    "$ref": "assays-query.schema.json#/oneOf/15/properties/objective"
+                  },
+                  "units": {
+                    "$ref": "assays-query.schema.json#/oneOf/15/properties/units"
+                  },
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/15/properties/evidence"
+                  },
+                  "factor_certificate": {
+                    "$ref": "assays-query.schema.json#/oneOf/15/properties/factor_certificate"
+                  },
+                  "witness_representation": {
+                    "$ref": "assays-query.schema.json#/oneOf/15/properties/witness_representation"
+                  }
+                },
+                "required": [
+                  "domain",
+                  "variables",
+                  "constraints",
+                  "objective",
+                  "units",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "relational_persistence"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "assay": {
+                    "$ref": "assays-query.schema.json#/oneOf/16/properties/assay"
+                  },
+                  "partition": {
+                    "$ref": "assays-query.schema.json#/oneOf/16/properties/partition"
+                  },
+                  "levels": {
+                    "$ref": "assays-query.schema.json#/oneOf/16/properties/levels"
+                  },
+                  "births": {
+                    "$ref": "assays-query.schema.json#/oneOf/16/properties/births"
+                  },
+                  "filtration_meaning": {
+                    "$ref": "assays-query.schema.json#/oneOf/16/properties/filtration_meaning"
+                  },
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/16/properties/evidence"
+                  },
+                  "lattice_snapshots": {
+                    "$ref": "assays-query.schema.json#/oneOf/16/properties/lattice_snapshots"
+                  }
+                },
+                "required": [
+                  "assay",
+                  "partition",
+                  "levels",
+                  "births",
+                  "filtration_meaning",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "chain_certificate"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/18/properties/context"
+                  },
+                  "grade": {
+                    "$ref": "scientific-query.schema.json#/oneOf/18/properties/grade"
+                  },
+                  "coefficient_domain": {
+                    "$ref": "scientific-query.schema.json#/oneOf/18/properties/coefficient_domain"
+                  },
+                  "values": {
+                    "$ref": "scientific-query.schema.json#/oneOf/18/properties/values"
+                  },
+                  "field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/18/properties/field"
+                  }
+                },
+                "required": [
+                  "context",
+                  "grade",
+                  "coefficient_domain"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "path_comparison"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/19/properties/context"
+                  },
+                  "grade": {
+                    "$ref": "scientific-query.schema.json#/oneOf/19/properties/grade"
+                  },
+                  "paths": {
+                    "$ref": "scientific-query.schema.json#/oneOf/19/properties/paths"
+                  }
+                },
+                "required": [
+                  "context",
+                  "grade",
+                  "paths"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "typed_moment"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/4/properties/context"
+                  },
+                  "field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/4/properties/field"
+                  },
+                  "other_field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/4/properties/other_field"
+                  },
+                  "order": {
+                    "$ref": "scientific-query.schema.json#/oneOf/4/properties/order"
+                  }
+                },
+                "required": [
+                  "context",
+                  "field",
+                  "other_field",
+                  "order"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "temporal_moment_change"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/5/properties/context"
+                  },
+                  "other_context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/5/properties/other_context"
+                  },
+                  "field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/5/properties/field"
+                  },
+                  "other_field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/5/properties/other_field"
+                  },
+                  "new_field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/5/properties/new_field"
+                  },
+                  "new_other_field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/5/properties/new_other_field"
+                  },
+                  "order": {
+                    "$ref": "scientific-query.schema.json#/oneOf/5/properties/order"
+                  },
+                  "correspondence": {
+                    "type": "object",
+                    "properties": {
+                      "grade": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "kind": {
+                        "enum": [
+                          "retained_identity",
+                          "explicit"
+                        ]
+                      },
+                      "meaning": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidence": {
+                        "$ref": "scientific-study.schema.json#/$defs/evidence"
+                      },
+                      "entries": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "row": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "column": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "value": {
+                              "type": "string",
+                              "pattern": "^-?(?:0|[1-9][0-9]*)(?:/[1-9][0-9]*)?$"
+                            }
+                          },
+                          "required": [
+                            "row",
+                            "column",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "minItems": 0
+                      }
+                    },
+                    "required": [
+                      "grade",
+                      "kind",
+                      "meaning",
+                      "evidence"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "context",
+                  "other_context",
+                  "field",
+                  "other_field",
+                  "new_field",
+                  "new_other_field",
+                  "order"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "structure_transition"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/13/properties/context"
+                  },
+                  "other_context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/13/properties/other_context"
+                  },
+                  "field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/13/properties/field"
+                  },
+                  "new_field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/13/properties/new_field"
+                  },
+                  "lambda": {
+                    "$ref": "scientific-query.schema.json#/oneOf/13/properties/lambda"
+                  }
+                },
+                "required": [
+                  "context",
+                  "other_context",
+                  "field",
+                  "new_field",
+                  "lambda"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "green_response"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/17/properties/context"
+                  },
+                  "field": {
+                    "$ref": "scientific-query.schema.json#/oneOf/17/properties/field"
+                  },
+                  "lambda": {
+                    "$ref": "scientific-query.schema.json#/oneOf/17/properties/lambda"
+                  },
+                  "interior": {
+                    "$ref": "scientific-query.schema.json#/oneOf/17/properties/interior"
+                  },
+                  "coordinates": {
+                    "$ref": "scientific-query.schema.json#/oneOf/17/properties/coordinates"
+                  }
+                },
+                "required": [
+                  "context",
+                  "field",
+                  "lambda",
+                  "interior",
+                  "coordinates"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "expression_allocations"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "samples": {
+                    "$ref": "assays-query.schema.json#/oneOf/23/properties/samples"
+                  },
+                  "evidence_source": {
+                    "$ref": "assays-query.schema.json#/oneOf/23/properties/evidence_source"
+                  },
+                  "targets": {
+                    "$ref": "assays-query.schema.json#/oneOf/23/properties/targets"
+                  },
+                  "contrasts": {
+                    "$ref": "assays-query.schema.json#/oneOf/23/properties/contrasts"
+                  },
+                  "map_evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/23/properties/map_evidence"
+                  },
+                  "kernel_certificate": {
+                    "$ref": "assays-query.schema.json#/oneOf/23/properties/kernel_certificate"
+                  },
+                  "coupling": {
+                    "$ref": "assays-query.schema.json#/oneOf/23/properties/coupling"
+                  }
+                },
+                "required": [
+                  "samples",
+                  "evidence_source",
+                  "targets",
+                  "contrasts",
+                  "map_evidence"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "controlled_coverage"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "samples": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/samples"
+                  },
+                  "contrasts": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/contrasts"
+                  },
+                  "controls": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/controls"
+                  },
+                  "intercept": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/intercept"
+                  },
+                  "metric": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/metric"
+                  },
+                  "strand_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/strand_policy"
+                  },
+                  "thresholds": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/thresholds"
+                  },
+                  "absence_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/absence_policy"
+                  },
+                  "units": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/units"
+                  },
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/evidence"
+                  },
+                  "source_kernel": {
+                    "$ref": "assays-query.schema.json#/oneOf/24/properties/source_kernel"
+                  }
+                },
+                "required": [
+                  "samples",
+                  "contrasts",
+                  "controls",
+                  "intercept",
+                  "metric",
+                  "strand_policy",
+                  "thresholds",
+                  "absence_policy",
+                  "units",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "assay_sections"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "views": {
+                    "$ref": "assays-query.schema.json#/oneOf/25/properties/views"
+                  },
+                  "sections": {
+                    "$ref": "assays-query.schema.json#/oneOf/25/properties/sections"
+                  },
+                  "interfaces": {
+                    "$ref": "assays-query.schema.json#/oneOf/25/properties/interfaces"
+                  },
+                  "metric": {
+                    "$ref": "assays-query.schema.json#/oneOf/25/properties/metric"
+                  },
+                  "support_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/25/properties/support_policy"
+                  },
+                  "workers": {
+                    "$ref": "assays-query.schema.json#/oneOf/25/properties/workers"
+                  }
+                },
+                "required": [
+                  "views",
+                  "sections",
+                  "interfaces",
+                  "metric",
+                  "support_policy"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "source_namespace": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "design": {
+                    "type": "object",
+                    "properties": {
+                      "question": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      },
+                      "population": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      },
+                      "selection": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4096
+                      },
+                      "limitations": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4096
+                        },
+                        "minItems": 0,
+                        "maxItems": 128
+                      }
+                    },
+                    "required": [
+                      "question",
+                      "population",
+                      "selection",
+                      "limitations"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "channel": {
+                    "enum": [
+                      "G",
+                      "E",
+                      "T",
+                      "observation"
+                    ]
+                  },
+                  "view": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "component": {
+                    "enum": [
+                      "input",
+                      "compatible",
+                      "residual"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel",
+                  "view",
+                  "component"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "design_aggregation"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "assay": {
+                    "$ref": "assays-query.schema.json#/oneOf/26/properties/assay"
+                  },
+                  "map_method": {
+                    "$ref": "assays-query.schema.json#/oneOf/26/properties/map_method"
+                  },
+                  "map_evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/26/properties/map_evidence"
+                  },
+                  "support_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/26/properties/support_policy"
+                  },
+                  "count_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/26/properties/count_policy"
+                  },
+                  "workers": {
+                    "$ref": "assays-query.schema.json#/oneOf/26/properties/workers"
+                  },
+                  "feature_design": {
+                    "$ref": "assays-query.schema.json#/oneOf/26/properties/feature_design"
+                  },
+                  "observation_design": {
+                    "$ref": "assays-query.schema.json#/oneOf/26/properties/observation_design"
+                  }
+                },
+                "required": [
+                  "assay",
+                  "map_method",
+                  "map_evidence",
+                  "support_policy",
+                  "feature_design",
+                  "observation_design"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "output": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-materialize.schema.json#/properties/id"
+                  },
+                  "source_namespace": {
+                    "$ref": "assays-materialize.schema.json#/properties/source_namespace"
+                  },
+                  "design": {
+                    "$ref": "assays-materialize.schema.json#/properties/design"
+                  },
+                  "channel": {
+                    "$ref": "assays-materialize.schema.json#/properties/channel"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_namespace",
+                  "design",
+                  "channel"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "bind_assays"
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "assays-bindings.schema.json#/properties/id"
+                  },
+                  "design": {
+                    "$ref": "assays-bindings.schema.json#/properties/design"
+                  },
+                  "assays": {
+                    "$ref": "assays-bindings.schema.json#/properties/assays"
+                  },
+                  "resources": {
+                    "$ref": "assays-bindings.schema.json#/properties/resources"
+                  },
+                  "links": {
+                    "$ref": "assays-bindings.schema.json#/properties/links"
+                  },
+                  "method": {
+                    "$ref": "assays-bindings.schema.json#/properties/method"
+                  },
+                  "evidence": {
+                    "$ref": "assays-bindings.schema.json#/properties/evidence"
+                  }
+                },
+                "required": [
+                  "id",
+                  "design",
+                  "assays",
+                  "resources",
+                  "links",
+                  "method",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "linear_model_comparison"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "responses": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/responses"
+                  },
+                  "terms": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/terms"
+                  },
+                  "controls": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/controls"
+                  },
+                  "selection": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/selection"
+                  },
+                  "support": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/support"
+                  },
+                  "metric": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/metric"
+                  },
+                  "intercept": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/intercept"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/workers"
+                  },
+                  "strata": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/strata"
+                  },
+                  "ablations": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/ablations"
+                  },
+                  "coefficient_contrasts": {
+                    "$ref": "scientific-query.schema.json#/oneOf/21/properties/coefficient_contrasts"
+                  }
+                },
+                "required": [
+                  "responses",
+                  "terms",
+                  "controls",
+                  "selection",
+                  "support",
+                  "metric",
+                  "intercept"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "finite_reference_calibration"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "$ref": "scientific-query.schema.json#/oneOf/22/properties/model"
+                  },
+                  "law": {
+                    "$ref": "scientific-query.schema.json#/oneOf/22/properties/law"
+                  },
+                  "hypotheses": {
+                    "$ref": "scientific-query.schema.json#/oneOf/22/properties/hypotheses"
+                  },
+                  "alpha": {
+                    "$ref": "scientific-query.schema.json#/oneOf/22/properties/alpha"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/22/properties/workers"
+                  }
+                },
+                "required": [
+                  "model",
+                  "law",
+                  "hypotheses",
+                  "workers"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "relational_field_ensemble"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/23/properties/context"
+                  },
+                  "fields": {
+                    "$ref": "scientific-query.schema.json#/oneOf/23/properties/fields"
+                  },
+                  "weights": {
+                    "$ref": "scientific-query.schema.json#/oneOf/23/properties/weights"
+                  },
+                  "interpretation": {
+                    "$ref": "scientific-query.schema.json#/oneOf/23/properties/interpretation"
+                  },
+                  "green_parameters": {
+                    "$ref": "scientific-query.schema.json#/oneOf/23/properties/green_parameters"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/23/properties/workers"
+                  },
+                  "groups": {
+                    "$ref": "scientific-query.schema.json#/oneOf/23/properties/groups"
+                  },
+                  "comparisons": {
+                    "$ref": "scientific-query.schema.json#/oneOf/23/properties/comparisons"
+                  }
+                },
+                "required": [
+                  "context",
+                  "fields",
+                  "weights",
+                  "interpretation",
+                  "green_parameters",
+                  "workers"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "structural_reference_calibration"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/24/properties/context"
+                  },
+                  "fields": {
+                    "$ref": "scientific-query.schema.json#/oneOf/24/properties/fields"
+                  },
+                  "law": {
+                    "$ref": "scientific-query.schema.json#/oneOf/24/properties/law"
+                  },
+                  "hypotheses": {
+                    "$ref": "scientific-query.schema.json#/oneOf/24/properties/hypotheses"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/24/properties/workers"
+                  },
+                  "execution": {
+                    "$ref": "scientific-query.schema.json#/oneOf/24/properties/execution"
+                  },
+                  "reference_output": {
+                    "$ref": "scientific-query.schema.json#/oneOf/24/properties/reference_output"
+                  },
+                  "alpha": {
+                    "$ref": "scientific-query.schema.json#/oneOf/24/properties/alpha"
+                  },
+                  "uncertainty": {
+                    "$ref": "scientific-query.schema.json#/oneOf/24/properties/uncertainty"
+                  }
+                },
+                "required": [
+                  "context",
+                  "fields",
+                  "law",
+                  "hypotheses",
+                  "workers",
+                  "execution",
+                  "reference_output"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "source_structure_ablation"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/context"
+                  },
+                  "fields": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/fields"
+                  },
+                  "roles": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/roles"
+                  },
+                  "ablations": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/ablations"
+                  },
+                  "homology_output": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/homology_output"
+                  },
+                  "lambda": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/lambda"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/workers"
+                  },
+                  "interpretation": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/interpretation"
+                  },
+                  "sheaf": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/sheaf"
+                  },
+                  "lattice_snapshots": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/lattice_snapshots"
+                  },
+                  "comparisons": {
+                    "$ref": "scientific-query.schema.json#/oneOf/25/properties/comparisons"
+                  }
+                },
+                "required": [
+                  "context",
+                  "fields",
+                  "roles",
+                  "ablations",
+                  "homology_output",
+                  "lambda",
+                  "workers",
+                  "interpretation"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "observed_response_model"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/26/properties/context"
+                  },
+                  "responses": {
+                    "$ref": "scientific-query.schema.json#/oneOf/26/properties/responses"
+                  },
+                  "model": {
+                    "$ref": "scientific-query.schema.json#/oneOf/26/properties/model"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/26/properties/workers"
+                  },
+                  "interpretation": {
+                    "$ref": "scientific-query.schema.json#/oneOf/26/properties/interpretation"
+                  },
+                  "dose_comparisons": {
+                    "$ref": "scientific-query.schema.json#/oneOf/26/properties/dose_comparisons"
+                  },
+                  "reference_law": {
+                    "$ref": "scientific-query.schema.json#/oneOf/26/properties/reference_law"
+                  },
+                  "green_parameter": {
+                    "$ref": "scientific-query.schema.json#/oneOf/26/properties/green_parameter"
+                  }
+                },
+                "required": [
+                  "context",
+                  "responses",
+                  "model",
+                  "workers",
+                  "interpretation"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "constrained_response_model"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/27/properties/context"
+                  },
+                  "responses": {
+                    "$ref": "scientific-query.schema.json#/oneOf/27/properties/responses"
+                  },
+                  "model": {
+                    "$ref": "scientific-query.schema.json#/oneOf/27/properties/model"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/27/properties/workers"
+                  },
+                  "interpretation": {
+                    "$ref": "scientific-query.schema.json#/oneOf/27/properties/interpretation"
+                  },
+                  "dose_comparisons": {
+                    "$ref": "scientific-query.schema.json#/oneOf/27/properties/dose_comparisons"
+                  },
+                  "reference_law": {
+                    "$ref": "scientific-query.schema.json#/oneOf/27/properties/reference_law"
+                  },
+                  "green_parameter": {
+                    "$ref": "scientific-query.schema.json#/oneOf/27/properties/green_parameter"
+                  },
+                  "physical_shape": {
+                    "$ref": "scientific-query.schema.json#/oneOf/27/properties/physical_shape"
+                  }
+                },
+                "required": [
+                  "context",
+                  "responses",
+                  "model",
+                  "workers",
+                  "interpretation",
+                  "physical_shape"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partitions": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "partition_jobs": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "temporal_field_history"
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "endpoints": {
+                    "$ref": "scientific-query.schema.json#/oneOf/28/properties/endpoints"
+                  },
+                  "correspondences": {
+                    "$ref": "scientific-query.schema.json#/oneOf/28/properties/correspondences"
+                  },
+                  "word": {
+                    "$ref": "scientific-query.schema.json#/oneOf/28/properties/word"
+                  },
+                  "lambda": {
+                    "$ref": "scientific-query.schema.json#/oneOf/28/properties/lambda"
+                  }
+                },
+                "required": [
+                  "endpoints",
+                  "correspondences",
+                  "word",
+                  "lambda"
+                ],
+                "additionalProperties": false
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "censored_endpoint_bounds"
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "context": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/context"
+                  },
+                  "lower": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/lower"
+                  },
+                  "upper": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/upper"
+                  },
+                  "lower_closed": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/lower_closed"
+                  },
+                  "upper_closed": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/upper_closed"
+                  },
+                  "upper_finite": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/upper_finite"
+                  },
+                  "selection": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/selection"
+                  },
+                  "strata": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/strata"
+                  },
+                  "times": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/times"
+                  },
+                  "origin": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/origin"
+                  },
+                  "time_unit": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/time_unit"
+                  },
+                  "population": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/population"
+                  },
+                  "event": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/event"
+                  },
+                  "evidence": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/evidence"
+                  },
+                  "contrasts": {
+                    "$ref": "scientific-query.schema.json#/oneOf/29/properties/contrasts"
+                  }
+                },
+                "required": [
+                  "context",
+                  "lower",
+                  "upper",
+                  "lower_closed",
+                  "upper_closed",
+                  "upper_finite",
+                  "selection",
+                  "strata",
+                  "times",
+                  "origin",
+                  "time_unit",
+                  "population",
+                  "event",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "declared_response_transition"
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "old": {
+                    "$ref": "scientific-query.schema.json#/oneOf/30/properties/old"
+                  },
+                  "new": {
+                    "$ref": "scientific-query.schema.json#/oneOf/30/properties/new"
+                  },
+                  "comparisons": {
+                    "$ref": "scientific-query.schema.json#/oneOf/30/properties/comparisons"
+                  },
+                  "observation": {
+                    "$ref": "scientific-query.schema.json#/oneOf/30/properties/observation"
+                  },
+                  "pairing": {
+                    "$ref": "scientific-query.schema.json#/oneOf/30/properties/pairing"
+                  },
+                  "lambda": {
+                    "$ref": "scientific-query.schema.json#/oneOf/30/properties/lambda"
+                  }
+                },
+                "required": [
+                  "old",
+                  "new",
+                  "lambda",
+                  "comparisons"
+                ],
+                "additionalProperties": false
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "hodge_frame_decomposition"
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "publication": {
+                    "$ref": "scientific-query.schema.json#/oneOf/31/properties/publication"
+                  },
+                  "source_sequence": {
+                    "$ref": "scientific-query.schema.json#/oneOf/31/properties/source_sequence"
+                  },
+                  "grade": {
+                    "$ref": "scientific-query.schema.json#/oneOf/31/properties/grade"
+                  },
+                  "grade_carriers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/31/properties/grade_carriers"
+                  },
+                  "fields": {
+                    "$ref": "scientific-query.schema.json#/oneOf/31/properties/fields"
+                  },
+                  "metrics": {
+                    "$ref": "scientific-query.schema.json#/oneOf/31/properties/metrics"
+                  },
+                  "workers": {
+                    "$ref": "scientific-query.schema.json#/oneOf/31/properties/workers"
+                  }
+                },
+                "required": [
+                  "publication",
+                  "source_sequence",
+                  "grade",
+                  "grade_carriers",
+                  "fields",
+                  "metrics"
+                ],
+                "additionalProperties": false
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "linear_response_observation"
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "publication": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "source_sequence": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]*)$"
+                  },
+                  "operator": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "accession": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "fields": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "ordering": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "source",
+                              "minimum_degree"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "declared"
+                          },
+                          "rows": {
+                            "type": "array",
+                            "uniqueItems": true,
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          },
+                          "columns": {
+                            "type": "array",
+                            "uniqueItems": true,
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "rows",
+                          "columns"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "observation": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "linear"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "const": "coordinates"
+                          },
+                          "coordinates": {
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "coordinates"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "workers": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "publication",
+                  "source_sequence",
+                  "operator",
+                  "accession",
+                  "fields",
+                  "ordering",
+                  "observation"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "metric_relative_novelty"
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "old": {
+                    "type": "object",
+                    "properties": {
+                      "publication": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source_sequence": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]*)$"
+                      },
+                      "field": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "publication",
+                      "source_sequence",
+                      "field"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "new": {
+                    "type": "object",
+                    "properties": {
+                      "publication": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source_sequence": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]*)$"
+                      },
+                      "field": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "metric": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "publication",
+                      "source_sequence",
+                      "field",
+                      "metric"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "comparison": {
+                    "type": "object",
+                    "properties": {
+                      "old_carrier": {
+                        "$ref": "scientific-study.schema.json#/$defs/key"
+                      },
+                      "new_carrier": {
+                        "$ref": "scientific-study.schema.json#/$defs/key"
+                      },
+                      "map": {
+                        "type": "object",
+                        "properties": {
+                          "rows": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "columns": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "entries": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "row": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "column": {
+                                  "type": "integer",
+                                  "minimum": 0
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "pattern": "^-?(?:0|[1-9][0-9]*)(?:/[1-9][0-9]*)?$"
+                                }
+                              },
+                              "required": [
+                                "row",
+                                "column",
+                                "value"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "rows",
+                          "columns",
+                          "entries"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "meaning": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidence": {
+                        "$ref": "scientific-study.schema.json#/$defs/evidence"
+                      }
+                    },
+                    "required": [
+                      "old_carrier",
+                      "new_carrier",
+                      "map",
+                      "meaning",
+                      "evidence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "causes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "preparation": {
+                    "enum": [
+                      "reuse",
+                      "ephemeral"
+                    ]
+                  }
+                },
+                "required": [
+                  "old",
+                  "new",
+                  "comparison"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "method",
+              "assay",
+              "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "relational_gluing"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "declaration": {
+                    "$ref": "assays-query.schema.json#/oneOf/27/properties/declaration"
+                  },
+                  "sources": {
+                    "$ref": "assays-query.schema.json#/oneOf/27/properties/sources"
+                  },
+                  "embeddings": {
+                    "$ref": "assays-query.schema.json#/oneOf/27/properties/embeddings"
+                  },
+                  "sections": {
+                    "$ref": "assays-query.schema.json#/oneOf/27/properties/sections"
+                  },
+                  "boundary_policy": {
+                    "$ref": "assays-query.schema.json#/oneOf/27/properties/boundary_policy"
+                  },
+                  "workers": {
+                    "$ref": "assays-query.schema.json#/oneOf/27/properties/workers"
+                  }
+                },
+                "required": [
+                  "declaration",
+                  "sources",
+                  "embeddings",
+                  "sections",
+                  "boundary_policy"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "assay": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "reads": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "quality_thresholds": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 93
+      }
+    },
+    "concurrent_jobs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "fields": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "profile",
+    "question",
+    "goals"
+  ],
+  "additionalProperties": false
+}

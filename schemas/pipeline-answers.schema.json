@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.pipeline.answers.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.pipeline.answers.v1"
+    },
+    "source_digest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent_sha256": {
+      "type": "string",
+      "minLength": 1
+    },
+    "question_sha256": {
+      "type": "string",
+      "minLength": 1
+    },
+    "admission_sha256": {
+      "type": "string",
+      "minLength": 1
+    },
+    "answers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "observable": {
+            "$ref": "pipeline-answer-contract.schema.json#/properties/requirements/items/properties/observable"
+          },
+          "scope_witnesses": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "binding": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "goal_sha256": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "method": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "binding",
+                "goal_sha256",
+                "method"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "binding": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "step": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_digest": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "effective_request_sha256": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "results": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "pointer": {
+                        "const": "/result"
+                      },
+                      "source_digest": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "query": {
+                        "type": "object"
+                      },
+                      "certificate_sha256": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "sha256",
+                      "pointer",
+                      "source_digest",
+                      "query",
+                      "certificate_sha256"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "binding",
+                "step",
+                "source_digest",
+                "effective_request_sha256",
+                "results"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "source_mentions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "id",
+          "observable",
+          "scope_witnesses",
+          "artifacts"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "answers_sha256": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_context": {
+      "$ref": "pipeline-source-context-receipt.schema.json"
+    }
+  },
+  "required": [
+    "schema",
+    "source_digest",
+    "intent_sha256",
+    "question_sha256",
+    "admission_sha256",
+    "answers",
+    "answers_sha256"
+  ],
+  "additionalProperties": false
+}

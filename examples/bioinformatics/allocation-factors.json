@@ -1,0 +1,92 @@
+{
+  "schema": "gadget.assay.allocations.v1",
+  "operation": "allocation_bounds",
+  "candidates": [
+    "transcript-A1",
+    "transcript-A2",
+    "transcript-B1"
+  ],
+  "classes": [
+    {
+      "id": "specific-A1",
+      "candidates": [
+        "transcript-A1"
+      ]
+    },
+    {
+      "id": "shared-A",
+      "candidates": [
+        "transcript-A1",
+        "transcript-A2"
+      ]
+    },
+    {
+      "id": "shared-A-B",
+      "candidates": [
+        "transcript-A2",
+        "transcript-B1"
+      ]
+    }
+  ],
+  "samples": [
+    {
+      "id": "first",
+      "counts": [
+        "5",
+        "7",
+        "3"
+      ],
+      "scale": "1",
+      "scale_provenance": "Declared raw fragment counts"
+    },
+    {
+      "id": "second",
+      "counts": [
+        "2",
+        "1",
+        "0"
+      ],
+      "scale": "1",
+      "scale_provenance": "Declared raw fragment counts"
+    }
+  ],
+  "targets": [
+    {
+      "id": "gene-A",
+      "candidates": [
+        "transcript-A1",
+        "transcript-A2"
+      ]
+    },
+    {
+      "id": "gene-B",
+      "candidates": [
+        "transcript-B1"
+      ]
+    },
+    {
+      "id": "transcript-A1",
+      "candidates": [
+        "transcript-A1"
+      ]
+    }
+  ],
+  "contrasts": [
+    {
+      "id": "second-minus-first",
+      "left": "second",
+      "right": "first"
+    }
+  ],
+  "class_partition": "disjoint_observations",
+  "candidate_search": {
+    "method": "Authored complete illustrative candidate classes",
+    "completeness": "Only the declared candidates; this fixture has no sequenced reference",
+    "reference_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "evidence": [
+    "Authored mathematical illustration of transcript assignment; these counts are not research observations"
+  ],
+  "units": "assigned_fragment_count",
+  "kernel_certificate": true
+}

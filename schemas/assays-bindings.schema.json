@@ -1,0 +1,150 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.assays.bindings.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "design": {
+      "$ref": "assays-materialize.schema.json#/properties/design"
+    },
+    "assays": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assay": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "input",
+          "assay",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resource": {
+            "type": "string",
+            "minLength": 1
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "input",
+          "resource",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "left_assay": {
+            "type": "string",
+            "minLength": 1
+          },
+          "left_observation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "right_assay": {
+            "type": "string",
+            "minLength": 1
+          },
+          "right_observation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "relation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "left_assay",
+          "left_observation",
+          "right_assay",
+          "right_observation",
+          "relation",
+          "evidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "method": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "design",
+    "assays",
+    "resources",
+    "links",
+    "method",
+    "evidence"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.assays.bindings.v1",
+  "anyOf": [
+    {
+      "properties": {
+        "assays": {
+          "minItems": 1
+        }
+      }
+    },
+    {
+      "properties": {
+        "resources": {
+          "minItems": 1
+        }
+      }
+    }
+  ]
+}

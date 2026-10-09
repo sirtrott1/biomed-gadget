@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.table.receipt.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.table.receipt.v1"
+    },
+    "producer": {
+      "const": "gadget.table.import"
+    },
+    "producer_version": {
+      "enum": [
+        2,
+        3
+      ]
+    },
+    "key_policy": {
+      "const": "positive_source_order_per_namespace"
+    },
+    "source_namespace": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "specification_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "table_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "dictionary_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "native_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "receipt_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "rows": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "columns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "categories": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "carriers": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tensors": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "evidence_profile": {
+      "enum": [
+        "quoted_v1",
+        "document_spans_v2"
+      ]
+    },
+    "intake": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "largest_record_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "token_offsets": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retained_index_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_source_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Caller budget for the complete retained table."
+            },
+            "max_record_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Caller budget for one unquoted input record, including a header."
+            },
+            "max_token_offsets": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Caller budget for retained token end offsets; headers are excluded."
+            }
+          }
+        },
+        "byte_backend": {
+          "const": "rexgraph_read_only_mapped_file"
+        }
+      },
+      "required": [
+        "source_bytes",
+        "largest_record_bytes",
+        "token_offsets",
+        "retained_index_bytes",
+        "limits",
+        "byte_backend"
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "producer",
+    "producer_version",
+    "key_policy",
+    "source_namespace",
+    "specification_sha256",
+    "table_sha256",
+    "dictionary_sha256",
+    "native_sha256",
+    "receipt_sha256",
+    "rows",
+    "columns",
+    "categories",
+    "carriers",
+    "tensors"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "producer_version": {
+            "const": 3
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "evidence_profile",
+          "intake"
+        ]
+      }
+    }
+  ]
+}

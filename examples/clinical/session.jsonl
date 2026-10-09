@@ -1,0 +1,7 @@
+{"prompt":"Show reported and missing support for all.ca, preserving its original row observations."}
+{"prompt":"Give the exact reported-only descriptive summary of all.chol, explicitly using reported_only support."}
+{"prompt":"Apply native_boundary to category.memberships using cpu_scheduled and tile_rows 32."}
+{"study":"data/studies/uci-heart-hungarian-v1/study.json"}
+{"prompt":"Show reported and missing support for all.ca in this currently bound study."}
+{"prompt":"Give the exact reported-only descriptive summary of all.chol, explicitly using reported_only support."}
+{"prompt":"Can we interpret the Cleveland to Hungarian difference as a patient's change over time? Explain any missing correspondence or time declarations using a clarification proposal."}

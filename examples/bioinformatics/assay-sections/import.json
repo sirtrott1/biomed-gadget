@@ -1,0 +1,100 @@
+{
+  "schema": "gadget.assays.import.v1",
+  "id": "paired-assay-sections",
+  "design": {
+    "question": "Which components satisfy the declared inter-assay measurement interfaces?",
+    "population": "Three authored two-feature assays with five sections",
+    "selection": "Every supplied coordinate and section",
+    "limitations": [
+      "Constructed method example; interface maps and metric weights are illustrative declarations, not experimental calibrations"
+    ]
+  },
+  "assays": [
+    {
+      "id": "rna",
+      "kind": "paired_measurement",
+      "format": "dense_tsv",
+      "source": {
+        "path": "rna.tsv",
+        "sha256": "sha256:e53f5d8c4520bbc4b838d95c296b0ceca4fd7ac485bd74c020f96637787808ba"
+      },
+      "features": {
+        "path": "features.tsv",
+        "sha256": "sha256:1e4e728acd13e1e4b466d8ec65aa7e4bef4b4ee237e85403a8cf33414309987e"
+      },
+      "observations": {
+        "path": "observations.tsv",
+        "sha256": "sha256:1811ed435bfac902658c3b44247abd0507ae8ff7defb367bf4b95dc612e4b17c"
+      },
+      "source_namespace": "973100",
+      "carrier": "features",
+      "quantity": "umi_count",
+      "units": "RNA molecules",
+      "channel": "E",
+      "method": "Authored assay-section example",
+      "arithmetic": "exact_rational",
+      "implicit_entries": "unobserved",
+      "missing_tokens": [
+        "NA"
+      ]
+    },
+    {
+      "id": "atac",
+      "kind": "paired_measurement",
+      "format": "dense_tsv",
+      "source": {
+        "path": "atac.tsv",
+        "sha256": "sha256:9ee1e24f044d24e83878e03bbee0e2519fe03801ce82e8ce4afaa1c8bc7d640c"
+      },
+      "features": {
+        "path": "features.tsv",
+        "sha256": "sha256:1e4e728acd13e1e4b466d8ec65aa7e4bef4b4ee237e85403a8cf33414309987e"
+      },
+      "observations": {
+        "path": "observations.tsv",
+        "sha256": "sha256:1811ed435bfac902658c3b44247abd0507ae8ff7defb367bf4b95dc612e4b17c"
+      },
+      "source_namespace": "973101",
+      "carrier": "features",
+      "quantity": "read_count",
+      "units": "ATAC fragments",
+      "channel": "observation",
+      "method": "Authored assay-section example",
+      "arithmetic": "exact_rational",
+      "implicit_entries": "unobserved",
+      "missing_tokens": [
+        "NA"
+      ]
+    },
+    {
+      "id": "protein",
+      "kind": "paired_measurement",
+      "format": "dense_tsv",
+      "source": {
+        "path": "protein.tsv",
+        "sha256": "sha256:75d6b50a6dd1f7ba9d3c9c03d62be067df6fa70ffcaa56ecddd5808075e58cae"
+      },
+      "features": {
+        "path": "features.tsv",
+        "sha256": "sha256:1e4e728acd13e1e4b466d8ec65aa7e4bef4b4ee237e85403a8cf33414309987e"
+      },
+      "observations": {
+        "path": "observations.tsv",
+        "sha256": "sha256:1811ed435bfac902658c3b44247abd0507ae8ff7defb367bf4b95dc612e4b17c"
+      },
+      "source_namespace": "973102",
+      "carrier": "features",
+      "quantity": "declared_protein_count",
+      "units": "antibody counts",
+      "channel": "T",
+      "method": "Authored assay-section example",
+      "arithmetic": "exact_rational",
+      "implicit_entries": "unobserved",
+      "missing_tokens": [
+        "NA"
+      ]
+    }
+  ],
+  "resources": [],
+  "links": []
+}

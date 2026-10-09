@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.database.fetch.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.database.fetch.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "requests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "provider": {
+            "enum": [
+              "chembl",
+              "bindingdb",
+              "uniprot",
+              "pubchem",
+              "pdb"
+            ]
+          },
+          "resource": {
+            "enum": [
+              "activity",
+              "assay",
+              "target",
+              "molecule",
+              "status",
+              "uniprot",
+              "protein",
+              "compound",
+              "entry",
+              "polymer"
+            ]
+          },
+          "identifier": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "ChEMBL provider page limit; the complete evidence store has no page-count ceiling."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "endpoint": {
+            "enum": [
+              "Kd",
+              "Ki",
+              "IC50",
+              "EC50"
+            ]
+          },
+          "cutoff_nm": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "resource",
+          "identifier"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "transport": {
+      "type": "object",
+      "properties": {
+        "max_body_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_header_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_total_body_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "connect_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "description": "Optional caller transport resources. Byte defaults use the string/stream representation; connection and request timeouts default to 10 and 30 seconds."
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "requests"
+  ],
+  "additionalProperties": false,
+  "description": "C++ admission additionally validates provider/resource combinations and applicable filters; no arbitrary URLs or credentials."
+}

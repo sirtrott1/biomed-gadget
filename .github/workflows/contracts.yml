@@ -1,0 +1,66 @@
+name: C++ contracts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: ${{ vars.GADGET_BUILD_JOBS || '1' }}
+      SDK_URL: ${{ secrets.REXGRAPH_ARCHIVE_URL }}
+      SDK_SHA256: ${{ vars.REXGRAPH_ARCHIVE_SHA256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ clang pkg-config libgmp-dev libssl-dev libjson-c-dev python3-numpy python3-sympy python3-scipy python3-jsonschema
+      - name: Fetch the qualified SDK
+        shell: bash
+        run: |
+          test -n "$SDK_URL" && test -n "$SDK_SHA256"
+          curl --fail --location --proto '=https' --tlsv1.2 --output "$RUNNER_TEMP/rexgraph.zip" "$SDK_URL"
+          printf '%s  %s\n' "$SDK_SHA256" "$RUNNER_TEMP/rexgraph.zip" | sha256sum --check --strict
+          python3 - "$RUNNER_TEMP/rexgraph.zip" "$RUNNER_TEMP/sdk" <<'PY'
+          import pathlib, sys, zipfile
+          target = pathlib.Path(sys.argv[2]).resolve()
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              for entry in archive.infolist():
+                  path = target / entry.filename
+                  if not path.resolve().is_relative_to(target):
+                      raise ValueError('SDK archive path escapes its extraction directory')
+                  if (entry.external_attr >> 16) & 0o170000 == 0o120000:
+                      raise ValueError('SDK archive contains a symbolic link')
+              archive.extractall(target)
+          PY
+      - name: Configure
+        env:
+          CXX: ${{ matrix.compiler }}
+        run: cmake --preset cpu -DREXGRAPH_SOURCE_DIR="$RUNNER_TEMP/sdk/rexgraphcpp"
+      - name: Build
+        run: |
+          cmake --build --preset cpu --target gadget_native --parallel 1
+          cmake --build --preset cpu
+      - name: Test
+        run: ctest --preset cpu --output-junit contracts.xml
+      - name: Verify dependency inputs
+        run: python3 tools/check_dependency.py --build build/presets/cpu --rexgraph "$RUNNER_TEMP/sdk/rexgraphcpp" --report build/presets/cpu/dependency.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: contracts-${{ matrix.compiler }}
+          path: |
+            build/presets/cpu/contracts.xml
+            build/presets/cpu/build-info.json
+            build/presets/cpu/dependency.json
+            build/presets/cpu/Testing/Temporary/LastTest.log

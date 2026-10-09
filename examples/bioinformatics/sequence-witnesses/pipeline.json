@@ -1,0 +1,42 @@
+{
+  "schema": "gadget.pipeline.default.v1",
+  "profile": "sequence",
+  "question": "Compare two complete source sequences and find all bounded-mismatch placements",
+  "goals": [
+    {
+      "method": "exact_sequence_alignment",
+      "parameters": {
+        "query_resource": "queries",
+        "query_id": "read-1",
+        "reference_resource": "reference",
+        "reference_id": "reference-1",
+        "ambiguity": "literal",
+        "mode": "global_linear_gap",
+        "scoring": {
+          "match": "0",
+          "mismatch": "1",
+          "query_gap": "1",
+          "reference_gap": "1",
+          "units": "edit_step_cost",
+          "evidence": "Authored unit edit costs"
+        }
+      }
+    },
+    {
+      "method": "reference_sequence_matches",
+      "parameters": {
+        "query_resource": "queries",
+        "reference_resource": "reference",
+        "strands": [
+          "+",
+          "-"
+        ],
+        "ambiguity": "literal",
+        "maximum_mismatches": 1,
+        "minimum_overhang": 2,
+        "junctions": [],
+        "evidence": "All contiguous placements on both strands with at most one mismatch"
+      }
+    }
+  ]
+}

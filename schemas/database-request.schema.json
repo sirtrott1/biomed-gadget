@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.database.request.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.database.request.v1"
+    },
+    "request": {
+      "$ref": "database-fetch.schema.json"
+    },
+    "requests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "$ref": "database-fetch.schema.json#/properties/requests/items"
+          },
+          "url": {
+            "type": "string",
+            "pattern": "^https://"
+          }
+        },
+        "required": [
+          "request",
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "transport": {
+      "$ref": "database-fetch.schema.json#/properties/transport"
+    },
+    "request_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  },
+  "required": [
+    "schema",
+    "request",
+    "requests",
+    "transport",
+    "request_sha256"
+  ],
+  "additionalProperties": false
+}

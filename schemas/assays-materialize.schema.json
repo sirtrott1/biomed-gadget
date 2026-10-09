@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.assays.materialize.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "source_namespace": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "design": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "population": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "selection": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "minItems": 0,
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "question",
+        "population",
+        "selection",
+        "limitations"
+      ],
+      "additionalProperties": false
+    },
+    "recipe": {
+      "$ref": "assays-query.schema.json"
+    },
+    "channel": {
+      "enum": [
+        "G",
+        "E",
+        "T",
+        "observation"
+      ]
+    },
+    "view": {
+      "type": "string",
+      "minLength": 1
+    },
+    "component": {
+      "enum": [
+        "input",
+        "compatible",
+        "residual"
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "source_namespace",
+    "design",
+    "recipe",
+    "channel"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "recipe": {
+            "properties": {
+              "operation": {
+                "const": "assay_sections"
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "view",
+          "component"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "view"
+              ]
+            },
+            {
+              "required": [
+                "component"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

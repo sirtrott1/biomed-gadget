@@ -1,0 +1,55 @@
+{
+  "schema": "gadget.pipeline.intent.v1",
+  "profile": "spatial",
+  "recipes": [
+    {
+      "id": "neighborhood",
+      "purpose": "Build the physical incidence structure from declared section coordinates",
+      "goal": {
+        "method": "spatial_relations",
+        "parameters": {
+          "assay": "spots",
+          "coordinates": [
+            "x",
+            "y"
+          ],
+          "frame": "section_1",
+          "units": "um",
+          "metric_diagonal": [
+            "1",
+            "1"
+          ],
+          "radius_squared": "100",
+          "relation_type": "physical.neighborhood",
+          "evidence": "Declared section coordinates, units and squared radius"
+        },
+        "output": {
+          "id": "physical",
+          "source_namespace": "10103",
+          "design": {
+            "question": "Compare the explicitly declared experimental units",
+            "population": "Declared specimens",
+            "selection": "All reported inputs required by the declared maps",
+            "limitations": [
+              "Interpretation follows the supplied experimental design"
+            ]
+          },
+          "channel": "E"
+        }
+      }
+    },
+    {
+      "id": "green_action",
+      "purpose": "Compute the full Green response of the selected field on the declared spatial complex",
+      "goal": {
+        "method": "green_action",
+        "input": "neighborhood",
+        "parameters": {
+          "context": "all",
+          "field": "all.gene_A",
+          "lambda": "1"
+        }
+      }
+    }
+  ]
+}

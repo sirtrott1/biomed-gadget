@@ -1,0 +1,6 @@
+{
+  "operation": "affinity_evidence",
+  "endpoint": "Ki",
+  "units": "nM",
+  "maximum": "0.5"
+}

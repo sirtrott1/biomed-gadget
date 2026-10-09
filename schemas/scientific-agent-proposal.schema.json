@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.scientific.agent.proposal.v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "gadget.scientific.agent.proposal.v1"
+        },
+        "action": {
+          "const": "query"
+        },
+        "query": {
+          "$ref": "#/$defs/query"
+        }
+      },
+      "required": [
+        "schema",
+        "action",
+        "query"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "gadget.scientific.agent.proposal.v1"
+        },
+        "action": {
+          "const": "clarify"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "schema",
+        "action",
+        "reason"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "gadget.scientific.agent.proposal.v1"
+        },
+        "action": {
+          "const": "plan"
+        },
+        "plan": {
+          "$ref": "#/$defs/plan"
+        }
+      },
+      "required": [
+        "schema",
+        "action",
+        "plan"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "gadget.scientific.agent.proposal.v1"
+        },
+        "action": {
+          "const": "annotate"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        }
+      },
+      "required": [
+        "schema",
+        "action",
+        "annotations"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "gadget.scientific.agent.proposal.v1"
+        },
+        "action": {
+          "const": "retrieve"
+        },
+        "read": {
+          "$ref": "#/$defs/read"
+        }
+      },
+      "required": [
+        "schema",
+        "action",
+        "read"
+      ]
+    }
+  ],
+  "$defs": {
+    "query": {
+      "$ref": "scientific-query.schema.json"
+    },
+    "plan": {
+      "$ref": "scientific-plan.schema.json"
+    },
+    "annotations": {
+      "$ref": "semantic-proposal.schema.json"
+    },
+    "read": {
+      "$ref": "scientific-source-read.schema.json"
+    }
+  }
+}

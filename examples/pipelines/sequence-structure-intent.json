@@ -1,0 +1,59 @@
+{
+  "schema": "gadget.pipeline.intent.v1",
+  "profile": "sequence",
+  "recipes": [
+    {
+      "id": "assembly",
+      "purpose": "Construct the observed k-mer source from every retained read occurrence",
+      "goal": {
+        "method": "sequence_assembly_graph",
+        "parameters": {
+          "resource": "reads",
+          "k": 3,
+          "ambiguity": "literal_tokens",
+          "evidence": "Every k-mer occurrence from the admitted reads"
+        },
+        "output": {
+          "id": "assembly",
+          "source_namespace": "10104",
+          "design": {
+            "question": "Inspect every retained observation and declared structural witness",
+            "population": "Declared source sequences",
+            "selection": "Every admitted read",
+            "limitations": [
+              "Interpretation follows the experimental design and sequence preparation"
+            ]
+          },
+          "channel": "observation"
+        }
+      }
+    },
+    {
+      "id": "structure",
+      "purpose": "Report complete measured counts, Hodge sectors and structural witnesses",
+      "goal": {
+        "method": "chain_certificate",
+        "input": "assembly",
+        "parameters": {
+          "context": "all",
+          "grade": 1,
+          "coefficient_domain": "rational",
+          "field": "all.kmer_occurrence_count"
+        }
+      }
+    },
+    {
+      "id": "response",
+      "purpose": "Compute the full Green response on the observed source",
+      "goal": {
+        "method": "green_action",
+        "input": "assembly",
+        "parameters": {
+          "context": "all",
+          "field": "all.kmer_occurrence_count",
+          "lambda": "1"
+        }
+      }
+    }
+  ]
+}

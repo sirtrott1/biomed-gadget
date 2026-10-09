@@ -1,0 +1,5 @@
+# Complete RexGraphCpp header fingerprint recorded for reproduction builds.
+set(GADGET_QUALIFIED_REXGRAPH_HEADERS_SHA256
+  "1e6adda1dec387c54bac9acc513a62806c35991cf593a163f416bb21bd2186a6")
+set(GADGET_QUALIFIED_REXGRAPH_REVISION
+  "b5a0352c0e0f22bc087300eee514bb745d7e6fd3")

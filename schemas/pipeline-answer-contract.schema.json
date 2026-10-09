@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.pipeline.answer.contract.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.pipeline.answer.contract.v1"
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "observable": {
+            "enum": [
+              "read_quality",
+              "alignment_records",
+              "annotation_features",
+              "feature_allocations",
+              "allocation_ranges",
+              "expression_allocation_ranges",
+              "field_support",
+              "paired_field_contrast",
+              "controlled_field_relations",
+              "hodge_action",
+              "green_action",
+              "local_sections",
+              "assay_sections",
+              "linear_aggregation",
+              "interval_coverage",
+              "chromatin_contrast",
+              "controlled_coverage",
+              "spatial_relations",
+              "field_transfer",
+              "genotype_observations",
+              "motif_matches",
+              "global_edit_routes",
+              "reference_placements",
+              "indexed_edit_placements",
+              "splice_chains",
+              "kmer_structure",
+              "read_cover_reconstructions",
+              "constrained_allocations",
+              "chain_structure",
+              "realized_path_comparison",
+              "typed_moment",
+              "finite_moment_change",
+              "structure_transition",
+              "green_response",
+              "relational_persistence",
+              "linear_model_comparison",
+              "finite_reference_calibration",
+              "relational_field_ensemble",
+              "structural_reference_calibration",
+              "population_p_value",
+              "source_structure_ablation",
+              "observed_response_model",
+              "constrained_response_model",
+              "temporal_field_history",
+              "censored_endpoint_bounds",
+              "declared_response_transition",
+              "hodge_frame_decomposition",
+              "linear_response_observation",
+              "metric_relative_novelty",
+              "relational_gluing"
+            ]
+          },
+          "bindings": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "id",
+          "observable",
+          "bindings"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "question",
+    "requirements"
+  ],
+  "additionalProperties": false
+}

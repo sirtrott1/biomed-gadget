@@ -1,0 +1,43 @@
+{
+  "schema": "gadget.assays.import.v1",
+  "id": "composite-sequences",
+  "design": {
+    "question": "Discover complete exon chains and compare literal read reconstructions and observed structure",
+    "population": "Authored source sequences",
+    "selection": "All declared source records",
+    "limitations": [
+      "Method demonstration without clinical interpretation"
+    ]
+  },
+  "assays": [],
+  "resources": [
+    {
+      "id": "reads",
+      "format": "fasta",
+      "method": "Authored sequence method example",
+      "source": {
+        "path": "reads.fa",
+        "sha256": "sha256:f95fd2f0c9ea6a6bdb91d75f2dae55255770faa454d988c0b051382756deee95"
+      }
+    },
+    {
+      "id": "queries",
+      "format": "fasta",
+      "method": "Authored sequence method example",
+      "source": {
+        "path": "queries.fa",
+        "sha256": "sha256:935d14802e2051a4286648e93e5bad911cd2d9a77fa26d59a6baa1f3b41ef506"
+      }
+    },
+    {
+      "id": "reference",
+      "format": "fasta",
+      "method": "Authored sequence method example",
+      "source": {
+        "path": "reference.fa",
+        "sha256": "sha256:f5a0bdab1fde6bf99e7b7420ce5c6ee8e6337884c116f3c03515338f7108df45"
+      }
+    }
+  ],
+  "links": []
+}

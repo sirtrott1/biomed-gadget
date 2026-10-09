@@ -1,0 +1,3110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.assays-query.v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "inspect"
+        }
+      },
+      "required": [
+        "schema",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "native_query"
+        },
+        "assay": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "query": {
+          "$ref": "scientific-query.schema.json"
+        },
+        "partitions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 1
+        },
+        "concurrent_jobs": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "assay",
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "interval_coverage"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thresholds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "strand_policy": {
+          "enum": [
+            "ignore",
+            "separate"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "thresholds",
+        "strand_policy"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "sequence_motifs"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "motifs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "pattern"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "strands": {
+          "enum": [
+            "forward",
+            "both"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "motifs",
+        "strands"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "allocation_bounds"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "id",
+              "candidates"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "candidate_search": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "completeness": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "reference_sha256": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "method",
+            "completeness",
+            "reference_sha256"
+          ],
+          "additionalProperties": false
+        },
+        "scale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "scale_provenance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "kernel_certificate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "targets",
+        "candidate_search",
+        "scale",
+        "scale_provenance"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "field_transfer"
+        },
+        "left": {
+          "type": "object",
+          "properties": {
+            "assay": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "partition": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "field": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "assay",
+            "partition",
+            "field"
+          ],
+          "additionalProperties": false
+        },
+        "right": {
+          "type": "object",
+          "properties": {
+            "assay": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "partition": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "field": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "assay",
+            "partition",
+            "field"
+          ],
+          "additionalProperties": false
+        },
+        "metric": {
+          "const": "identity"
+        },
+        "map": {
+          "type": "object",
+          "properties": {
+            "domain_quantity": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "domain_units": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "codomain_quantity": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "codomain_units": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "method": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "left_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "right_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "coefficient": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "left_id",
+                  "right_id",
+                  "coefficient"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0
+            }
+          },
+          "required": [
+            "domain_quantity",
+            "domain_units",
+            "codomain_quantity",
+            "codomain_units",
+            "method",
+            "evidence",
+            "entries"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "left",
+        "right",
+        "metric",
+        "map"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "read_quality"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "quality_thresholds": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 93
+          },
+          "minItems": 1,
+          "maxItems": 94
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "quality_thresholds"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "annotation_features"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "feature_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "group_attribute": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "feature_type",
+        "group_attribute"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "alignment_evidence"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "filter": {
+          "type": "object",
+          "properties": {
+            "exclude_flags": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4095
+            },
+            "minimum_mapping_quality": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 254
+            },
+            "unknown_mapping_quality": {
+              "enum": [
+                "include",
+                "exclude"
+              ]
+            }
+          },
+          "required": [
+            "exclude_flags",
+            "minimum_mapping_quality",
+            "unknown_mapping_quality"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "filter"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "feature_counts"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "annotation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feature_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "group_attribute": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "const": "sequenced_segment"
+        },
+        "overlap": {
+          "enum": [
+            "any_aligned_base",
+            "all_aligned_bases"
+          ]
+        },
+        "strand_policy": {
+          "enum": [
+            "ignore",
+            "same",
+            "opposite"
+          ]
+        },
+        "filter": {
+          "type": "object",
+          "properties": {
+            "exclude_flags": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4095
+            },
+            "minimum_mapping_quality": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 254
+            },
+            "unknown_mapping_quality": {
+              "enum": [
+                "include",
+                "exclude"
+              ]
+            }
+          },
+          "required": [
+            "exclude_flags",
+            "minimum_mapping_quality",
+            "unknown_mapping_quality"
+          ],
+          "additionalProperties": false
+        },
+        "candidate_search": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "minLength": 1
+            },
+            "completeness": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reference_sha256": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "method",
+            "completeness",
+            "reference_sha256"
+          ],
+          "additionalProperties": false
+        },
+        "junction_policy": {
+          "enum": [
+            "ignore",
+            "declared_exon_chain"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "annotation",
+        "feature_type",
+        "group_attribute",
+        "unit",
+        "overlap",
+        "strand_policy",
+        "filter",
+        "candidate_search"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "variant_genotypes"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "filter_policy": {
+          "enum": [
+            "all",
+            "pass"
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "filter_policy"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "chromatin_contrast"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resource": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scale_provenance": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "resource",
+              "scale",
+              "scale_provenance"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "contrasts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "treated": {
+                "type": "string",
+                "minLength": 1
+              },
+              "control": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "treated",
+              "control"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "strand_policy": {
+          "enum": [
+            "ignore",
+            "separate"
+          ]
+        },
+        "thresholds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "absence_policy": {
+          "const": "measured_zero_within_union"
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "samples",
+        "contrasts",
+        "strand_policy",
+        "thresholds",
+        "absence_policy"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "spatial_relations"
+        },
+        "assay": {
+          "type": "string",
+          "minLength": 1
+        },
+        "coordinates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "frame": {
+          "type": "string",
+          "minLength": 1
+        },
+        "units": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metric_diagonal": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "radius_squared": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relation_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_certificate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "assay",
+        "coordinates",
+        "frame",
+        "units",
+        "metric_diagonal",
+        "radius_squared",
+        "relation_type",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "aggregate_assay"
+        },
+        "assay": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "feature_groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "coefficient": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "coefficient"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "id",
+              "members"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "observation_groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "coefficient": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "coefficient"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "id",
+              "members"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "map_method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "map_evidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "support_policy": {
+          "const": "require_all_nonzero_inputs"
+        },
+        "count_policy": {
+          "const": "disjoint_count_sum"
+        },
+        "workers": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "assay",
+        "feature_groups",
+        "observation_groups",
+        "map_method",
+        "map_evidence",
+        "support_policy"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "exact_sequence_alignment"
+        },
+        "query_resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "query_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "reference_resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "reference_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "scoring": {
+          "type": "object",
+          "properties": {
+            "match": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mismatch": {
+              "type": "string",
+              "minLength": 1
+            },
+            "query_gap": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reference_gap": {
+              "type": "string",
+              "minLength": 1
+            },
+            "units": {
+              "type": "string",
+              "minLength": 1
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "match",
+            "mismatch",
+            "query_gap",
+            "reference_gap",
+            "units",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "ambiguity": {
+          "enum": [
+            "literal",
+            "possible",
+            "definite"
+          ]
+        },
+        "mode": {
+          "const": "global_linear_gap"
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "query_resource",
+        "query_id",
+        "reference_resource",
+        "reference_id",
+        "scoring",
+        "ambiguity",
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "constrained_allocations"
+        },
+        "domain": {
+          "enum": [
+            "bounded_integer",
+            "bounded_rational"
+          ]
+        },
+        "variables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "lower": {
+                "type": "string",
+                "minLength": 1
+              },
+              "upper": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "lower",
+              "upper"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "coefficients": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "sense": {
+                "enum": [
+                  "eq",
+                  "le",
+                  "ge"
+                ]
+              },
+              "rhs": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "coefficients",
+              "sense",
+              "rhs"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "objective": {
+          "type": "object",
+          "properties": {
+            "sense": {
+              "enum": [
+                "minimize",
+                "maximize"
+              ]
+            },
+            "coefficients": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "sense",
+            "coefficients"
+          ],
+          "additionalProperties": false
+        },
+        "units": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "witness_representation": {
+          "enum": [
+            "explicit",
+            "factorized"
+          ]
+        },
+        "factor_certificate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "domain",
+        "variables",
+        "constraints",
+        "objective",
+        "units",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "relational_persistence"
+        },
+        "assay": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "partition": {
+          "const": 0
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "minItems": 1
+        },
+        "births": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "grade": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "level": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "grade",
+              "index",
+              "level"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "filtration_meaning": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "lattice_snapshots": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "assay",
+        "partition",
+        "levels",
+        "births",
+        "filtration_meaning",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "reference_sequence_matches"
+        },
+        "query_resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "reference_resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "strands": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "+",
+              "-"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "ambiguity": {
+          "enum": [
+            "literal",
+            "possible",
+            "definite"
+          ]
+        },
+        "maximum_mismatches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimum_overhang": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "junctions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "contig": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "donor": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "acceptor": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "strand": {
+                "enum": [
+                  "+",
+                  "-"
+                ]
+              },
+              "evidence": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "contig",
+              "donor",
+              "acceptor",
+              "strand",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "query_resource",
+        "reference_resource",
+        "strands",
+        "ambiguity",
+        "maximum_mismatches",
+        "minimum_overhang",
+        "junctions",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "sequence_assembly_graph"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "k": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "ambiguity": {
+          "const": "literal_tokens"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "route": {
+          "type": "object",
+          "properties": {
+            "start": {
+              "type": "string",
+              "minLength": 1
+            },
+            "end": {
+              "type": "string",
+              "minLength": 1
+            },
+            "objective": {
+              "const": "fewest_steps"
+            }
+          },
+          "required": [
+            "start",
+            "end",
+            "objective"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "k",
+        "ambiguity",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "operation": {
+          "const": "indexed_sequence_alignment"
+        },
+        "query_resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "reference_resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "strands": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "+",
+              "-"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "scoring": {
+          "const": "unit_edit_cost"
+        },
+        "maximum_edits": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Must be strictly less than every declared query length; all admitted placements are retained."
+        }
+      },
+      "required": [
+        "schema",
+        "evidence",
+        "operation",
+        "query_resource",
+        "reference_resource",
+        "strands",
+        "scoring",
+        "maximum_edits"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation": {
+          "const": "sequence_splice_discovery"
+        },
+        "query_resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "reference_resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "strands": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "+",
+              "-"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "minimum_exon_bases": {
+          "type": "integer",
+          "minimum": 2
+        },
+        "minimum_intron_bases": {
+          "type": "integer",
+          "minimum": 4
+        },
+        "maximum_intron_bases": {
+          "type": "integer",
+          "minimum": 4
+        },
+        "maximum_junctions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "motifs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[ACGT]{2}-[ACGT]{2}$"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema",
+        "evidence",
+        "operation",
+        "query_resource",
+        "reference_resource",
+        "strands",
+        "minimum_exon_bases",
+        "minimum_intron_bases",
+        "maximum_intron_bases",
+        "maximum_junctions",
+        "motifs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation": {
+          "const": "read_overlap_reconstruction"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "minimum_overlap": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "objective": {
+          "const": "minimum_suffix_prefix_read_cover"
+        }
+      },
+      "required": [
+        "schema",
+        "evidence",
+        "operation",
+        "resource",
+        "minimum_overlap",
+        "objective"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "query_batch"
+        },
+        "concurrent_jobs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "queries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "query"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "query": {
+                "$ref": "#"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "concurrent_jobs",
+        "queries"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "expression_allocations"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resource": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scale_provenance": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "resource",
+              "scale",
+              "scale_provenance"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "evidence_source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "reference_resource": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "strands": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "+",
+                      "-"
+                    ]
+                  },
+                  "minItems": 1,
+                  "maxItems": 2,
+                  "uniqueItems": true
+                },
+                "ambiguity": {
+                  "enum": [
+                    "literal",
+                    "possible",
+                    "definite"
+                  ]
+                },
+                "maximum_mismatches": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "mode": {
+                  "const": "transcript_sequences"
+                }
+              },
+              "required": [
+                "reference_resource",
+                "strands",
+                "ambiguity",
+                "maximum_mismatches",
+                "evidence",
+                "mode"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "annotation": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "feature_type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "group_attribute": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "overlap": {
+                  "enum": [
+                    "any_aligned_base",
+                    "all_aligned_bases"
+                  ]
+                },
+                "strand_policy": {
+                  "enum": [
+                    "ignore",
+                    "same",
+                    "opposite"
+                  ]
+                },
+                "filter": {
+                  "type": "object",
+                  "properties": {
+                    "exclude_flags": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4095
+                    },
+                    "minimum_mapping_quality": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 254
+                    },
+                    "unknown_mapping_quality": {
+                      "enum": [
+                        "include",
+                        "exclude"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "exclude_flags",
+                    "minimum_mapping_quality",
+                    "unknown_mapping_quality"
+                  ],
+                  "additionalProperties": false
+                },
+                "candidate_search": {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "completeness": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reference_sha256": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "completeness",
+                    "reference_sha256"
+                  ],
+                  "additionalProperties": false
+                },
+                "junction_policy": {
+                  "enum": [
+                    "ignore",
+                    "declared_exon_chain"
+                  ]
+                },
+                "mode": {
+                  "const": "annotation_alignments"
+                }
+              },
+              "required": [
+                "annotation",
+                "feature_type",
+                "group_attribute",
+                "overlap",
+                "strand_policy",
+                "filter",
+                "candidate_search",
+                "junction_policy",
+                "mode"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "const": "equivalence_classes"
+                },
+                "candidate_search": {
+                  "type": "object",
+                  "properties": {
+                    "method": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "completeness": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reference_sha256": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "completeness",
+                    "reference_sha256"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "mode",
+                "candidate_search"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "candidates": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "id",
+              "candidates"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "contrasts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "left": {
+                "type": "string",
+                "minLength": 1
+              },
+              "right": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "left",
+              "right"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        },
+        "map_evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kernel_certificate": {
+          "type": "boolean"
+        },
+        "coupling": {
+          "type": "object",
+          "properties": {
+            "constraints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "terms": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "sample": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "target": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "coefficient": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "sample",
+                        "target",
+                        "coefficient"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 0
+                  },
+                  "sense": {
+                    "enum": [
+                      "eq",
+                      "le",
+                      "ge"
+                    ]
+                  },
+                  "rhs": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "evidence": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "terms",
+                  "sense",
+                  "rhs",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0
+            },
+            "witness_representation": {
+              "enum": [
+                "explicit",
+                "factorized"
+              ]
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "constraints",
+            "witness_representation",
+            "evidence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "samples",
+        "evidence_source",
+        "targets",
+        "contrasts",
+        "map_evidence"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "controlled_coverage"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resource": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scale_provenance": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "resource",
+              "scale",
+              "scale_provenance"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "contrasts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "terms": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "sample": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "coefficient": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "sample",
+                    "coefficient"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              },
+              "evidence": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "terms",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "controls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "intercept": {
+          "type": "boolean"
+        },
+        "metric": {
+          "const": "reference_length"
+        },
+        "strand_policy": {
+          "enum": [
+            "ignore",
+            "separate"
+          ]
+        },
+        "thresholds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "absence_policy": {
+          "const": "measured_zero_within_union"
+        },
+        "units": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_kernel": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "samples",
+        "contrasts",
+        "controls",
+        "intercept",
+        "metric",
+        "strand_policy",
+        "thresholds",
+        "absence_policy",
+        "units",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "assay_sections"
+        },
+        "views": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              },
+              "partition": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "section": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "field": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "section",
+                    "field"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              },
+              "metric": {
+                "type": "object",
+                "properties": {
+                  "domain_quantity": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "domain_units": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "quadrance_quantity": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "quadrance_units": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "method": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "evidence": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "diagonal": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(/[1-9][0-9]*)?$"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "required": [
+                  "domain_quantity",
+                  "domain_units",
+                  "quadrance_quantity",
+                  "quadrance_units",
+                  "method",
+                  "evidence",
+                  "diagonal"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "assay",
+              "partition",
+              "fields",
+              "metric"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "interfaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "axes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "quantity": {
+                "type": "string",
+                "minLength": 1
+              },
+              "units": {
+                "type": "string",
+                "minLength": 1
+              },
+              "channel": {
+                "enum": [
+                  "G",
+                  "E",
+                  "T",
+                  "observation"
+                ]
+              },
+              "method": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "string",
+                "minLength": 1
+              },
+              "participants": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[0-9]+$"
+                    },
+                    "view": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "exists": {
+                      "type": "boolean"
+                    },
+                    "orientation": {
+                      "enum": [
+                        "positive",
+                        "negative"
+                      ]
+                    },
+                    "magnitude": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(/[1-9][0-9]*)?$"
+                    },
+                    "map": {
+                      "type": "object",
+                      "properties": {
+                        "domain_quantity": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "domain_units": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "codomain_quantity": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "codomain_units": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "method": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "evidence": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "domain_channel": {
+                          "enum": [
+                            "G",
+                            "E",
+                            "T",
+                            "observation"
+                          ]
+                        },
+                        "codomain_channel": {
+                          "enum": [
+                            "G",
+                            "E",
+                            "T",
+                            "observation"
+                          ]
+                        },
+                        "entries": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "observable_id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "source_id": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "coefficient": {
+                                "type": "string",
+                                "pattern": "^-?[0-9]+(/[1-9][0-9]*)?$"
+                              }
+                            },
+                            "required": [
+                              "observable_id",
+                              "source_id",
+                              "coefficient"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "minItems": 0
+                        }
+                      },
+                      "required": [
+                        "domain_quantity",
+                        "domain_units",
+                        "codomain_quantity",
+                        "codomain_units",
+                        "method",
+                        "evidence",
+                        "domain_channel",
+                        "codomain_channel",
+                        "entries"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "view",
+                    "exists",
+                    "orientation",
+                    "magnitude",
+                    "map"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "id",
+              "axes",
+              "quantity",
+              "units",
+              "channel",
+              "method",
+              "evidence",
+              "participants"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "metric": {
+          "type": "object",
+          "properties": {
+            "quantity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "units": {
+              "type": "string",
+              "minLength": 1
+            },
+            "method": {
+              "type": "string",
+              "minLength": 1
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "quantity",
+            "units",
+            "method",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "support_policy": {
+          "const": "require_all_nonzero_occurrences"
+        },
+        "workers": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "views",
+        "sections",
+        "interfaces",
+        "metric",
+        "support_policy"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "design_aggregation"
+        },
+        "assay": {
+          "type": "string",
+          "minLength": 1
+        },
+        "map_method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "map_evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "support_policy": {
+          "const": "require_all_nonzero_inputs"
+        },
+        "count_policy": {
+          "const": "disjoint_count_sum"
+        },
+        "workers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "feature_design": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "const": "identity"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "const": "groups"
+                },
+                "groups": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "where": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "column": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "values": {
+                              "type": "array",
+                              "minItems": 1,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "column",
+                            "values"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "coefficient": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "where",
+                      "coefficient"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "missing_tokens": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unassigned_policy": {
+                  "enum": [
+                    "exclude",
+                    "error"
+                  ]
+                },
+                "overlap_policy": {
+                  "enum": [
+                    "allow",
+                    "error"
+                  ]
+                }
+              },
+              "required": [
+                "mode",
+                "groups",
+                "missing_tokens",
+                "unassigned_policy",
+                "overlap_policy"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "observation_design": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "const": "identity"
+                }
+              },
+              "required": [
+                "mode"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "const": "groups"
+                },
+                "groups": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "where": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "column": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "values": {
+                              "type": "array",
+                              "minItems": 1,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "column",
+                            "values"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "coefficient": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "where",
+                      "coefficient"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "missing_tokens": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unassigned_policy": {
+                  "enum": [
+                    "exclude",
+                    "error"
+                  ]
+                },
+                "overlap_policy": {
+                  "enum": [
+                    "allow",
+                    "error"
+                  ]
+                }
+              },
+              "required": [
+                "mode",
+                "groups",
+                "missing_tokens",
+                "unassigned_policy",
+                "overlap_policy"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "assay",
+        "map_method",
+        "map_evidence",
+        "support_policy",
+        "feature_design",
+        "observation_design"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "relational_gluing"
+        },
+        "declaration": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$"
+            },
+            "pushout": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$"
+            },
+            "method": {
+              "type": "string",
+              "minLength": 1
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "revision",
+            "pushout",
+            "method",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "sources": {
+          "type": "object",
+          "properties": {
+            "common": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$"
+                },
+                "assay": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "partition": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "available_sequence": {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)$"
+                }
+              },
+              "required": [
+                "key",
+                "assay",
+                "partition",
+                "available_sequence"
+              ],
+              "additionalProperties": false
+            },
+            "left": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$"
+                },
+                "assay": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "partition": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "available_sequence": {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)$"
+                }
+              },
+              "required": [
+                "key",
+                "assay",
+                "partition",
+                "available_sequence"
+              ],
+              "additionalProperties": false
+            },
+            "right": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$"
+                },
+                "assay": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "partition": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "available_sequence": {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)$"
+                }
+              },
+              "required": [
+                "key",
+                "assay",
+                "partition",
+                "available_sequence"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "common",
+            "left",
+            "right"
+          ],
+          "additionalProperties": false
+        },
+        "embeddings": {
+          "type": "object",
+          "properties": {
+            "common_left": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$"
+                },
+                "cells": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "grade": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "from": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "to": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "grade",
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "occurrences": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "grade": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "from": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]*$"
+                      },
+                      "to": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]*$"
+                      }
+                    },
+                    "required": [
+                      "grade",
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "key",
+                "cells",
+                "occurrences"
+              ],
+              "additionalProperties": false
+            },
+            "common_right": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]*$"
+                },
+                "cells": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "grade": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "from": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "to": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "grade",
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "occurrences": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "grade": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "from": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]*$"
+                      },
+                      "to": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]*$"
+                      }
+                    },
+                    "required": [
+                      "grade",
+                      "from",
+                      "to"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "key",
+                "cells",
+                "occurrences"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "common_left",
+            "common_right"
+          ],
+          "additionalProperties": false
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]*$"
+              },
+              "left_field": {
+                "type": "string",
+                "minLength": 1
+              },
+              "right_field": {
+                "type": "string",
+                "minLength": 1
+              },
+              "quantity": {
+                "type": "string",
+                "minLength": 1
+              },
+              "units": {
+                "type": "string",
+                "minLength": 1
+              },
+              "channel": {
+                "type": "string",
+                "minLength": 1
+              },
+              "method": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "key",
+              "left_field",
+              "right_field",
+              "quantity",
+              "units",
+              "channel",
+              "method",
+              "evidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "boundary_policy": {
+          "enum": [
+            "none",
+            "to_grade_zero"
+          ]
+        },
+        "workers": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "declaration",
+        "sources",
+        "embeddings",
+        "sections",
+        "boundary_policy"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

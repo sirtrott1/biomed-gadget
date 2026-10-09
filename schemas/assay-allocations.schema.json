@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.assay-allocations.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.assay.allocations.v1"
+    },
+    "operation": {
+      "const": "allocation_bounds"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "classes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "id",
+          "candidates"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "counts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "scale": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scale_provenance": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "counts",
+          "scale",
+          "scale_provenance"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "id",
+          "candidates"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "contrasts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "left": {
+            "type": "string",
+            "minLength": 1
+          },
+          "right": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "left",
+          "right"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "class_partition": {
+      "const": "disjoint_observations"
+    },
+    "candidate_search": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "completeness": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reference_sha256": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "method",
+        "completeness",
+        "reference_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
+    "units": {
+      "enum": [
+        "assigned_fragment_count",
+        "assigned_segment_count",
+        "assigned_observation_count"
+      ]
+    },
+    "kernel_certificate": {
+      "type": "boolean",
+      "description": "Retain native class kernel frames, ordered occurrence coordinates and common target images."
+    }
+  },
+  "required": [
+    "schema",
+    "operation",
+    "candidates",
+    "classes",
+    "samples",
+    "targets",
+    "contrasts",
+    "class_partition",
+    "candidate_search",
+    "evidence",
+    "units"
+  ],
+  "additionalProperties": false
+}

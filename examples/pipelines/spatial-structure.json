@@ -1,0 +1,60 @@
+{
+  "schema": "gadget.pipeline.default.v1",
+  "profile": "spatial",
+  "question": "How does a measured field respond on the declared physical incidence structure?",
+  "goals": [
+    {
+      "id": "neighborhood",
+      "method": "spatial_relations",
+      "parameters": {
+        "assay": "spots",
+        "coordinates": [
+          "x",
+          "y"
+        ],
+        "frame": "section_1",
+        "units": "um",
+        "metric_diagonal": [
+          "1",
+          "1"
+        ],
+        "radius_squared": "100",
+        "relation_type": "physical.neighborhood",
+        "evidence": "Declared section coordinates, units and squared radius"
+      },
+      "output": {
+        "id": "physical",
+        "source_namespace": "10103",
+        "design": {
+          "question": "Compare the explicitly declared experimental units",
+          "population": "Declared specimens",
+          "selection": "All reported inputs required by the declared maps",
+          "limitations": [
+            "Interpretation follows the supplied experimental design"
+          ]
+        },
+        "channel": "E"
+      }
+    },
+    {
+      "method": "green_action",
+      "input": "neighborhood",
+      "parameters": {
+        "context": "all",
+        "field": "all.gene_A",
+        "lambda": "1"
+      }
+    },
+    {
+      "id": "structure",
+      "method": "chain_certificate",
+      "input": "neighborhood",
+      "parameters": {
+        "context": "all",
+        "grade": 0,
+        "coefficient_domain": "rational",
+        "field": "all.gene_A"
+      }
+    }
+  ]
+}

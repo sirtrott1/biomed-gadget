@@ -1,0 +1,46 @@
+{
+  "schema": "gadget.pipeline.intent.v1",
+  "profile": "multi_omics",
+  "recipes": [
+    {
+      "id": "comparison",
+      "purpose": "Compare full independently measured assay fields through the explicit quantitative map",
+      "goal": {
+        "method": "field_transfer",
+        "parameters": {
+          "left": {
+            "assay": "rna",
+            "partition": 0,
+            "field": "all.specimen"
+          },
+          "right": {
+            "assay": "protein",
+            "partition": 0,
+            "field": "all.specimen"
+          },
+          "metric": "identity",
+          "map": {
+            "domain_quantity": "measured_abundance",
+            "domain_units": "units",
+            "codomain_quantity": "read_count",
+            "codomain_units": "counts",
+            "method": "Explicit quantitative measurement correspondence",
+            "evidence": "Replace with the experimental evidence for these coefficients and units",
+            "entries": [
+              {
+                "left_id": "gene_A",
+                "right_id": "protein_A",
+                "coefficient": "1/2"
+              },
+              {
+                "left_id": "gene_B",
+                "right_id": "protein_B",
+                "coefficient": "1"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

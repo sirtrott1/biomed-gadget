@@ -1,0 +1,60 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "cpu",
+      "displayName": "CPU development and contracts",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/presets/cpu",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "ON",
+        "GADGET_BUILD_EXAMPLES": "ON",
+        "GADGET_ENFORCE_DEPENDENCY_LOCK": "ON"
+      }
+    },
+    {
+      "name": "formats",
+      "displayName": "CPU with HDF5 and HTSlib",
+      "inherits": "cpu",
+      "binaryDir": "${sourceDir}/build/presets/formats",
+      "cacheVariables": {"GADGET_ENABLE_HDF5": "ON", "GADGET_ENABLE_HTSLIB": "ON"}
+    },
+    {
+      "name": "databases",
+      "displayName": "CPU with public database transport",
+      "inherits": "cpu",
+      "binaryDir": "${sourceDir}/build/presets/databases",
+      "cacheVariables": {"GADGET_ENABLE_PUBLIC_DATABASES": "ON"}
+    },
+    {
+      "name": "local-model",
+      "displayName": "CPU with local llama.cpp",
+      "inherits": "cpu",
+      "binaryDir": "${sourceDir}/build/presets/local-model",
+      "cacheVariables": {"GADGET_ENABLE_LOCAL_MODEL": "ON"}
+    },
+    {
+      "name": "vulkan",
+      "displayName": "Canonical packed Vulkan and CPU work",
+      "inherits": "cpu",
+      "binaryDir": "${sourceDir}/build/presets/vulkan",
+      "cacheVariables": {"GADGET_ENABLE_VULKAN": "ON"}
+    }
+  ],
+  "buildPresets": [
+    {"name": "cpu", "configurePreset": "cpu"},
+    {"name": "formats", "configurePreset": "formats"},
+    {"name": "databases", "configurePreset": "databases"},
+    {"name": "local-model", "configurePreset": "local-model"},
+    {"name": "vulkan", "configurePreset": "vulkan"}
+  ],
+  "testPresets": [
+    {"name": "cpu", "configurePreset": "cpu", "output": {"outputOnFailure": true}},
+    {"name": "formats", "configurePreset": "formats", "output": {"outputOnFailure": true}},
+    {"name": "databases", "configurePreset": "databases", "output": {"outputOnFailure": true}},
+    {"name": "local-model", "configurePreset": "local-model", "output": {"outputOnFailure": true}},
+    {"name": "vulkan", "configurePreset": "vulkan", "output": {"outputOnFailure": true}}
+  ]
+}

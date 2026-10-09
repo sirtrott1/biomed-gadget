@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.biomedical.query.v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "inspect"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "coverage"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "select"
+        },
+        "field": {
+          "enum": [
+            "endpoint",
+            "relation",
+            "units",
+            "provider"
+          ]
+        },
+        "comparison": {
+          "const": "equal"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "field",
+        "comparison",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "neighbors"
+        },
+        "subject_key": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        }
+      },
+      "required": [
+        "operation",
+        "subject_key"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "compare"
+        },
+        "left": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "right": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        }
+      },
+      "required": [
+        "operation",
+        "left",
+        "right"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "affinity_evidence"
+        },
+        "endpoint": {
+          "enum": [
+            "Kd",
+            "Ki",
+            "IC50",
+            "EC50"
+          ]
+        },
+        "units": {
+          "enum": [
+            "nM",
+            "uM",
+            "M"
+          ]
+        },
+        "maximum": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "operation",
+        "endpoint",
+        "units",
+        "maximum"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

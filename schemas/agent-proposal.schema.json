@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.agent.proposal.v1",
+  "oneOf": [
+    {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "gadget.agent.proposal.v1"},
+        "action": {"const": "query"}, "query": {"$ref": "#/$defs/query"}
+      },
+      "required": ["schema", "action", "query"]
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "gadget.agent.proposal.v1"},
+        "action": {"const": "clarify"}, "reason": {"type": "string", "minLength": 1, "maxLength": 4096}
+      },
+      "required": ["schema", "action", "reason"]
+    }
+  ],
+  "$defs": {"query": {"$ref": "query.schema.json"}}
+}

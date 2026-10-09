@@ -1,0 +1,51 @@
+{
+  "schema": "gadget.pipeline.default.v1",
+  "profile": "sequence",
+  "question": "How do observed repeated sequence transitions inhabit the retained relational complex?",
+  "goals": [
+    {
+      "id": "assembly",
+      "method": "sequence_assembly_graph",
+      "parameters": {
+        "resource": "reads",
+        "k": 3,
+        "ambiguity": "literal_tokens",
+        "evidence": "Every k-mer occurrence from the admitted reads"
+      },
+      "output": {
+        "id": "assembly",
+        "source_namespace": "10104",
+        "design": {
+          "question": "Inspect every retained observation and declared structural witness",
+          "population": "Declared source sequences",
+          "selection": "Every admitted read",
+          "limitations": [
+            "Interpretation follows the experimental design and sequence preparation"
+          ]
+        },
+        "channel": "observation"
+      }
+    },
+    {
+      "id": "structure",
+      "method": "chain_certificate",
+      "input": "assembly",
+      "parameters": {
+        "context": "all",
+        "grade": 1,
+        "coefficient_domain": "rational",
+        "field": "all.kmer_occurrence_count"
+      }
+    },
+    {
+      "id": "response",
+      "method": "green_action",
+      "input": "assembly",
+      "parameters": {
+        "context": "all",
+        "field": "all.kmer_occurrence_count",
+        "lambda": "1"
+      }
+    }
+  ]
+}

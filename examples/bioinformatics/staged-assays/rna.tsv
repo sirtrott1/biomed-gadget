@@ -1,0 +1,3 @@
+id	rna-before-1	rna-before-2	rna-after-1	rna-after-2	rna-partial-1	rna-partial-2	rna-zero-1	rna-zero-2	rna-unobserved-1	rna-unobserved-2	other-cell	missing-design
+f1	3	3	2	2	NA	NA	0	0	NA	NA	100	200
+f2	2	2	1	2	1	2	0	0	NA	NA	100	200

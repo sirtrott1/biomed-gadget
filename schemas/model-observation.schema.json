@@ -1,0 +1,16 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"gadget.model.observation.v1",
+  "type":"object",
+  "properties":{
+    "schema":{"const":"gadget.model.observation.v1"},
+    "observations":{"type":"array","minItems":1,"maxItems":16,"items":{
+      "type":"object","properties":{
+        "statement":{"type":"string","minLength":1,"maxLength":512},
+        "image_index":{"anyOf":[{"type":"integer","minimum":0,"maximum":3},{"type":"null"}]}
+      },"required":["statement","image_index"],"additionalProperties":false
+    }},
+    "limitations":{"type":"string","maxLength":512}
+  },
+  "required":["schema","observations","limitations"],"additionalProperties":false
+}

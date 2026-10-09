@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.scientific.study.v2",
+  "$ref": "scientific-study.schema.json",
+  "properties": {
+    "schema": {
+      "const": "gadget.scientific.study.v2"
+    }
+  }
+}

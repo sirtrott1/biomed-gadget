@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.table.import.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.table.import.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_namespace": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "delimiter": {
+          "enum": [
+            ",",
+            "\t"
+          ]
+        },
+        "header": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "delimiter",
+        "header"
+      ],
+      "additionalProperties": false
+    },
+    "dictionary": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "columns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "channel": {
+            "enum": [
+              "G",
+              "E",
+              "T",
+              "covariate",
+              "observation"
+            ]
+          },
+          "quantity": {
+            "type": "string",
+            "minLength": 1
+          },
+          "units": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value_type": {
+            "enum": [
+              "quantitative",
+              "indicator",
+              "categorical"
+            ]
+          },
+          "dictionary_start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "dictionary_end": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id",
+          "channel",
+          "quantity",
+          "units",
+          "value_type",
+          "dictionary_start",
+          "dictionary_end"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "missing_tokens": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "relation_columns": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "population": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selection": {
+      "type": "string",
+      "minLength": 1
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "source_url": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attribution": {
+      "type": "string",
+      "minLength": 1
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identity_column": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contrasts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "left": {
+            "type": "string",
+            "minLength": 1
+          },
+          "right": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "left",
+          "right"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "arithmetic": {
+      "enum": [
+        "exact_decimal",
+        "exact_rational"
+      ]
+    },
+    "evidence_profile": {
+      "enum": [
+        "quoted_v1",
+        "document_spans_v2"
+      ],
+      "default": "quoted_v1",
+      "description": "Version 2 stores original document spans without repeating quotations. Omitted selects the legacy quoted declaration."
+    },
+    "intake": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_source_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Caller budget for the complete retained table."
+        },
+        "max_record_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Caller budget for one unquoted input record, including a header."
+        },
+        "max_token_offsets": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Caller budget for retained token end offsets; headers are excluded."
+        }
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "source_namespace",
+    "source",
+    "dictionary",
+    "columns",
+    "missing_tokens",
+    "relation_columns",
+    "question",
+    "population",
+    "selection",
+    "limitations",
+    "source_url",
+    "attribution",
+    "license"
+  ],
+  "additionalProperties": false
+}

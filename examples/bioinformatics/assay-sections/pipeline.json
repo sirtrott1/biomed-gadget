@@ -1,0 +1,520 @@
+{
+  "schema": "gadget.pipeline.default.v1",
+  "profile": "multi_omics",
+  "question": "Which components satisfy the declared inter-assay measurement interfaces?",
+  "goals": [
+    {
+      "id": "sections",
+      "method": "assay_sections",
+      "parameters": {
+        "views": [
+          {
+            "id": "rna",
+            "assay": "rna",
+            "partition": 0,
+            "fields": [
+              {
+                "section": "before",
+                "field": "all.before"
+              },
+              {
+                "section": "after",
+                "field": "all.after"
+              },
+              {
+                "section": "partial",
+                "field": "all.partial"
+              },
+              {
+                "section": "zero",
+                "field": "all.zero"
+              },
+              {
+                "section": "unobserved",
+                "field": "all.unobserved"
+              }
+            ],
+            "metric": {
+              "diagonal": [
+                "1",
+                "2"
+              ],
+              "domain_quantity": "umi_count",
+              "domain_units": "RNA molecules",
+              "quadrance_quantity": "declared_discrepancy_cost",
+              "quadrance_units": "declared cost",
+              "method": "Positive diagonal comparison cost",
+              "evidence": "Illustrative coefficients [1, 2]; no fitted normalization"
+            }
+          },
+          {
+            "id": "atac",
+            "assay": "atac",
+            "partition": 0,
+            "fields": [
+              {
+                "section": "before",
+                "field": "all.before"
+              },
+              {
+                "section": "after",
+                "field": "all.after"
+              },
+              {
+                "section": "partial",
+                "field": "all.partial"
+              },
+              {
+                "section": "zero",
+                "field": "all.zero"
+              },
+              {
+                "section": "unobserved",
+                "field": "all.unobserved"
+              }
+            ],
+            "metric": {
+              "diagonal": [
+                "3",
+                "4"
+              ],
+              "domain_quantity": "read_count",
+              "domain_units": "ATAC fragments",
+              "quadrance_quantity": "declared_discrepancy_cost",
+              "quadrance_units": "declared cost",
+              "method": "Positive diagonal comparison cost",
+              "evidence": "Illustrative coefficients [3, 4]; no fitted normalization"
+            }
+          },
+          {
+            "id": "protein",
+            "assay": "protein",
+            "partition": 0,
+            "fields": [
+              {
+                "section": "before",
+                "field": "all.before"
+              },
+              {
+                "section": "after",
+                "field": "all.after"
+              },
+              {
+                "section": "partial",
+                "field": "all.partial"
+              },
+              {
+                "section": "zero",
+                "field": "all.zero"
+              },
+              {
+                "section": "unobserved",
+                "field": "all.unobserved"
+              }
+            ],
+            "metric": {
+              "diagonal": [
+                "5",
+                "6"
+              ],
+              "domain_quantity": "declared_protein_count",
+              "domain_units": "antibody counts",
+              "quadrance_quantity": "declared_discrepancy_cost",
+              "quadrance_units": "declared cost",
+              "method": "Positive diagonal comparison cost",
+              "evidence": "Illustrative coefficients [5, 6]; no fitted normalization"
+            }
+          }
+        ],
+        "sections": [
+          "before",
+          "after",
+          "partial",
+          "zero",
+          "unobserved"
+        ],
+        "interfaces": [
+          {
+            "id": "rna-atac",
+            "axes": [
+              "signal"
+            ],
+            "quantity": "declared_interface_signal",
+            "units": "declared signal",
+            "channel": "observation",
+            "method": "Declared signed incidence balance",
+            "evidence": "Author-declared interface in this finite example",
+            "participants": [
+              {
+                "key": "1",
+                "view": "rna",
+                "exists": true,
+                "orientation": "positive",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "umi_count",
+                  "domain_units": "RNA molecules",
+                  "domain_channel": "E",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f1",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "2",
+                "view": "atac",
+                "exists": true,
+                "orientation": "negative",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "read_count",
+                  "domain_units": "ATAC fragments",
+                  "domain_channel": "observation",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f1",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "atac-protein",
+            "axes": [
+              "signal"
+            ],
+            "quantity": "declared_interface_signal",
+            "units": "declared signal",
+            "channel": "observation",
+            "method": "Declared signed incidence balance",
+            "evidence": "Author-declared interface in this finite example",
+            "participants": [
+              {
+                "key": "3",
+                "view": "atac",
+                "exists": true,
+                "orientation": "positive",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "read_count",
+                  "domain_units": "ATAC fragments",
+                  "domain_channel": "observation",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f2",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "4",
+                "view": "protein",
+                "exists": true,
+                "orientation": "negative",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "declared_protein_count",
+                  "domain_units": "antibody counts",
+                  "domain_channel": "T",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f1",
+                      "coefficient": "1/2"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "three-assay-balance",
+            "axes": [
+              "signal"
+            ],
+            "quantity": "declared_interface_signal",
+            "units": "declared signal",
+            "channel": "observation",
+            "method": "Declared signed incidence balance",
+            "evidence": "Author-declared interface in this finite example",
+            "participants": [
+              {
+                "key": "5",
+                "view": "rna",
+                "exists": true,
+                "orientation": "positive",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "umi_count",
+                  "domain_units": "RNA molecules",
+                  "domain_channel": "E",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f2",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "6",
+                "view": "atac",
+                "exists": true,
+                "orientation": "positive",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "read_count",
+                  "domain_units": "ATAC fragments",
+                  "domain_channel": "observation",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f2",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "7",
+                "view": "protein",
+                "exists": true,
+                "orientation": "negative",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "declared_protein_count",
+                  "domain_units": "antibody counts",
+                  "domain_channel": "T",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f2",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "retained-cancellation",
+            "axes": [
+              "signal"
+            ],
+            "quantity": "declared_interface_signal",
+            "units": "declared signal",
+            "channel": "observation",
+            "method": "Declared signed incidence balance",
+            "evidence": "Author-declared interface in this finite example",
+            "participants": [
+              {
+                "key": "8",
+                "view": "rna",
+                "exists": true,
+                "orientation": "positive",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "umi_count",
+                  "domain_units": "RNA molecules",
+                  "domain_channel": "E",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f1",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              },
+              {
+                "key": "9",
+                "view": "rna",
+                "exists": true,
+                "orientation": "negative",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "umi_count",
+                  "domain_units": "RNA molecules",
+                  "domain_channel": "E",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f1",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "inactive-evidence",
+            "axes": [
+              "signal"
+            ],
+            "quantity": "declared_interface_signal",
+            "units": "declared signal",
+            "channel": "observation",
+            "method": "Declared signed incidence balance",
+            "evidence": "Author-declared interface in this finite example",
+            "participants": [
+              {
+                "key": "10",
+                "view": "protein",
+                "exists": false,
+                "orientation": "positive",
+                "magnitude": "1",
+                "map": {
+                  "domain_quantity": "declared_protein_count",
+                  "domain_units": "antibody counts",
+                  "domain_channel": "T",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f1",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "zero-weight-evidence",
+            "axes": [
+              "signal"
+            ],
+            "quantity": "declared_interface_signal",
+            "units": "declared signal",
+            "channel": "observation",
+            "method": "Declared signed incidence balance",
+            "evidence": "Author-declared interface in this finite example",
+            "participants": [
+              {
+                "key": "11",
+                "view": "rna",
+                "exists": true,
+                "orientation": "positive",
+                "magnitude": "0",
+                "map": {
+                  "domain_quantity": "umi_count",
+                  "domain_units": "RNA molecules",
+                  "domain_channel": "E",
+                  "codomain_quantity": "declared_interface_signal",
+                  "codomain_units": "declared signal",
+                  "codomain_channel": "observation",
+                  "method": "Authored measurement restriction",
+                  "evidence": "Illustrative source-coordinate restriction; not an empirical biological calibration",
+                  "entries": [
+                    {
+                      "observable_id": "signal",
+                      "source_id": "f1",
+                      "coefficient": "1"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "metric": {
+          "quantity": "declared_discrepancy_cost",
+          "units": "declared cost",
+          "method": "Direct sum of declared positive diagonal forms",
+          "evidence": "All three view costs have the same declared codomain; no estimate of sampling uncertainty"
+        },
+        "support_policy": "require_all_nonzero_occurrences",
+        "workers": 2
+      },
+      "output": {
+        "id": "rna-compatible",
+        "source_namespace": "973400",
+        "design": {
+          "question": "Which components satisfy the declared inter-assay measurement interfaces?",
+          "population": "Three authored two-feature assays with five sections",
+          "selection": "Every supplied coordinate and section",
+          "limitations": [
+            "Constructed method example; interface maps and metric weights are illustrative declarations, not experimental calibrations"
+          ]
+        },
+        "channel": "E",
+        "view": "rna",
+        "component": "compatible"
+      }
+    },
+    {
+      "id": "support",
+      "method": "coverage",
+      "input": "sections",
+      "parameters": {
+        "fields": [
+          "all.before",
+          "all.after",
+          "all.partial",
+          "all.zero",
+          "all.unobserved"
+        ]
+      }
+    }
+  ]
+}

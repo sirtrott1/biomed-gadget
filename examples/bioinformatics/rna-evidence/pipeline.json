@@ -1,0 +1,101 @@
+{
+  "schema": "gadget.pipeline.default.v1",
+  "profile": "rna_seq",
+  "question": "Which expression changes are identified by read evidence?",
+  "goals": [
+    {
+      "id": "expression",
+      "method": "expression_allocations",
+      "parameters": {
+        "samples": [
+          {
+            "id": "baseline",
+            "resource": "baseline.fastq",
+            "scale": "1",
+            "scale_provenance": "Identity assigned-segment count scale"
+          },
+          {
+            "id": "followup",
+            "resource": "followup.fa",
+            "scale": "1",
+            "scale_provenance": "Identity assigned-segment count scale"
+          }
+        ],
+        "evidence_source": {
+          "mode": "transcript_sequences",
+          "reference_resource": "transcripts.fa",
+          "strands": [
+            "+"
+          ],
+          "ambiguity": "literal",
+          "maximum_mismatches": 0,
+          "evidence": "All contiguous windows of the supplied transcript sequences"
+        },
+        "targets": [
+          {
+            "id": "A1",
+            "candidates": [
+              "A1"
+            ]
+          },
+          {
+            "id": "A2",
+            "candidates": [
+              "A2"
+            ]
+          },
+          {
+            "id": "B",
+            "candidates": [
+              "B"
+            ]
+          },
+          {
+            "id": "geneA",
+            "candidates": [
+              "A1",
+              "A2"
+            ]
+          },
+          {
+            "id": "all",
+            "candidates": [
+              "A1",
+              "A2",
+              "B",
+              "__unassigned__"
+            ]
+          },
+          {
+            "id": "unassigned",
+            "candidates": [
+              "__unassigned__"
+            ]
+          }
+        ],
+        "contrasts": [
+          {
+            "id": "followup-minus-baseline",
+            "left": "followup",
+            "right": "baseline"
+          }
+        ],
+        "map_evidence": "A1 and A2 are declared transcript identities within geneA",
+        "kernel_certificate": true
+      },
+      "output": {
+        "id": "expression",
+        "source_namespace": "900821",
+        "channel": "E",
+        "design": {
+          "question": "Which expression changes are identified by read evidence?",
+          "population": "Two authored samples",
+          "selection": "Every supplied read and transcript",
+          "limitations": [
+            "Finite demonstration of assignment uncertainty"
+          ]
+        }
+      }
+    }
+  ]
+}

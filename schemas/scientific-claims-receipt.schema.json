@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.scientific.claims.receipt.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.scientific.claims.receipt.v1"
+    },
+    "status": {
+      "enum": [
+        "matched",
+        "contradicted",
+        "incomplete",
+        "selection_required"
+      ]
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "facts_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "question_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "catalog": {
+      "type": "object"
+    },
+    "proposal": {
+      "type": "object"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fact": {
+                "type": "string",
+                "minLength": 1
+              },
+              "comparison": {
+                "enum": [
+                  "equal",
+                  "not_equal",
+                  "greater",
+                  "greater_equal",
+                  "less",
+                  "less_equal"
+                ]
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "fact",
+              "comparison",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "fact_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "comparison": {
+            "type": "object"
+          },
+          "check_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "claim",
+          "fact_sha256",
+          "comparison",
+          "check_sha256"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "matched": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "contradicted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "interpretation_verified": {
+      "const": false
+    },
+    "receipt_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  },
+  "required": [
+    "schema",
+    "status",
+    "source_digest",
+    "facts_sha256",
+    "question_sha256",
+    "catalog",
+    "proposal",
+    "checks",
+    "missing",
+    "matched",
+    "contradicted",
+    "interpretation_verified",
+    "receipt_sha256"
+  ],
+  "additionalProperties": false
+}

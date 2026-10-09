@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.assays.annotation.receipt.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.assays.annotation.receipt.v1"
+    },
+    "status": {
+      "enum": [
+        "prospective",
+        "clarification"
+      ]
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "context_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "question_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "context": {
+      "$ref": "assays-source-context-catalog.schema.json"
+    },
+    "proposal": {
+      "$ref": "assays-annotation-proposal.schema.json"
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          },
+          "interpretation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "polarity": {
+            "enum": [
+              "asserted",
+              "negated",
+              "uncertain"
+            ]
+          },
+          "binding_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "interpretation_verified": {
+            "const": false
+          }
+        },
+        "required": [
+          "id",
+          "target",
+          "interpretation",
+          "polarity",
+          "binding_sha256",
+          "interpretation_verified"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "receipt_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema",
+    "status",
+    "source_digest",
+    "context_sha256",
+    "question_sha256",
+    "context",
+    "proposal",
+    "mentions",
+    "receipt_sha256"
+  ],
+  "additionalProperties": false
+}

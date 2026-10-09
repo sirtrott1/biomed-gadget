@@ -1,0 +1,105 @@
+{
+  "schema": "gadget.assays.query.v1",
+  "operation": "constrained_allocations",
+  "domain": "bounded_integer",
+  "variables": [
+    {
+      "id": "transcript-A",
+      "lower": "0",
+      "upper": "12"
+    },
+    {
+      "id": "transcript-B",
+      "lower": "0",
+      "upper": "12"
+    },
+    {
+      "id": "transcript-C",
+      "lower": "0",
+      "upper": "9"
+    },
+    {
+      "id": "transcript-D",
+      "lower": "0",
+      "upper": "9"
+    },
+    {
+      "id": "transcript-E",
+      "lower": "0",
+      "upper": "5"
+    },
+    {
+      "id": "transcript-F",
+      "lower": "0",
+      "upper": "5"
+    }
+  ],
+  "constraints": [
+    {
+      "id": "class-1-total",
+      "coefficients": [
+        "1",
+        "1",
+        "0",
+        "0",
+        "0",
+        "0"
+      ],
+      "sense": "eq",
+      "rhs": "12"
+    },
+    {
+      "id": "class-2-total",
+      "coefficients": [
+        "0",
+        "0",
+        "1",
+        "1",
+        "0",
+        "0"
+      ],
+      "sense": "eq",
+      "rhs": "9"
+    },
+    {
+      "id": "class-3-total",
+      "coefficients": [
+        "0",
+        "0",
+        "0",
+        "0",
+        "1",
+        "1"
+      ],
+      "sense": "eq",
+      "rhs": "5"
+    },
+    {
+      "id": "shared-capacity",
+      "coefficients": [
+        "1",
+        "0",
+        "1",
+        "0",
+        "0",
+        "0"
+      ],
+      "sense": "le",
+      "rhs": "13"
+    }
+  ],
+  "objective": {
+    "sense": "minimize",
+    "coefficients": [
+      "1",
+      "0",
+      "1",
+      "0",
+      "0",
+      "0"
+    ]
+  },
+  "units": "assigned_fragment_count",
+  "evidence": "Authored example of three disjoint observation class totals and a declared shared allocation capacity; coefficients and objective are input declarations",
+  "witness_representation": "factorized"
+}

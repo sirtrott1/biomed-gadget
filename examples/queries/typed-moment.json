@@ -1,0 +1,9 @@
+{
+  "operation": "typed_moment",
+  "context": "AD",
+  "realization": "support",
+  "grade": 0,
+  "field": "AD.G",
+  "other_field": "AD.E",
+  "order": 1
+}

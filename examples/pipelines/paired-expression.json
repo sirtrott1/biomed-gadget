@@ -1,0 +1,30 @@
+{
+  "schema": "gadget.pipeline.default.v1",
+  "profile": "rna_seq",
+  "question": "Which features have consistent and heterogeneous responses in the declared matched units?",
+  "assay": "expression",
+  "goals": [
+    {
+      "method": "expression_contrast",
+      "parameters": {
+        "pairs": [
+          {
+            "id": "donor_1",
+            "left": "all.donor_1_treated",
+            "right": "all.donor_1_control",
+            "left_scale": "1",
+            "right_scale": "1"
+          }
+        ],
+        "selection": [],
+        "support": "joint_reported",
+        "normalization": {
+          "method": "Declared identity scales; no fitted normalization"
+        },
+        "output_units": "counts",
+        "workers": 1
+      },
+      "normalization_evidence_field": "all.donor_1_treated"
+    }
+  ]
+}

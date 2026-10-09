@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.bioinformatics-file.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.bioinformatics.file.v1"
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "format": {
+      "enum": [
+        "bed",
+        "gtf",
+        "gff3",
+        "fasta",
+        "fastq",
+        "salmon_eq",
+        "sam",
+        "bam",
+        "cram",
+        "vcf",
+        "bcf"
+      ]
+    },
+    "reference": {
+      "type": "object",
+      "properties": {
+        "assembly": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "sequence_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "coordinate_convention": {
+          "enum": [
+            "zero_based_half_open"
+          ]
+        },
+        "contigs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "length": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "id",
+              "length"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 100000
+        }
+      },
+      "required": [
+        "assembly",
+        "sequence_sha256",
+        "coordinate_convention",
+        "contigs"
+      ],
+      "additionalProperties": false
+    },
+    "weight_column": {
+      "type": "integer",
+      "minimum": 3,
+      "maximum": 5
+    },
+    "reference_source": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "source",
+    "format"
+  ],
+  "additionalProperties": false
+}

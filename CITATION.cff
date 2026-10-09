@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "To cite biomed-gadget, use the software metadata in this file."
+type: software
+title: biomed-gadget
+version: 0.1.0
+authors:
+  - name: biomed-gadget
+repository-code: "https://github.com/sirtrott1/biomed-gadget"
+license: Apache-2.0
+abstract: "A C++ library and application for biomedical data analysis using RexGraph."

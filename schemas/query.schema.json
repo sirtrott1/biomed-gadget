@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.query.v1",
+  "title": "GADGET analytical query",
+  "type": "object",
+  "oneOf": [
+    {"properties": {"operation": {"const": "inspect"}}, "required": ["operation"], "additionalProperties": false},
+    {
+      "properties": {"operation": {"const": "provenance"}, "gene": {"type": "string", "minLength": 1}},
+      "required": ["operation", "gene"], "additionalProperties": false
+    },
+    {
+      "properties": {
+        "operation": {"const": "context_diff"},
+        "context": {"enum": ["AD", "HD"]}, "other_context": {"enum": ["AD", "HD"]},
+        "realization": {"enum": ["support", "rp"]}, "grade": {"const": 0},
+        "gene": {"type": "string", "minLength": 1}
+      },
+      "required": ["operation", "context", "other_context", "realization", "gene"],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "operation": {"const": "typed_moment"}, "context": {"enum": ["AD", "HD"]},
+        "realization": {"enum": ["support", "rp"]}, "grade": {"const": 0},
+        "field": {"type": "string"}, "other_field": {"type": "string"},
+        "order": {"type": "integer", "minimum": 0, "maximum": 16}
+      },
+      "required": ["operation", "context", "realization", "field", "other_field"],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "operation": {"enum": ["boundary", "adjoint", "hodge", "green"]},
+        "context": {"enum": ["AD", "HD"]}, "realization": {"enum": ["support", "rp"]},
+        "grade": {"type": "integer", "minimum": 0, "maximum": 1},
+        "field": {"type": "string"},
+        "values": {"type": "array", "items": {"$ref": "#/$defs/decimal"}},
+        "top_k": {"type": "integer", "minimum": 0, "maximum": 100},
+        "lambda": {"$ref": "#/$defs/decimal"}, "tolerance": {"$ref": "#/$defs/decimal"},
+        "mode": {"enum": ["exact", "numerical"]}
+      },
+      "required": ["operation", "context", "realization"],
+      "oneOf": [{"required": ["field"]}, {"required": ["values"]}],
+      "allOf": [
+        {"if": {"properties": {"operation": {"const": "boundary"}}}, "then": {"properties": {"grade": {"const": 1}}, "required": ["grade"]}},
+        {"if": {"properties": {"operation": {"const": "adjoint"}}}, "then": {"properties": {"grade": {"const": 0}}}},
+        {"if": {"properties": {"operation": {"const": "green"}}}, "then": {"required": ["lambda"]},
+          "else": {"not": {"anyOf": [{"required": ["lambda"]}, {"required": ["tolerance"]}, {"required": ["mode"]}]}}}
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "decimal": {"type": "string", "maxLength": 4096, "pattern": "^[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"}
+  }
+}

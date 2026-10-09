@@ -1,0 +1,35 @@
+{
+  "schema": "gadget.scientific.workflow.v1",
+  "id": "bounded-recursive-followup",
+  "source_digest": "sha256:2452980ff150cc6492f899f2792878eb4fa784ffb4fdef3827b0912d2e00431d",
+  "limits": {
+    "depth": 12,
+    "nodes": 32,
+    "model_calls": 0,
+    "parallel_workers": 1
+  },
+  "definitions": [
+    {
+      "name": "support-observation",
+      "node": {
+        "id": "recurse",
+        "type": "call",
+        "definition": "support-observation",
+        "budget": 3,
+        "on_exhausted": {
+          "id": "base",
+          "type": "query",
+          "query": {
+            "operation": "coverage",
+            "field": "baseline.partial"
+          }
+        }
+      }
+    }
+  ],
+  "entry": {
+    "id": "root",
+    "type": "call",
+    "definition": "support-observation"
+  }
+}

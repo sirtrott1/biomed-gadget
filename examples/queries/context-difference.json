@@ -1,0 +1,8 @@
+{
+  "operation": "context_diff",
+  "context": "AD",
+  "other_context": "HD",
+  "realization": "support",
+  "grade": 0,
+  "gene": "GRIN1"
+}

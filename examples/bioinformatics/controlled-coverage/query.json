@@ -1,0 +1,74 @@
+{
+  "schema": "gadget.assays.query.v1",
+  "operation": "controlled_coverage",
+  "samples": [
+    {
+      "id": "input",
+      "resource": "input.bed",
+      "scale": "1",
+      "scale_provenance": "Identity divisor; authored weights share one count unit"
+    },
+    {
+      "id": "baseline",
+      "resource": "baseline.bed",
+      "scale": "1",
+      "scale_provenance": "Identity divisor; authored weights share one count unit"
+    },
+    {
+      "id": "treated",
+      "resource": "treated.bed",
+      "scale": "1",
+      "scale_provenance": "Identity divisor; authored weights share one count unit"
+    },
+    {
+      "id": "replicate",
+      "resource": "replicate.bed",
+      "scale": "1",
+      "scale_provenance": "Identity divisor; authored weights share one count unit"
+    }
+  ],
+  "contrasts": [
+    {
+      "id": "treated-minus-baseline",
+      "terms": [
+        {
+          "sample": "treated",
+          "coefficient": "1"
+        },
+        {
+          "sample": "baseline",
+          "coefficient": "-1"
+        }
+      ],
+      "evidence": "Declared within-reference change"
+    },
+    {
+      "id": "replicate-minus-baseline",
+      "terms": [
+        {
+          "sample": "replicate",
+          "coefficient": "1"
+        },
+        {
+          "sample": "baseline",
+          "coefficient": "-1"
+        }
+      ],
+      "evidence": "Declared within-reference change"
+    }
+  ],
+  "controls": [
+    "input"
+  ],
+  "intercept": true,
+  "metric": "reference_length",
+  "strand_policy": "separate",
+  "thresholds": [
+    "0",
+    "1"
+  ],
+  "absence_policy": "measured_zero_within_union",
+  "units": "authored count weight",
+  "evidence": "Declared input control and physical length form on one shared reference",
+  "source_kernel": true
+}

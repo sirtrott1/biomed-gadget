@@ -1,0 +1,79 @@
+{
+  "schema": "gadget.assays.bindings.v1",
+  "id": "bound-staged-assays",
+  "design": {
+    "question": "Which assay components satisfy the declared measurement interfaces after specimen grouping?",
+    "population": "Constructed RNA, ATAC and protein observations",
+    "selection": "Declared S1 malignant-cell groups; other dictionary rows retained as excluded witnesses",
+    "limitations": [
+      "Constructed method example; restriction maps and comparison metrics are illustrative declarations"
+    ]
+  },
+  "assays": [
+    {
+      "input": "rna-stage",
+      "assay": "rna-pseudobulk",
+      "id": "rna"
+    },
+    {
+      "input": "atac-stage",
+      "assay": "atac-pseudobulk",
+      "id": "atac"
+    },
+    {
+      "input": "source",
+      "assay": "protein",
+      "id": "protein"
+    }
+  ],
+  "resources": [],
+  "links": [
+    {
+      "id": "paired-before",
+      "left_assay": "rna",
+      "left_observation": "before",
+      "right_assay": "atac",
+      "right_observation": "before",
+      "relation": "declared_paired_specimen_state",
+      "evidence": "Both dictionary selections name S1 and the same authored state"
+    },
+    {
+      "id": "paired-after",
+      "left_assay": "rna",
+      "left_observation": "after",
+      "right_assay": "atac",
+      "right_observation": "after",
+      "relation": "declared_paired_specimen_state",
+      "evidence": "Both dictionary selections name S1 and the same authored state"
+    },
+    {
+      "id": "paired-partial",
+      "left_assay": "rna",
+      "left_observation": "partial",
+      "right_assay": "atac",
+      "right_observation": "partial",
+      "relation": "declared_paired_specimen_state",
+      "evidence": "Both dictionary selections name S1 and the same authored state"
+    },
+    {
+      "id": "paired-zero",
+      "left_assay": "rna",
+      "left_observation": "zero",
+      "right_assay": "atac",
+      "right_observation": "zero",
+      "relation": "declared_paired_specimen_state",
+      "evidence": "Both dictionary selections name S1 and the same authored state"
+    },
+    {
+      "id": "paired-unobserved",
+      "left_assay": "rna",
+      "left_observation": "unobserved",
+      "right_assay": "atac",
+      "right_observation": "unobserved",
+      "relation": "declared_paired_specimen_state",
+      "evidence": "Both dictionary selections name S1 and the same authored state"
+    }
+  ],
+  "method": "Explicit selection of independently admitted assays",
+  "evidence": "RNA and ATAC generating branches and source protein are named explicitly; aliases establish no cell identification"
+}

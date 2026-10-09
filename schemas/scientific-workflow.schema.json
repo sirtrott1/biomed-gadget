@@ -1,0 +1,543 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.scientific.workflow.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.scientific.workflow.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_digest": {
+      "type": "string"
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "depth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "nodes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "model_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parallel_workers": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "depth",
+        "nodes",
+        "model_calls",
+        "parallel_workers"
+      ],
+      "additionalProperties": false
+    },
+    "definitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "node": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "required": [
+          "name",
+          "node"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "entry": {
+      "$ref": "#/$defs/node"
+    },
+    "evidence_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "source_digest",
+    "limits",
+    "definitions",
+    "entry"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "node": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "query"
+            },
+            "query": {
+              "$ref": "scientific-query.schema.json"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "query"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "model"
+            },
+            "role": {
+              "type": "string",
+              "minLength": 1
+            },
+            "prompt": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "role",
+            "prompt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "sequence"
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/node"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "steps"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "parallel"
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/node"
+              }
+            },
+            "workers": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "steps"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "branch"
+            },
+            "from": {
+              "type": "string"
+            },
+            "member": {
+              "enum": [
+                "reported",
+                "missing",
+                "selected"
+              ]
+            },
+            "at_least": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "on_true": {
+              "$ref": "#/$defs/node"
+            },
+            "on_false": {
+              "$ref": "#/$defs/node"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "from",
+            "member",
+            "at_least",
+            "on_true",
+            "on_false"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "call"
+            },
+            "definition": {
+              "type": "string"
+            },
+            "budget": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "on_exhausted": {
+              "$ref": "#/$defs/node"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "definition"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "evidence"
+            },
+            "query": {
+              "$ref": "biomedical-query.schema.json"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "query"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "branch"
+            },
+            "from": {
+              "type": "string",
+              "minLength": 1
+            },
+            "condition": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    ]
+                  }
+                },
+                "value_type": {
+                  "enum": [
+                    "boolean",
+                    "count",
+                    "rational",
+                    "text",
+                    "integer"
+                  ]
+                },
+                "comparison": {
+                  "enum": [
+                    "equal",
+                    "not_equal",
+                    "greater",
+                    "greater_equal",
+                    "less",
+                    "less_equal"
+                  ]
+                },
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+(/[1-9][0-9]*)?$"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "path",
+                "value_type",
+                "comparison",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            "on_true": {
+              "$ref": "#/$defs/node"
+            },
+            "on_false": {
+              "$ref": "#/$defs/node"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "from",
+            "condition",
+            "on_true",
+            "on_false"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "graph"
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "after": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 0
+                  },
+                  "node": {
+                    "$ref": "#/$defs/node"
+                  }
+                },
+                "required": [
+                  "id",
+                  "after",
+                  "node"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "workers": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "steps"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "const": "check_claims"
+            },
+            "from": {
+              "type": "string",
+              "minLength": 1
+            },
+            "claims": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    }
+                  },
+                  "value_type": {
+                    "enum": [
+                      "boolean",
+                      "count",
+                      "rational",
+                      "text",
+                      "integer"
+                    ]
+                  },
+                  "comparison": {
+                    "enum": [
+                      "equal",
+                      "not_equal",
+                      "greater",
+                      "greater_equal",
+                      "less",
+                      "less_equal"
+                    ]
+                  },
+                  "value": {
+                    "oneOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^-?[0-9]+(/[1-9][0-9]*)?$"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "path",
+                  "value_type",
+                  "comparison",
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "claims_from": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "from"
+          ],
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "claims"
+              ],
+              "not": {
+                "required": [
+                  "claims_from"
+                ]
+              }
+            },
+            {
+              "required": [
+                "claims_from"
+              ],
+              "not": {
+                "required": [
+                  "claims"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

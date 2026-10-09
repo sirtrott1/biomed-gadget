@@ -1,0 +1,603 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.assays-import.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.assays.import.v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "design": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "population": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "selection": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "question",
+        "population",
+        "selection",
+        "limitations"
+      ],
+      "additionalProperties": false
+    },
+    "assays": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "format": {
+            "enum": [
+              "dense_tsv",
+              "matrix_market",
+              "h5ad"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "features": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "observations": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "source_namespace": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "carrier": {
+            "enum": [
+              "features",
+              "observations"
+            ]
+          },
+          "quantity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "units": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "channel": {
+            "enum": [
+              "G",
+              "E",
+              "T",
+              "observation"
+            ]
+          },
+          "method": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "arithmetic": {
+            "enum": [
+              "exact_decimal",
+              "exact_rational",
+              "ieee754_exact"
+            ]
+          },
+          "implicit_entries": {
+            "enum": [
+              "measured_zero",
+              "unobserved"
+            ]
+          },
+          "missing_tokens": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0
+          },
+          "missing": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "relations": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "reference": {
+            "type": "object",
+            "properties": {
+              "assembly": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sequence_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "coordinate_convention": {
+                "enum": [
+                  "zero_based_half_open"
+                ]
+              },
+              "contigs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "length": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "length"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "assembly",
+              "sequence_sha256",
+              "coordinate_convention",
+              "contigs"
+            ],
+            "additionalProperties": false
+          },
+          "nan_policy": {
+            "enum": [
+              "reject",
+              "unobserved"
+            ]
+          },
+          "observation_fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "column",
+                "kind",
+                "quantity",
+                "units",
+                "method",
+                "missing_tokens"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "column": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "enum": [
+                    "exact_value",
+                    "categorical_code",
+                    "level_indicator"
+                  ]
+                },
+                "quantity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "units": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "method": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "missing_tokens": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "level": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "provenance": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          },
+          "partition_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295,
+            "description": "Storage packet coordinates; declared relations retain their complete carrier."
+          },
+          "metrics": {
+            "$ref": "scientific-study.schema.json#/properties/contexts/items/properties/metrics"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "format",
+          "source",
+          "features",
+          "observations",
+          "source_namespace",
+          "carrier",
+          "quantity",
+          "units",
+          "channel",
+          "method",
+          "arithmetic",
+          "implicit_entries",
+          "missing_tokens"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "format": {
+            "enum": [
+              "bed",
+              "gtf",
+              "gff3",
+              "fasta",
+              "fastq",
+              "salmon_eq",
+              "sam",
+              "bam",
+              "cram",
+              "vcf",
+              "bcf"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "method": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "reference": {
+            "type": "object",
+            "properties": {
+              "assembly": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sequence_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "coordinate_convention": {
+                "enum": [
+                  "zero_based_half_open"
+                ]
+              },
+              "contigs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "length": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "length"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "assembly",
+              "sequence_sha256",
+              "coordinate_convention",
+              "contigs"
+            ],
+            "additionalProperties": false
+          },
+          "weight_column": {
+            "type": "integer",
+            "minimum": 3,
+            "maximum": 5
+          },
+          "reference_source": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "provenance": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "id",
+          "format",
+          "source",
+          "method"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "left_assay": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "left_observation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "right_assay": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "right_observation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "relation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16384
+          }
+        },
+        "required": [
+          "id",
+          "left_assay",
+          "left_observation",
+          "right_assay",
+          "right_observation",
+          "relation",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "design",
+    "assays",
+    "resources",
+    "links"
+  ],
+  "additionalProperties": false
+}

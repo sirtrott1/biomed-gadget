@@ -1,0 +1,126 @@
+{
+  "schema": "gadget.pipeline.default.v1",
+  "profile": "chip_seq",
+  "question": "Which declared changes remain outside the input control span?",
+  "goals": [
+    {
+      "id": "contrast",
+      "method": "controlled_coverage",
+      "parameters": {
+        "samples": [
+          {
+            "id": "input",
+            "resource": "input.bed",
+            "scale": "1",
+            "scale_provenance": "Identity divisor; authored weights share one count unit"
+          },
+          {
+            "id": "baseline",
+            "resource": "baseline.bed",
+            "scale": "1",
+            "scale_provenance": "Identity divisor; authored weights share one count unit"
+          },
+          {
+            "id": "treated",
+            "resource": "treated.bed",
+            "scale": "1",
+            "scale_provenance": "Identity divisor; authored weights share one count unit"
+          },
+          {
+            "id": "replicate",
+            "resource": "replicate.bed",
+            "scale": "1",
+            "scale_provenance": "Identity divisor; authored weights share one count unit"
+          }
+        ],
+        "contrasts": [
+          {
+            "id": "treated-minus-baseline",
+            "terms": [
+              {
+                "sample": "treated",
+                "coefficient": "1"
+              },
+              {
+                "sample": "baseline",
+                "coefficient": "-1"
+              }
+            ],
+            "evidence": "Declared within-reference change"
+          },
+          {
+            "id": "replicate-minus-baseline",
+            "terms": [
+              {
+                "sample": "replicate",
+                "coefficient": "1"
+              },
+              {
+                "sample": "baseline",
+                "coefficient": "-1"
+              }
+            ],
+            "evidence": "Declared within-reference change"
+          }
+        ],
+        "controls": [
+          "input"
+        ],
+        "intercept": true,
+        "metric": "reference_length",
+        "strand_policy": "separate",
+        "thresholds": [
+          "0",
+          "1"
+        ],
+        "absence_policy": "measured_zero_within_union",
+        "units": "authored count weight",
+        "evidence": "Declared input control and physical length form on one shared reference",
+        "source_kernel": true
+      },
+      "output": {
+        "id": "coverage-fields",
+        "source_namespace": "900831",
+        "channel": "E",
+        "design": {
+          "question": "Which declared changes remain outside the input control span?",
+          "population": "Authored baseline, treated and replicate coverage",
+          "selection": "Every supplied interval including observed zero",
+          "limitations": [
+            "Finite demonstration; no biological treatment claim"
+          ]
+        }
+      }
+    },
+    {
+      "id": "hodge",
+      "method": "hodge",
+      "input": "contrast",
+      "parameters": {
+        "context": "all",
+        "field": "all.interval-contrast:0"
+      }
+    },
+    {
+      "id": "green",
+      "method": "green_action",
+      "input": "contrast",
+      "parameters": {
+        "context": "all",
+        "field": "all.contrast:0:residual",
+        "lambda": "1"
+      }
+    },
+    {
+      "id": "structure",
+      "method": "chain_certificate",
+      "input": "contrast",
+      "parameters": {
+        "context": "all",
+        "grade": 1,
+        "coefficient_domain": "rational",
+        "field": "all.interval-contrast:0"
+      }
+    }
+  ]
+}

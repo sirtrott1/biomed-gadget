@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.local.roles.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.local.roles.v1"
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1
+          },
+          "projector": {
+            "type": "string",
+            "minLength": 1
+          },
+          "images": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "threads": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32
+          },
+          "context_tokens": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 32768
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 32,
+            "maximum": 2048
+          },
+          "prompt_cache_mib": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2048
+          },
+          "task": {
+            "enum": [
+              "planner",
+              "observer",
+              "claim_reader"
+            ]
+          }
+        },
+        "required": [
+          "role",
+          "model"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "models"
+  ],
+  "additionalProperties": false
+}

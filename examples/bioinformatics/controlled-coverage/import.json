@@ -1,0 +1,100 @@
+{
+  "schema": "gadget.assays.import.v1",
+  "id": "controlled-coverage",
+  "design": {
+    "question": "Which declared changes remain outside the input control span?",
+    "population": "Authored baseline, treated and replicate coverage",
+    "selection": "Every supplied interval including observed zero",
+    "limitations": [
+      "Finite demonstration; no biological treatment claim"
+    ]
+  },
+  "assays": [],
+  "resources": [
+    {
+      "id": "input.bed",
+      "format": "bed",
+      "source": {
+        "path": "input.bed",
+        "sha256": "sha256:3a3057f6cd944761101dcba4ad898bd14483f30b459c8ff9159298f10bb0e95e"
+      },
+      "reference": {
+        "assembly": "authored-coverage",
+        "sequence_sha256": "sha256:3da93d29c1335ad7b2d1022910969135aec77e75232f1f5635321ea35cdff345",
+        "coordinate_convention": "zero_based_half_open",
+        "contigs": [
+          {
+            "id": "chrA",
+            "length": 12
+          }
+        ]
+      },
+      "weight_column": 4,
+      "method": "Authored finite coverage example"
+    },
+    {
+      "id": "baseline.bed",
+      "format": "bed",
+      "source": {
+        "path": "baseline.bed",
+        "sha256": "sha256:3e7734e675ae9c0f267ce2455e5a60de0289e7908e91288fba967ee28fadc931"
+      },
+      "reference": {
+        "assembly": "authored-coverage",
+        "sequence_sha256": "sha256:3da93d29c1335ad7b2d1022910969135aec77e75232f1f5635321ea35cdff345",
+        "coordinate_convention": "zero_based_half_open",
+        "contigs": [
+          {
+            "id": "chrA",
+            "length": 12
+          }
+        ]
+      },
+      "weight_column": 4,
+      "method": "Authored finite coverage example"
+    },
+    {
+      "id": "treated.bed",
+      "format": "bed",
+      "source": {
+        "path": "treated.bed",
+        "sha256": "sha256:101e25c6d1925653d625e5d1f97b2078554ccb9f5c2e99bad214fa827307c061"
+      },
+      "reference": {
+        "assembly": "authored-coverage",
+        "sequence_sha256": "sha256:3da93d29c1335ad7b2d1022910969135aec77e75232f1f5635321ea35cdff345",
+        "coordinate_convention": "zero_based_half_open",
+        "contigs": [
+          {
+            "id": "chrA",
+            "length": 12
+          }
+        ]
+      },
+      "weight_column": 4,
+      "method": "Authored finite coverage example"
+    },
+    {
+      "id": "replicate.bed",
+      "format": "bed",
+      "source": {
+        "path": "replicate.bed",
+        "sha256": "sha256:639d2e3f6e5895ace5a1bc3faa61892035152b33971b71fae7d5709ebf440c8e"
+      },
+      "reference": {
+        "assembly": "authored-coverage",
+        "sequence_sha256": "sha256:3da93d29c1335ad7b2d1022910969135aec77e75232f1f5635321ea35cdff345",
+        "coordinate_convention": "zero_based_half_open",
+        "contigs": [
+          {
+            "id": "chrA",
+            "length": 12
+          }
+        ]
+      },
+      "weight_column": 4,
+      "method": "Authored finite coverage example"
+    }
+  ],
+  "links": []
+}

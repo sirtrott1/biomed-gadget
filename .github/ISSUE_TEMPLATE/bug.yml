@@ -1,0 +1,24 @@
+name: Reproducible problem
+description: Report a build failure, incorrect result or unexpected resource cost.
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Build and dependencies
+      description: Compiler, operating system, enabled profile and build-info.json fingerprints.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Commands, declared input and expected result. Use a shareable input or a constructed example.
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed result
+      description: Complete error or numerical discrepancy; include phase timings and memory measurements when relevant.
+    validations:
+      required: true

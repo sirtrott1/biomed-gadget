@@ -1,0 +1,63 @@
+#pragma once
+#include "assay_detail.hpp"
+
+namespace gadget::assay_detail {
+struct ResourceImage {
+    Json declaration;
+    std::string bytes, reference_bytes;
+};
+using ResourceImages = std::map<std::string, ResourceImage>;
+struct Alignment {
+    std::string query, group, contig, strand, decoded;
+    std::uint16_t flags{};
+    std::uint8_t mapq{};
+    std::uint64_t start{}, end{}, query_length{};
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks, junctions;
+};
+struct Alignments {
+    std::string header;
+    std::vector<Alignment> records;
+};
+Alignments decode_alignments(const ResourceImage &resource);
+Json inspect_hts(const ResourceImage &resource);
+Json genotype_analysis(const ResourceImage &resource, const Json &request);
+Json genomic_analysis(const ResourceImages &resources, const Json &request,
+                      std::shared_ptr<CpuResources> budget);
+Json feature_allocation_evidence(const ResourceImages &images, const Json &request);
+Json expression_allocations(const ResourceImages &images, const Json &request,
+                            std::shared_ptr<CpuResources> resources);
+Json controlled_coverage(const ResourceImages &images, const Json &request);
+Json spatial_analysis(const Json &assay, const Json &request);
+Json quality_analysis(const ResourceImage &resource, const Json &request);
+Json aggregate_analysis(const Matrix &matrix, const Json &declaration, const Json &request,
+                        const rfc::runtime::CpuResourceCoordinator::Reservation &reservation);
+// Disjoint original-coordinate storage ranges. These correspondences address
+// quantitative measurements; they do not glue independent source complexes.
+struct NativeAssayPartition {
+    std::size_t begin{}, end{};
+    std::shared_ptr<const ScientificStudy> owner;
+};
+// Native field pins supply source coordinates to the canonical map actions.
+Json native_aggregate_analysis(
+    const Axis &features, const Axis &observations,
+    const std::vector<NativeAssayPartition> &partitions, const Json &declaration,
+    const Json &request, const rfc::runtime::CpuResourceCoordinator::Reservation &reservation);
+Json design_aggregation(const Matrix &matrix, const Json &declaration, const Json &request,
+                        const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
+                        const std::vector<NativeAssayPartition> &partitions = {});
+Json alignment_analysis(const ResourceImages &images, const Json &request);
+struct SequenceRecord {
+    std::string id, bases;
+    Json evidence;
+};
+std::vector<SequenceRecord> sequence_records(const ResourceImage &resource);
+Json reference_matches(const ResourceImages &images, const Json &request);
+Json assembly_graph(const ResourceImage &resource, const Json &request);
+Json indexed_alignment(const ResourceImages &images, const Json &request);
+Json splice_search(const ResourceImages &images, const Json &request);
+Json read_reconstruction(const ResourceImage &resource, const Json &request);
+Json query_batch(const AssayWorkspace &workspace, const Json &request,
+                 const std::shared_ptr<CpuResources> &resources);
+Json constrained_allocations(const Json &request);
+Json relational_persistence(const ScientificStudy &study, const Json &request);
+} // namespace gadget::assay_detail

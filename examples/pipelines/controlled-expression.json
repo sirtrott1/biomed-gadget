@@ -1,0 +1,31 @@
+{
+  "schema": "gadget.pipeline.default.v1",
+  "profile": "rna_seq",
+  "assay": "expression",
+  "question": "What expression field remains outside the declared control span, and how does it pair with the measured endpoint?",
+  "goals": [
+    {
+      "id": "controlled",
+      "method": "controlled_relations",
+      "workers": 4,
+      "parameters": {
+        "fields": [
+          "all.gene_A",
+          "all.gene_B"
+        ],
+        "endpoint": "all.measured_endpoint",
+        "controls": [
+          "all.measured_covariate"
+        ],
+        "selection": [],
+        "support": "joint_reported",
+        "metric": "identity",
+        "intercept": true,
+        "workers": 4,
+        "gram_fields": [
+          "all.gene_A"
+        ]
+      }
+    }
+  ]
+}

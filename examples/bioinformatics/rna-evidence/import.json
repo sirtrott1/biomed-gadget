@@ -1,0 +1,62 @@
+{
+  "schema": "gadget.assays.import.v1",
+  "id": "rna-evidence",
+  "design": {
+    "question": "Which expression changes are identified by read evidence?",
+    "population": "Two authored samples",
+    "selection": "Every supplied read and transcript",
+    "limitations": [
+      "Finite demonstration of assignment uncertainty"
+    ]
+  },
+  "assays": [],
+  "resources": [
+    {
+      "id": "transcripts.fa",
+      "format": "fasta",
+      "source": {
+        "path": "transcripts.fa",
+        "sha256": "sha256:e73ba31490a040cc094202508929a27d25ef0e328fac3a3eeab56443d140f5f2"
+      },
+      "method": "Authored finite RNA assignment demonstration",
+      "reference": {
+        "assembly": "declared-transcripts",
+        "sequence_sha256": "sha256:e73ba31490a040cc094202508929a27d25ef0e328fac3a3eeab56443d140f5f2",
+        "coordinate_convention": "zero_based_half_open",
+        "contigs": [
+          {
+            "id": "A1",
+            "length": 10
+          },
+          {
+            "id": "A2",
+            "length": 7
+          },
+          {
+            "id": "B",
+            "length": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": "baseline.fastq",
+      "format": "fastq",
+      "source": {
+        "path": "baseline.fastq",
+        "sha256": "sha256:44cc1f8a91d29897a01988aec1b983a0d7cc7e8fe6159e9cc8c8ae0dc82cd8f6"
+      },
+      "method": "Authored finite RNA assignment demonstration"
+    },
+    {
+      "id": "followup.fa",
+      "format": "fasta",
+      "source": {
+        "path": "followup.fa",
+        "sha256": "sha256:595f9a589599363050338d8848e967574b09bb171b5e9183d4324a50b642ab81"
+      },
+      "method": "Authored finite RNA assignment demonstration"
+    }
+  ],
+  "links": []
+}
