@@ -233,6 +233,25 @@ int main(int argc,char **argv) {
         const auto decoded=typed.decode_raw_span(34,span,type(6),encoded.bit_count);
         check(composite::declared_value_equal(value,decoded.value),"custom raw composite payload differs");
         check(decoded.source.declaration().declared_owner()->occurrence.has_value(),"raw decoded value lost occurrence owner");
+        NativeStudy concurrent(endpoint,701,{RawByteSource(84,encoded.bytes)});
+        auto first_decode=std::async(std::launch::async,[&]{return concurrent.decode_raw_span(34,span,type(6),encoded.bit_count);});
+        auto second_decode=std::async(std::launch::async,[&]{return concurrent.decode_raw_span(34,span,type(6),encoded.bit_count);});
+        const auto first_value=first_decode.get();
+        const auto second_value=second_decode.get();
+        check(&first_value.layout.declarations()==&second_value.layout.declarations(),
+              "concurrent raw decoding copied the same endpoint registry");
+        const auto reused=typed.decode_raw_span(34,span,type(6),encoded.bit_count);
+        check(&decoded.layout.declarations()==&reused.layout.declarations(),
+              "repeated raw decoding copied the same endpoint registry");
+        check(&decoded.layout.declarations()!=&first_value.layout.declarations(),
+              "independent study owners shared a declaration registry");
+        const auto retained_decode=[&]{
+            NativeStudy temporary(endpoint,702,{RawByteSource(84,encoded.bytes)});
+            return temporary.decode_raw_span(34,span,type(6),encoded.bit_count);
+        }();
+        check(composite::declared_value_equal(retained_decode.value,value) &&
+                  storage::encode_declared_bits(retained_decode.layout,retained_decode.value)==encoded,
+              "decoded source lost its layout owner after study destruction");
         refuses([&]{typed.decode_raw_span(34,span,type(6),encoded.bit_count+1);},"invalid raw payload bit count accepted");
         endpoint=program_source();
         storage::NativeTemporalSeries series(endpoint,701,native_data_limits());

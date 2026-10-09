@@ -332,7 +332,7 @@ int main() {
         const auto chain_path = root / "ordered-history";
         auto chain_root = initialize_store(root / "original", chain_path).at("root");
         const auto chain_reader = load_store(chain_path);
-        for (std::uint64_t transaction = 1; transaction <= 8; ++transaction) {
+        for (std::uint64_t transaction = 1; transaction <= 32; ++transaction) {
             const auto published = publish_store(chain_path, root / "updated", request(chain_root, transaction));
             chain_root = published.at("root");
             check(chain_root.at("sequence").text() == std::to_string(transaction),

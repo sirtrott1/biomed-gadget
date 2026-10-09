@@ -87,6 +87,9 @@ struct NativeStudy::State {
     std::optional<storage::NativeSeriesEndpoint> publication;
     storage::NativeAccessionLimits accession_limits;
     mutable std::once_flag accession_once;
+    mutable std::mutex accession_mutex;
+    mutable std::once_flag declaration_once;
+    mutable std::unique_ptr<composite::PreparedLayoutRegistry> declarations;
     std::map<std::uint64_t, RawByteSource> sources;
     std::unique_ptr<field::ExactExecutionTower> tower;
     State(const storage::TemporalEndpoint &endpoint, std::uint64_t ns,
@@ -120,6 +123,21 @@ struct NativeStudy::State {
                     [](auto bytes) { return storage::rfcx_detail::fnv1a64(bytes); }, accession_limits);
             });
         return *directory;
+    }
+    const composite::PreparedLayoutRegistry &prepare_declarations() const {
+        std::call_once(declaration_once, [&] {
+            const auto endpoint = snapshot();
+            require(endpoint->declarations.has_value(), "native source has no declarations");
+            declarations = std::make_unique<composite::PreparedLayoutRegistry>(
+                endpoint->declarations->registry, native_data_limits().temporal.declarations);
+        });
+        return *declarations;
+    }
+    std::shared_ptr<const storage::TemporalEndpoint> snapshot() const {
+        if (publication)
+            return publication->pin();
+        const std::lock_guard lock(accession_mutex);
+        return directory->pin_snapshot();
     }
     static std::uint64_t ephemeral_namespace() {
         static std::atomic<std::uint64_t> next{1};
@@ -176,7 +194,7 @@ NativeStudy NativeStudy::read(const std::filesystem::path &path, std::vector<Raw
     }
 }
 std::shared_ptr<const storage::TemporalEndpoint> NativeStudy::endpoint() const {
-    return state_->publication ? state_->publication->pin() : state_->directory->pin_snapshot();
+    return state_->snapshot();
 }
 std::shared_ptr<const storage::NativeAccessionDirectory> NativeStudy::accession_directory() const {
     return {state_,&state_->prepare_accessions()};
@@ -203,10 +221,14 @@ field::ExactGreenResult NativeStudy::green_action(core::Grade grade, const numer
     return field::exact_green_apply(hodge(grade), lambda, input);
 }
 storage::NativeAtlasSource NativeStudy::atlas_source(std::uint64_t key) const {
-    return {key, state_->prepare_accessions()};
+    const auto &directory = state_->prepare_accessions();
+    const std::lock_guard lock(state_->accession_mutex);
+    return {key, directory};
 }
 storage::PinnedNativeAccession NativeStudy::access(const storage::NativeAccessionRequest &request) const {
-    return state_->prepare_accessions().pin(request);
+    const auto &directory = state_->prepare_accessions();
+    const std::lock_guard lock(state_->accession_mutex);
+    return directory.pin(request);
 }
 PinnedRawSpan NativeStudy::raw_span(std::uint64_t key, const RawSpanDeclaration &binding) const {
     require(binding.type.valid() && binding.source_factor && binding.offset_factor && binding.length_factor &&
@@ -250,8 +272,8 @@ DeclaredByteValue NativeStudy::decode_raw_span(std::uint64_t value,
     const RawSpanDeclaration &span, composite::DeclarationId type, std::size_t bit_count) const {
     auto source = raw_span(value, span);
     const auto endpoint = source.declaration().endpoint();
-    composite::CompiledLayout layout(endpoint->declarations->registry, type,
-        endpoint->declarations->profile, native_data_limits().temporal.declarations);
+    composite::CompiledLayout layout(state_->prepare_declarations(), type,
+        endpoint->declarations->profile);
     auto decoded = storage::decode_declared_bits(layout, source.bytes(), bit_count);
     return {std::move(source), std::move(layout), std::move(decoded)};
 }
