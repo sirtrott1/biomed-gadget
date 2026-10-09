@@ -1,9 +1,9 @@
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
 if(@GADGET_ENABLE_VULKAN@)
-  find_dependency(RFC 0.2 CONFIG COMPONENTS Vulkan)
+  find_dependency(RFC 0.2.1 CONFIG COMPONENTS Vulkan)
 else()
-  find_dependency(RFC 0.2 CONFIG)
+  find_dependency(RFC 0.2.1 CONFIG)
 endif()
 find_dependency(Threads)
 set(GADGET_native_FOUND TRUE)

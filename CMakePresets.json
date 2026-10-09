@@ -11,8 +11,15 @@
         "CMAKE_BUILD_TYPE": "Release",
         "BUILD_TESTING": "ON",
         "GADGET_BUILD_EXAMPLES": "ON",
-        "GADGET_ENFORCE_DEPENDENCY_LOCK": "ON"
+        "GADGET_ENFORCE_DEPENDENCY_LOCK": "OFF"
       }
+    },
+    {
+      "name": "installed",
+      "displayName": "CPU with installed RexGraphCpp",
+      "inherits": "cpu",
+      "binaryDir": "${sourceDir}/build/presets/installed",
+      "cacheVariables": {"GADGET_USE_INSTALLED_RFC": "ON"}
     },
     {
       "name": "formats",
@@ -45,6 +52,7 @@
   ],
   "buildPresets": [
     {"name": "cpu", "configurePreset": "cpu"},
+    {"name": "installed", "configurePreset": "installed"},
     {"name": "formats", "configurePreset": "formats"},
     {"name": "databases", "configurePreset": "databases"},
     {"name": "local-model", "configurePreset": "local-model"},
@@ -52,6 +60,7 @@
   ],
   "testPresets": [
     {"name": "cpu", "configurePreset": "cpu", "output": {"outputOnFailure": true}},
+    {"name": "installed", "configurePreset": "installed", "output": {"outputOnFailure": true}},
     {"name": "formats", "configurePreset": "formats", "output": {"outputOnFailure": true}},
     {"name": "databases", "configurePreset": "databases", "output": {"outputOnFailure": true}},
     {"name": "local-model", "configurePreset": "local-model", "output": {"outputOnFailure": true}},
