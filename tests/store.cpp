@@ -329,6 +329,26 @@ int main() {
         }
         rejects([&] { store_status(root / "endpoint-disagrees"); },
                 "lawful native endpoint disagreeing with bound biomedical snapshot admitted");
+        const auto chain_path = root / "ordered-history";
+        auto chain_root = initialize_store(root / "original", chain_path).at("root");
+        const auto chain_reader = load_store(chain_path);
+        for (std::uint64_t transaction = 1; transaction <= 8; ++transaction) {
+            const auto published = publish_store(chain_path, root / "updated", request(chain_root, transaction));
+            chain_root = published.at("root");
+            check(chain_root.at("sequence").text() == std::to_string(transaction),
+                  "ordered recovery omitted a publication");
+        }
+        const auto complete = load_store(chain_path);
+        check(complete.fields == updated.fields && complete.field_presence == updated.field_presence &&
+                  chain_reader.fields == original.fields && chain_reader.native_snapshot->endpoint()->sequence == 0,
+              "ordered recovery changed a retained source or final field support");
+        const auto middle = chain_path / "studies/0000000000000004/study.rfcxs";
+        const auto hidden = chain_path / "studies/0000000000000004/retained.rfcxs";
+        fs::rename(middle, hidden);
+        rejects([&] { load_store(chain_path); }, "ordered recovery skipped an earlier source publication");
+        fs::rename(hidden, middle);
+        check(load_store(chain_path).fields == complete.fields,
+              "restored ordered source history failed recovery");
         write_text(root / "store/studies/0000000000000000/metadata.json", "corrupt");
         rejects([&] { store_status(root / "store"); },
                 "corrupt reachable historical provenance admitted");

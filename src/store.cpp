@@ -6,8 +6,7 @@
 namespace gadget {
 namespace {
 namespace native = rfc::storage;
-// P1's generic descriptor/sync helpers currently have a detail namespace.
-// Keep that integration dependency in this translation unit; see DURABLE_STUDY.md.
+// Canonical descriptor and sync helpers are confined to this translation unit.
 namespace durable_io = native::linux_durable_detail;
 constexpr std::uint64_t study_namespace = 0x4741444745540001ULL;
 constexpr std::size_t artifact_limit = std::numeric_limits<std::size_t>::max();
@@ -320,8 +319,10 @@ Workspace recover_history(
             "unsupported native study history profile");
     std::optional<Admission> previous;
     Keys previous_keys;
-    for (std::uint64_t sequence = 0; sequence <= series.last_sequence(); ++sequence) {
-        const auto endpoint = series.at(sequence).pin();
+    std::optional<Workspace> recovered;
+    series.visit_endpoints([&](const auto &publication) {
+        const auto endpoint = publication.pin();
+        const auto sequence = endpoint->sequence;
         const auto reference = binding(*endpoint);
         if (sequence) {
             const auto receipt = status(reference.transaction);
@@ -339,12 +340,15 @@ Workspace recover_history(
                 require(keys.contains(name) && keys.at(name) == key,
                         "retained tensor identity changed");
         }
-        if (sequence == series.last_sequence())
-            return workspace;
+        if (sequence == series.last_sequence()) {
+            recovered = std::move(workspace);
+            return;
+        }
         previous = std::move(current);
         previous_keys = std::move(keys);
-    }
-    throw std::logic_error("unreachable native history");
+    });
+    require(recovered.has_value(), "native history has no retained endpoint");
+    return std::move(*recovered);
 }
 Workspace recover(const fs::path &root, native::DurableNativeStore &store) {
     return recover_history(root, store.snapshot(), store.root(),
@@ -435,7 +439,7 @@ Json publish_store(const fs::path &requested, const fs::path &snapshot, const Js
     const auto series = store.snapshot();
     require(expected.sequence < series.last_sequence() + (prior_receipt ? 0 : 1),
             "invalid original predecessor sequence");
-    const auto previous = series.at(expected.sequence).pin();
+    const auto previous = NativeStudy::from_history(series, {}, expected.sequence).endpoint();
     const auto predecessor = [&] {
         if (expected.sequence == store.root().sequence)
             return admission(current);
@@ -445,7 +449,7 @@ Json publish_store(const fs::path &requested, const fs::path &snapshot, const Js
         current = Workspace{};
     auto frozen = freeze(snapshot);
     admit(predecessor, admission(frozen.workspace));
-    const auto endpoint = prior_receipt?*series.at(prior_receipt->root.sequence).pin():target(frozen.workspace, previous.get(), transaction);
+    const auto endpoint = prior_receipt?*NativeStudy::from_history(series, {}, prior_receipt->root.sequence).endpoint():target(frozen.workspace, previous.get(), transaction);
     if(prior_receipt)match(frozen.workspace,endpoint);
     const std::array frames{
         native::encode_temporal_segment(native::make_temporal_segment(*previous, endpoint,{}, {},native::RelationalCodeEncoding::Automatic,{},native::make_temporal_declaration_update(previous->declarations,endpoint.declarations,rfc::composite::identity_declaration_maps(previous->declarations->registry))))};
@@ -570,7 +574,7 @@ Json ConcurrentStudyStore::publish(const StudySnapshot &expected, const fs::path
     auto frozen = freeze(snapshot_path);
     admit(admission(*expected.workspace()), admission(frozen.workspace));
     const auto previous = expected.state_->native.tail().pin();
-    const auto endpoint = prior_receipt?*state_->history->snapshot().series().at(prior_receipt->root.sequence).pin():target(frozen.workspace, previous.get(), transaction);
+    const auto endpoint = prior_receipt?*NativeStudy::from_history(state_->history->snapshot().series(), {}, prior_receipt->root.sequence).endpoint():target(frozen.workspace, previous.get(), transaction);
     if(prior_receipt)match(frozen.workspace,endpoint);
     const std::array frames{
         native::encode_temporal_segment(native::make_temporal_segment(*previous, endpoint,{}, {},native::RelationalCodeEncoding::Automatic,{},native::make_temporal_declaration_update(previous->declarations,endpoint.declarations,rfc::composite::identity_declaration_maps(previous->declarations->registry))))};
