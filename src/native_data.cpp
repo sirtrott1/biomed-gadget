@@ -148,6 +148,13 @@ NativeStudy NativeStudy::from_publication(const storage::NativeSeriesEndpoint &e
                                         std::vector<RawByteSource> sources) {
     return NativeStudy(std::make_shared<const State>(endpoint, sources, native_accession_limits(), true));
 }
+NativeStudy NativeStudy::from_history(const storage::NativeTemporalSeries &history,
+                                     std::vector<RawByteSource> sources,
+                                     std::optional<std::uint64_t> cutoff) {
+    const auto endpoint = !cutoff || *cutoff == history.last_sequence()
+        ? history.tail() : history.at(*cutoff);
+    return from_publication(endpoint, std::move(sources));
+}
 NativeStudy NativeStudy::read(const std::filesystem::path &path, std::vector<RawByteSource> sources,
                              std::optional<std::uint64_t> ns, std::optional<std::uint64_t> cutoff,
                              storage::NativeSeriesLimits limits) {
@@ -157,8 +164,7 @@ NativeStudy NativeStudy::read(const std::filesystem::path &path, std::vector<Raw
     case NativeDataFormat::TemporalSeries: {
         const auto series = storage::decode_native_series(image.bytes(), limits);
         require(!ns || *ns == series.source_namespace(), "native source namespace mismatch");
-        const auto endpoint = series.at(cutoff.value_or(series.last_sequence()));
-        return from_publication(endpoint, std::move(sources));
+        return from_history(series, std::move(sources), cutoff);
     }
     case NativeDataFormat::RelationalComplex: {
         require(ns && *ns, "RFCX input requires an explicit source namespace");

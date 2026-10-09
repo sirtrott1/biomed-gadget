@@ -85,6 +85,11 @@ class NativeStudy {
     // Retain a canonical publication; prepare SDK accession indexes on demand.
     static NativeStudy from_publication(const rfc::storage::NativeSeriesEndpoint &endpoint,
                                        std::vector<RawByteSource> sources = {});
+    // Select an immutable publication. The latest cutoff uses its retained tail;
+    // earlier cutoffs use the canonical history replay service.
+    static NativeStudy from_history(const rfc::storage::NativeTemporalSeries &history,
+                                    std::vector<RawByteSource> sources = {},
+                                    std::optional<std::uint64_t> cutoff = {});
     // Inspect canonical byte signatures. RFCX needs an explicit namespace;
     // RFCXS owns its namespace and an optional actual history cutoff.
     static NativeStudy read(const std::filesystem::path &path,

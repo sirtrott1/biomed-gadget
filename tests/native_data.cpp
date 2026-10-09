@@ -241,6 +241,40 @@ int main(int argc,char **argv) {
         check(adopted.endpoint()==actual_endpoint.pin(),"native study copied its actual canonical endpoint");
         const auto deferred=NativeStudy::from_publication(actual_endpoint,{RawByteSource(83,original)});
         check(deferred.endpoint()==actual_endpoint.pin(),"deferred study replaced its publication owner");
+        auto updated_endpoint = endpoint;
+        updated_endpoint.sequence = endpoint.sequence + 1;
+        updated_endpoint.declarations->values.at(0).value = V::product(
+            {V::integer(0), V::integer(0), V::integer(83)});
+        auto changing_history = series;
+        changing_history.append(storage::make_temporal_segment(endpoint, updated_endpoint));
+        const auto retained_tail = changing_history.tail().pin();
+        const auto latest = NativeStudy::from_history(changing_history, {RawByteSource(83,original)});
+        const auto explicit_latest = NativeStudy::from_history(
+            changing_history, {}, changing_history.last_sequence());
+        check(latest.endpoint() == retained_tail && explicit_latest.endpoint() == retained_tail,
+              "latest history selection replayed its retained endpoint");
+        const auto earlier = NativeStudy::from_history(changing_history, {}, series.first_sequence());
+        check(earlier.endpoint() == series.tail().pin(), "earlier base selection replaced its owner");
+        changing_history = series;
+        check(latest.endpoint() == retained_tail &&
+              latest.raw_span(33,span).bytes().empty(), "history replacement changed a retained tail");
+        const auto old_value = earlier.accession_directory()->pin_snapshot()->declarations->values.at(0).value;
+        check(composite::declared_value_equal(old_value, endpoint.declarations->values.at(0).value),
+              "earlier cutoff exposed a later declaration");
+        refuses([&]{NativeStudy::from_history(series, {}, series.first_sequence() - 1);},
+                "history selection admitted a cutoff before the source");
+        refuses([&]{NativeStudy::from_history(series, {}, series.last_sequence() + 1);},
+                "history selection admitted a future cutoff");
+        storage::write_file_exact(root/"changed-history.payload",storage::encode_native_series(
+            [&] {auto history = series; history.append(storage::make_temporal_segment(endpoint, updated_endpoint)); return history;}()));
+        const auto loaded_latest = NativeStudy::read(root/"changed-history.payload");
+        const auto loaded_earlier = NativeStudy::read(root/"changed-history.payload", {}, {}, series.first_sequence());
+        check(loaded_latest.endpoint()->sequence == updated_endpoint.sequence &&
+              composite::declared_value_equal(loaded_latest.endpoint()->declarations->values.at(0).value,
+                                               updated_endpoint.declarations->values.at(0).value) &&
+              composite::declared_value_equal(loaded_earlier.endpoint()->declarations->values.at(0).value,
+                                               endpoint.declarations->values.at(0).value),
+              "native file reading changed the selected publication");
         std::promise<void> release;
         const auto ready=release.get_future().share();
         std::vector<std::future<std::shared_ptr<const storage::NativeAccessionDirectory>>> directories;
