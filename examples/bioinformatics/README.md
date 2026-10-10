@@ -228,6 +228,11 @@ claim; literal claims require the existing source-bound claim-checking interface
 
 ## Qualification and remaining services
 
+The [chromatin fragment walkthrough](chromatin-fragments.md) supplies pinned
+public inputs, native requests and complete independent source verification
+across chromosomes. The [spliced RNA walkthrough](spliced-rna.md) covers original
+alignment blocks, splice occurrences and exact feature assignment bounds.
+
 `tests/assay_cli.py` independently enumerates varied allocation fixtures, checks
 coverage at every reference base, verifies native paired fields and spatial sheaf
 gluing, compares dense/CSR/CSC H5AD and Matrix Market intake, and exercises missing
