@@ -89,11 +89,22 @@ def prepare(binary, root, fixtures):
     for index, occurrence in enumerate(study['occurrences']):
         native('incidence-' + str(index), 'occurrence',
                {'grade': occurrence['grade'], 'key': occurrence['key']}, occurrence['evidence'])
+    inspections = {}
     for resource_id, record_index, id in [('transcripts.fa', 0, 'transcript-A1'),
                                           ('transcripts.fa', 1, 'transcript-A2'),
                                           ('baseline.fastq', 0, 'baseline-read')]:
         resource = next(r for r in catalog['resources'] if r['declaration']['id'] == resource_id)
-        record = resource['inspection']['records'][record_index]
+        if resource_id not in inspections:
+            declaration = resource['declaration']
+            specification = dict(schema='gadget.bioinformatics.file.v1',
+                                 format=declaration['format'],
+                                 source=dict(path=str(Path('workspace') / resource['original']['path']),
+                                             sha256=resource['original']['sha256']))
+            if 'reference' in declaration:
+                specification['reference'] = declaration['reference']
+            inspections[resource_id] = run(binary, 'inspect-file', '--spec',
+                                           save(root / 'inspection.json', specification))
+        record = inspections[resource_id]['records'][record_index]
         data = (root / 'workspace' / resource['original']['path']).read_bytes()
         start, end = record['source_start'], record['source_end']
         entries.append(dict(id=id,

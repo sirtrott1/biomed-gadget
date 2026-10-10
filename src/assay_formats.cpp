@@ -454,18 +454,18 @@ std::vector<SequenceSpan> read_sequence_spans(std::string_view bytes,const std::
     return result;
 }
 Json inspect_resource(const std::string &bytes, const Json &resource,
-                      const std::string &reference_bytes) {
+                      const std::string &reference_bytes, bool summary) {
     auto out = Json::object();
     out.set("format", resource.at("format"));
     out.set("source_sha256", Json::string("sha256:" + sha256(bytes)));
     const auto format = resource.at("format").text();
     if (format == "sam" || format == "bam" || format == "cram" || format == "vcf" ||
         format == "bcf")
-        return inspect_hts({resource, bytes, reference_bytes});
+        return inspect_hts({resource, bytes, reference_bytes}, summary);
     if (format == "bed" || format == "gtf" || format == "gff3") {
         const auto intervals = read_intervals(bytes, resource);
         auto records = Json::array();
-        for (const auto &r : intervals) {
+        if (!summary) for (const auto &r : intervals) {
             auto item = Json::object();
             item.set("id", Json::string(r.id));
             item.set("contig", Json::string(r.contig));
@@ -489,16 +489,16 @@ Json inspect_resource(const std::string &bytes, const Json &resource,
             records.push(item);
         }
         out.set("reference", resource.at("reference"));
-        out.set("records", records);
+        if (!summary) out.set("records", records);
         out.set("record_count", cardinality(intervals.size()));
     } else if (format == "fasta" || format == "fastq") {
         const auto spans=read_sequence_spans(bytes,format);auto records=Json::array();
-        for(const auto &span:spans) {
+        if (!summary) for(const auto &span:spans) {
             auto record=Json::object();record.set("id",Json::string(bytes.substr(span.id_start,span.id_length)));
             record.set("length",cardinality(span.length));record.set("source_start",cardinality(span.start));record.set("source_end",cardinality(span.end));records.push(record);
         }
-        out.set("records", records);
-        out.set("record_count", cardinality(records.size()));
+        if (!summary) out.set("records", records);
+        out.set("record_count", cardinality(spans.size()));
         out.set("quality_interpretation",
                 Json::string(format == "fastq"
                                  ? "Phred+33 encoding; scores are retained, not recalibrated"

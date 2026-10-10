@@ -1,4 +1,4 @@
-#include "assay_detail.hpp"
+#include "genomic_detail.hpp"
 #include <gadget/resources.hpp>
 #include <limits>
 #include <rfc/core/builder.hpp>
@@ -7,7 +7,8 @@
 #include <rfc/storage/native_series_codec.hpp>
 
 namespace gadget {
-Json analyze_allocations(const Json &request, std::shared_ptr<CpuResources> resources) {
+Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuResources> resources,
+                                      std::optional<rfc::storage::TemporalEndpoint> *retained_source) {
     using namespace assay_detail;
     using rfc::numeric::ExactMatrix;
     if (!resources)
@@ -275,6 +276,11 @@ Json analyze_allocations(const Json &request, std::shared_ptr<CpuResources> reso
     output.set("arithmetic", Json::string("rational"));
     output.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
     output.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
-    return seal(output, "certificate_sha256");
+    auto certificate = seal(output, "certificate_sha256");
+    if (retained_source) *retained_source = std::move(endpoint);
+    return certificate;
+}
+Json analyze_allocations(const Json &request, std::shared_ptr<CpuResources> resources) {
+    return assay_detail::allocation_analysis(request, std::move(resources));
 }
 } // namespace gadget

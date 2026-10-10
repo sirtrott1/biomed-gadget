@@ -18,8 +18,21 @@ struct Alignments {
     std::string header;
     std::vector<Alignment> records;
 };
-Alignments decode_alignments(const ResourceImage &resource);
-Json inspect_hts(const ResourceImage &resource);
+Alignments decode_alignments(const ResourceImage &resource, bool render_records = true);
+Json inspect_hts(const ResourceImage &resource, bool summary = false);
+std::string hts_codec_version();
+struct AlignmentFieldsSource {
+    rfc::storage::TemporalEndpoint endpoint;
+    NativeRecordValue declaration;
+    std::vector<RawByteSource> sources;
+};
+AlignmentFieldsSource alignment_fields_source(const ResourceImage &resource, const Json &request);
+AlignmentFieldsSource feature_count_fields_source(const ResourceImages &images, const Json &request,
+                                                  std::shared_ptr<CpuResources> resources);
+Json allocation_analysis(const Json &request, std::shared_ptr<CpuResources> resources,
+                         std::optional<rfc::storage::TemporalEndpoint> *retained_source = nullptr);
+Json alignment_fields_view(const NativeRecord &record);
+Json feature_count_fields_view(const NativeRecord &record);
 Json genotype_analysis(const ResourceImage &resource, const Json &request);
 Json genomic_analysis(const ResourceImages &resources, const Json &request,
                       std::shared_ptr<CpuResources> budget);

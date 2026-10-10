@@ -206,7 +206,7 @@ Json feature_evidence(const ResourceImages &images, const Json &request) {
             index.prefix_end.push_back(end);
         }
     }
-    const auto alignments = decode_alignments(r);
+    const auto alignments = decode_alignments(r, false);
     struct Segment {
         std::set<std::size_t> candidates;
         std::vector<std::size_t> records;

@@ -309,7 +309,11 @@ def main():
         hts_ws = admit('hts-source',[],[resource])
         manifest = json.loads(hts_ws.read_text())
         check(manifest['resources'][0]['inspection']['record_count']==count, 'Every alignment record decoded')
-        check([r['source_record_index'] for r in manifest['resources'][0]['inspection']['records']]==list(range(count)),
+        check('records' not in manifest['resources'][0]['inspection'], 'Import catalog omits redundant record expansion')
+        inspection = run('inspect-file', '--spec', save('hts-inspection.json',
+                         dict(schema='gadget.bioinformatics.file.v1', format='sam',
+                              source=resource['source'], reference=reference)))
+        check([r['source_record_index'] for r in inspection['records']]==list(range(count)),
               'Complete original record order')
         check(hashlib.sha256((hts_ws.parent/manifest['resources'][0]['original']['path']).read_bytes()).hexdigest()==resource['source']['sha256'][7:],
               'All original SAM records retained')

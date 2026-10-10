@@ -236,7 +236,7 @@ Json read_variants(const ResourceImage &r) {
 }
 } // namespace
 
-Alignments decode_alignments(const ResourceImage &r) {
+Alignments decode_alignments(const ResourceImage &r, bool render_records) {
     const auto lengths = contig_lengths(r.declaration.at("reference"));
     auto file = open_image(r);
     std::unique_ptr<sam_hdr_t, HeaderCloser> header(sam_hdr_read(file.get()));
@@ -284,9 +284,11 @@ Alignments decode_alignments(const ResourceImage &r) {
             require(sam_hdr_find_line_id(header.get(), "RG", "ID", name, &rg.value) == 0,
                     "alignment RG tag lacks header dictionary");
         }
-        KString decoded;
-        require(sam_format1(header.get(), record.get(), &decoded.value) >= 0, "SAM rendering");
-        a.decoded.assign(decoded.value.s, decoded.value.l);
+        if (render_records) {
+            KString decoded;
+            require(sam_format1(header.get(), record.get(), &decoded.value) >= 0, "SAM rendering");
+            a.decoded.assign(decoded.value.s, decoded.value.l);
+        }
         if (!(c.flag & BAM_FUNMAP)) {
             require(c.tid >= 0 && c.pos >= 0 && c.n_cigar > 0,
                     "mapped record lacks coordinate/CIGAR");
@@ -325,19 +327,22 @@ Alignments decode_alignments(const ResourceImage &r) {
     require(hts_close(file.release()) == 0, "alignment decoder completion");
     return out;
 }
-Json inspect_hts(const ResourceImage &r) {
+std::string hts_codec_version() { return hts_version(); }
+Json inspect_hts(const ResourceImage &r, bool summary) {
     const auto format = r.declaration.at("format").text();
     Json out;
     if (format == "vcf" || format == "bcf")
         out = read_variants(r);
     else {
-        const auto decoded = decode_alignments(r);
+        const auto decoded = decode_alignments(r, !summary);
         out = Json::object();
-        auto records = Json::array();
-        for (std::size_t i = 0; i < decoded.records.size(); ++i)
-            records.push(alignment_json(decoded.records[i], i));
         out.set("header", Json::string(decoded.header));
-        out.set("records", records);
+        if (!summary) {
+            auto records = Json::array();
+            for (std::size_t i = 0; i < decoded.records.size(); ++i)
+                records.push(alignment_json(decoded.records[i], i));
+            out.set("records", records);
+        }
         out.set("record_count", cardinality(decoded.records.size()));
     }
     out.set("format", r.declaration.at("format"));
@@ -408,10 +413,13 @@ Json genotype_analysis(const ResourceImage &r, const Json &request) {
     return decoded;
 }
 #else
-Alignments decode_alignments(const ResourceImage &) {
+std::string hts_codec_version() {
     throw std::invalid_argument("HTS input requires GADGET_ENABLE_HTSLIB");
 }
-Json inspect_hts(const ResourceImage &) {
+Alignments decode_alignments(const ResourceImage &, bool) {
+    throw std::invalid_argument("HTS input requires GADGET_ENABLE_HTSLIB");
+}
+Json inspect_hts(const ResourceImage &, bool) {
     throw std::invalid_argument("HTS input requires GADGET_ENABLE_HTSLIB");
 }
 Json genotype_analysis(const ResourceImage &, const Json &) {

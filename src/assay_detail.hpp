@@ -36,7 +36,7 @@ struct SequenceSpan {
 };
 std::vector<SequenceSpan> read_sequence_spans(std::string_view bytes, const std::string &format);
 Json inspect_resource(const std::string &bytes, const Json &resource,
-                      const std::string &reference_bytes = {});
+                      const std::string &reference_bytes = {}, bool summary = false);
 Json interval_analysis(const std::string &bytes, const Json &resource, const Json &request);
 Json salmon_classes(const std::string &bytes);
 Json motif_analysis(const std::string &bytes, const Json &resource, const Json &request);

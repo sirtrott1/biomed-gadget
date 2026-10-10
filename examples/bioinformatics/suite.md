@@ -29,6 +29,13 @@ application record-count or fixed MiB ceiling on these adapters.
 
 ## Counting and splice evidence
 
+The [alignment walkthrough](spliced-rna.md) includes complete published BAM inputs,
+native record, junction and assignment fields, and independent full output checks.
+With `assay-query --out-record`, `alignment_evidence` and `feature_counts` publish
+their actual relational complexes and typed fields. Segment and overlap tables
+use native numerical tensors and source byte owners. Import inspections retain
+validated counts and headers; `inspect-file` renders complete compatibility rows.
+
 `alignment_evidence` returns aligned blocks, CIGAR `N` introns, junction support
 and the exact selected/excluded record indices under the declared filter.
 Mapping quality 255 means unavailable; the filter explicitly includes or excludes
