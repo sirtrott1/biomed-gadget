@@ -129,11 +129,52 @@ int main(int argc, char **argv) {
     request.set("channel", Json::string("observation"));
     request.set("recipe", recipe);
     write_text(root / "derive.json", request.dump());
-    original.materialize_record(read_record(root / "derive.json").native(), root / "derived");
+    const auto generating_request = read_record(root / "derive.json").native();
+    auto adopted = original.materialize_workspace(generating_request, root / "derived");
+    check(AssayWorkspace::supports_native_materialization("controlled_coverage") &&
+              AssayWorkspace::supports_native_materialization("spatial_relations") &&
+              !AssayWorkspace::supports_native_materialization("aggregate_assay"),
+          "native producer availability changed");
     check(!fs::exists(root / "derived/workspace.json"),
           "native derivation generated a JSON authority");
     AssayWorkspace derived(root / "derived/workspace.rfcxs");
-    auto study = derived.study("coverage");
+    auto study = adopted->study("coverage");
+    check(study == adopted->study("coverage") &&
+              study->native_history() == adopted->study("coverage")->native_history(),
+          "a consumer reconstructed the admitted producer owner");
+    check(adopted->digest() == derived.digest() &&
+              adopted->native_publication().encode() == derived.native_publication().encode() &&
+              study->producer_publication().encode() ==
+                  derived.study("coverage")->producer_publication().encode(),
+          "adopted producer differs from its complete persisted publication");
+    auto wrong_namespace = adopted->native_publication().unbound_value();
+    const auto replace_namespace = [&](auto &&visit, NativeRecordValue &value) -> void {
+        if (auto object = std::get_if<NativeRecordValue::Object>(&value.data)) {
+            for (auto &[name, member] : object->members) {
+                if (name == "source_namespace") member = NativeRecordValue(std::string("94001"));
+                else visit(visit, member);
+            }
+        } else if (auto array = std::get_if<NativeRecordValue::Array>(&value.data)) {
+            for (auto &member : array->elements) visit(visit, member);
+        }
+    };
+    replace_namespace(replace_namespace, wrong_namespace);
+    adopted->native_publication().derive(std::move(wrong_namespace))
+        .write(root / "wrong-namespace.rfcxs");
+    refuse([&] { AssayWorkspace invalid_namespace(root / "wrong-namespace.rfcxs"); });
+    auto unsupported = Json::parse(request.dump());
+    unsupported.at("recipe").set("operation", Json::string("aggregate_assay"));
+    refuse([&] {
+        original.materialize_workspace(admit_record_view(unsupported), root / "unsupported");
+    });
+    auto invalid_channel = Json::parse(request.dump());
+    invalid_channel.set("channel", Json::string("unknown"));
+    refuse([&] {
+        original.materialize_workspace(admit_record_view(invalid_channel), root / "invalid");
+    });
+    check(!fs::exists(root / "unsupported") && !fs::exists(root / "invalid"),
+          "failed producer published a destination");
+    refuse([&] { original.materialize_workspace(generating_request, root / "derived"); });
     check(study->native_publication().format_version() == 4 &&
               study->native_publication().at("study").at("fields").packed_encoding(0).has_value(),
           "study field declarations were expanded during publication");
@@ -305,8 +346,15 @@ int main(int argc, char **argv) {
     auto bind = Json::parse(
         R"({"schema":"gadget.assays.bindings.v1","id":"bound","assays":[{"input":"derived","assay":"coverage","id":"alias"}],"resources":[],"links":[],"method":"Preserve actual study owner","evidence":"Fixture"})");
     bind.set("design", design);
-    auto retained = std::make_shared<const AssayWorkspace>(root / "derived/workspace.rfcxs");
-    AssayWorkspace::bind_inputs({{"derived", retained}}, bind, root / "bound");
+    const std::weak_ptr<const AssayWorkspace> producer_owner = adopted;
+    auto bound_owner = AssayWorkspace::bind_workspaces(
+        {{"derived", adopted}}, admit_record_view(bind), root / "bound");
+    check(bound_owner->study("alias") == study &&
+              bound_owner->study("alias")->native_history() == study->native_history(),
+          "binding reconstructed or relabeled the original study owner");
+    adopted.reset();
+    check(producer_owner.expired() && bound_owner->study("alias") == study,
+          "consumer retained an unnecessary producer workspace or lost its study");
     AssayWorkspace bound(root / "bound/workspace.rfcxs");
     check(bound.study("alias")->digest() == study->digest(),
           "native collection binding changed the original study");
@@ -315,6 +363,25 @@ int main(int argc, char **argv) {
           "collection alias changed the original generating answer");
     check(bound.replay_derivation("alias", root / "alias-replayed").at("status").text() == "PASS",
           "bound study replay lost its original generating request");
+    auto second_binding = Json::parse(bind.dump());
+    second_binding.set("id", Json::string("rebound"));
+    second_binding.at("assays").at(0).set("input", Json::string("bound"));
+    second_binding.at("assays").at(0).set("assay", Json::string("alias"));
+    auto rebound = AssayWorkspace::bind_workspaces(
+        {{"bound", bound_owner}}, admit_record_view(second_binding), root / "rebound");
+    check(rebound->study("alias") == study &&
+              rebound->study("alias")->field_accession("all.sample:0").endpoint() ==
+                  study->field_accession("all.sample:0").endpoint(),
+          "chained producer adoption changed field ownership");
+    fs::rename(root / "bound", root / "bound-away");
+    fs::rename(root / "rebound", root / "relocated");
+    bound_owner.reset();
+    rebound.reset();
+    AssayWorkspace relocated(root / "relocated/workspace.rfcxs");
+    check(relocated.study("alias")->digest() == study->digest() &&
+              relocated.replay_derivation("alias", root / "relocated-replay")
+                  .at("status").text() == "PASS",
+          "adopted publication lost complete restart and relocation replay");
     for (const auto &[format, bytes] : std::map<std::string, std::string>{
              {"bed", control},
              {"gtf", "chr\tfixture\texon\t1\t4\t.\t+\t.\tgene_id "

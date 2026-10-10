@@ -299,6 +299,8 @@ Json pipeline_profiles() {
         choice.set("operation", Json::string(recipe.operation));
         choice.set("native_query", Json::boolean(recipe.native));
         choice.set("materializable", Json::boolean(recipe.materializable));
+        choice.set("native_materialization", Json::boolean(
+            AssayWorkspace::supports_native_materialization(recipe.operation)));
         choice.set("workspace_binding", Json::boolean(recipe.binding));
         choice.set("parameters_schema",
                    Json::string(recipe.binding  ? "assays-bindings.schema.json"
@@ -975,14 +977,26 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                             bindings.emplace(name, acquire(key));
                         }
                     }
-                    certificate = AssayWorkspace::bind_inputs(bindings, request, job / "workspace");
-                    produced =
-                        std::make_shared<const AssayWorkspace>(job / "workspace/workspace.rfcxs");
+                    const auto native_request = admit_record_view(request);
+                    native_request.write(job / "request.rfcxs");
+                    produced = AssayWorkspace::bind_workspaces(
+                        bindings, native_request, job / "workspace");
+                    certificate = produced->catalog();
+                    direct_result = produced->native_publication();
                 } else if (node.at("type").text() == "derive") {
-                    certificate =
-                        source->materialize(request, job / "workspace", assigned_resources);
-                    produced = std::make_shared<const AssayWorkspace>(job / "workspace" /
-                                                                      "workspace.rfcxs");
+                    if (AssayWorkspace::supports_native_materialization(
+                            request.at("recipe").at("operation").text())) {
+                        const auto native_request = admit_record_view(request);
+                        native_request.write(job / "request.rfcxs");
+                        produced = source->materialize_workspace(
+                            native_request, job / "workspace", assigned_resources);
+                        certificate = produced->catalog();
+                        direct_result = produced->study(request.at("id").text())->producer_publication();
+                    } else {
+                        certificate = source->materialize(request, job / "workspace", assigned_resources);
+                        produced = std::make_shared<const AssayWorkspace>(job / "workspace" /
+                                                                          "workspace.rfcxs");
+                    }
                 } else if (node.at("type").text() == "workflow") {
                     const auto partition =
                         node.has("partition") ? node.at("partition").integer() : 0;

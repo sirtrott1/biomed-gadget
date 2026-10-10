@@ -905,9 +905,13 @@ struct AssayWorkspace::State {
     explicit State(const fs::path &path, AssayWorkspace::AdmittedSources supplied = {},
                    std::optional<NativeRecord> admitted_publication = {},
                    const ScientificAdmissionObserver &observer = {}) {
-        require(fs::is_regular_file(fs::symlink_status(path)),
-                "workspace manifest must be regular");
-        root = fs::canonical(path).parent_path();
+        if (admitted_publication) {
+            root = fs::weakly_canonical(fs::absolute(path)).parent_path();
+        } else {
+            require(fs::is_regular_file(fs::symlink_status(path)),
+                    "workspace manifest must be regular");
+            root = fs::canonical(path).parent_path();
+        }
         this->manifest = admitted_publication ? RetainedRecord(std::move(*admitted_publication))
                                              : read_record(path);
         if (observer) observer("workspace_record");
@@ -970,6 +974,14 @@ struct AssayWorkspace::State {
             for (std::size_t p = 0; p < item.at("partitions").size(); ++p) {
                 const auto packet = item.at("partitions").at(p);
                 const auto packet_bytes = publication?std::string{}:local_artifact(root,packet);
+                const PublicationKey binding{id, rfc::numeric::Integer(std::to_string(p))};
+                if (publication) {
+                    require(publication_records.contains(binding),
+                            "native biomedical publication missing");
+                    require(publication_records.at(binding).at("path").text() ==
+                                packet.at("path").text(),
+                            "native biomedical publication path binding");
+                }
                 std::shared_ptr<const ScientificStudy> admitted;
                 if (!supplied.empty()) {
                     require(supplied.contains(id) && supplied.at(id).size() ==
@@ -977,10 +989,7 @@ struct AssayWorkspace::State {
                     admitted = supplied.at(id).at(p);
                     require(admitted && (publication || admitted->declaration().dump()==Json::parse(packet_bytes).dump()),"imported owner declaration");
                 } else if(publication) {
-                    const PublicationKey key{id,rfc::numeric::Integer(std::to_string(p))};
-                    require(publication_records.contains(key),"native biomedical publication missing");
-                    const auto entry=publication_records.at(key);
-                    require(entry.at("path").text()==packet.at("path").text(),"native biomedical publication path binding");
+                    const auto entry=publication_records.at(binding);
                     const auto bytes=entry.at("bytes").byte_source();
                     if(!publication_owners.contains(bytes.key())) {
                         auto record = NativeRecord::decode(bytes.bytes());
@@ -993,6 +1002,9 @@ struct AssayWorkspace::State {
                 }
                 require(admitted->digest() == packet.at("source_digest").text(),
                         "workspace native packet source digest");
+                require(std::to_string(admitted->native_history()->source_namespace()) ==
+                            packet.at("source_namespace").text(),
+                        "workspace native packet source namespace");
                 sources[id].push_back(std::move(admitted));
             }
         }
@@ -1266,6 +1278,12 @@ Json AssayWorkspace::read_source(const Json &input) const {
 Json AssayWorkspace::bind_inputs(
     const std::map<std::string, std::shared_ptr<const AssayWorkspace>> &inputs, const Json &request,
     const fs::path &destination) {
+    return bind_workspaces(inputs, admit_record_view(request), destination)->catalog();
+}
+std::shared_ptr<const AssayWorkspace> AssayWorkspace::bind_workspaces(
+    const std::map<std::string, std::shared_ptr<const AssayWorkspace>> &inputs,
+    const NativeRecord &native_request, const fs::path &destination) {
+    const auto request = render_record_view(native_request);
     members(request,
             {"schema", "id", "design", "assays", "resources", "links", "method", "evidence"});
     require(request.at("schema").text() == "gadget.assays.bindings.v1", "assay bindings schema");
@@ -1315,14 +1333,17 @@ Json AssayWorkspace::bind_inputs(
             require(source->state_->sources.at(selector.at("assay").text()).size()==1,"native collection binding requires an indivisible admitted study");
             require(selected.emplace(text(selector.at("id")),source->study(selector.at("assay").text())).second,"duplicate native assay alias");
         }
-        const auto publication=publish_studies(admit_record_view(request),request.at("id").text(),selected);
+        const auto publication=publish_studies(native_request,request.at("id").text(),selected);
         fs::create_directories(fs::absolute(destination).parent_path());
         const auto stage=private_directory(fs::absolute(destination).parent_path(),".gadget-native-bind-");
         struct Cleanup {fs::path path;~Cleanup(){std::error_code ec;fs::remove_all(path,ec);}} cleanup{stage};
+        AdmittedSources retained;
+        for (const auto &[id, source] : selected) retained.emplace(id, std::vector{source});
+        auto workspace = std::shared_ptr<const AssayWorkspace>(new AssayWorkspace(
+            destination / "workspace.rfcxs", std::move(retained), publication));
         publication.write(stage/"workspace.rfcxs");
-        auto result=render_record_view(publication.at("manifest"));
-        result.set("manifest_sha256",Json::string(native_declaration_digest(publication.at("manifest"))));
-        result.set("capabilities",bioinformatics_capabilities());fs::rename(stage,destination);return result;
+        fs::rename(stage,destination);
+        return workspace;
     }
     // Admit all selectors before copying anything. Collection aliases are
     // request routing names; native primary identities and namespaces remain.
@@ -1504,10 +1525,11 @@ Json AssayWorkspace::bind_inputs(
     manifest.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
     manifest = seal(manifest, "manifest_sha256");
     write_text(stage / "workspace.json", manifest.dump() + "\n");
-    publish_native_workspace(stage,manifest,bound_sources);
-    const auto catalog = AssayWorkspace(stage / "workspace.rfcxs",bound_sources).catalog();
+    auto publication = publish_native_workspace(stage,manifest,bound_sources);
+    auto workspace = std::shared_ptr<const AssayWorkspace>(new AssayWorkspace(
+        destination / "workspace.rfcxs", std::move(bound_sources), std::move(publication)));
     fs::rename(stage, destination);
-    return catalog;
+    return workspace;
 }
 std::shared_ptr<const ScientificStudy> AssayWorkspace::study(const std::string &assay,
                                                              std::size_t partition) const {
@@ -1949,8 +1971,8 @@ Json AssayWorkspace::materialize(const Json &request, const fs::path &destinatio
             "assay sections publication requires a view and component");
     if (!resources)
         resources = CpuResources::local();
-    if (op == "controlled_coverage" || op == "spatial_relations")
-        return materialize_native_fields(admit_record_view(request), destination, std::move(resources));
+    if (supports_native_materialization(op))
+        return materialize_record(admit_record_view(request), destination, std::move(resources));
     const auto certificate = execute(recipe, resources), result = certificate.at("result");
     fs::create_directories(fs::absolute(destination).parent_path());
     const auto stage =

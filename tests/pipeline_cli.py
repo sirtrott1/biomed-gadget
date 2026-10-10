@@ -49,6 +49,7 @@ recipe_schemas=json.loads((schema_root/'pipeline-default.schema.json').read_text
 recipe_schemas={entry['properties']['method']['const']:entry for entry in recipe_schemas}
 assert set(recipe_schemas)=={recipe['method'] for recipe in profiles['recipes']}
 for recipe in profiles['recipes']:
+    assert recipe['native_materialization'] == (recipe['operation'] in ['controlled_coverage','spatial_relations'])
     parameters=recipe_schemas[recipe['method']]['properties']['parameters']
     refs=[value['$ref'] for value in parameters.get('properties',{}).values() if '$ref' in value]
     for ref in refs:
@@ -376,4 +377,54 @@ run('recipe-proposal','--workspace',manifest,'--intent',invalid_path,'--request'
     '--prompt','Inspect the selected field','--out',root/'invalid-field-run',fail=True)
 assert not (root/'invalid-field-run').exists() and not list(root.glob('.gadget-pipeline-*'))
 
-print(json.dumps(dict(status='PASS',command_checks=checks,derived_source_binding=True,atomic_failure=True,model_proposal_admission=True,assay_recipes=['rna_seq','single_cell','spatial','atac_seq'],matched_units_above_former_cap=pair_count,recipe_planning=True,dependency_chain=300)))
+control_bed = source('control.bed', 'chr\t0\t8\tbase\t1\t+\nchr\t8\t12\tlast\t2\t+\n')
+treated_bed = source('treated.bed', 'chr\t0\t4\tfirst\t3\t+\nchr\t4\t8\tzero\t0\t+\nchr\t8\t12\tlast\t2\t+\n')
+reference = dict(assembly='fixture', sequence_sha256='sha256:'+'0'*64,
+    coordinate_convention='zero_based_half_open', contigs=[dict(id='chr', length=12)])
+coverage_spec = copy.deepcopy(spec)
+coverage_spec['id'] = 'native-producer-fixture'
+coverage_spec['resources'] = [dict(id=name, source=data, format='bed', method='Fixture original intervals',
+    weight_column=4, reference=reference) for name, data in [('control', control_bed), ('treated', treated_bed)]]
+coverage_manifest = root/'coverage-input'/'workspace.rfcxs'
+run('import-assays', '--spec', save('coverage-import.json', coverage_spec), '--out', coverage_manifest.parent)
+coverage_recipe = request('controlled_coverage',
+    samples=[dict(id=name, resource=resource, scale='1', scale_provenance='Fixture')
+        for name, resource in [('base', 'control'), ('treated', 'treated')]],
+    contrasts=[dict(id='change', terms=[dict(sample='treated', coefficient='1'),
+        dict(sample='base', coefficient='-1')], evidence='Fixture')],
+    controls=['base'], intercept=True, metric='reference_length', strand_policy='separate',
+    thresholds=['1'], absence_policy='measured_zero_within_union', units='count', evidence='Fixture', source_kernel=True)
+native_derive = dict(schema='gadget.assays.materialize.v1', id='coverage', source_namespace='889001',
+    design=design, recipe=coverage_recipe, channel='observation')
+native_binding = dict(schema='gadget.assays.bindings.v1', id='bound', design=design,
+    assays=[dict(input='native', assay='coverage', id='alias')], resources=[], links=[],
+    method='Retain the selected native owner', evidence='Fixture')
+native_program = dict(schema='gadget.pipeline.design.v1', profile='custom',
+    question='Retain a native producer across branches and a bound collection', concurrent_jobs=2, steps=[
+        dict(id='native', type='derive', input='source', request=native_derive),
+        dict(id='bound', type='bind', input='source', request=native_binding),
+        dict(id='first', type='query', input='native', request=request('native_query', assay='coverage',
+            query=dict(operation='field_summary', field='all.sample:0', support='reported_only'))),
+        dict(id='second', type='query', input='bound', request=request('native_query', assay='alias',
+            query=dict(operation='field_summary', field='all.sample:0', support='reported_only'))),
+        dict(id='ordered', type='query', input='source', depends_on=['native'],
+            request=request('native_query', assay='counts', query=dict(operation='coverage', field='all.A'))),
+    ])
+native_index = run('pipeline', '--workspace', coverage_manifest, '--request',
+    save('native-program.json', native_program), '--out', root/'native-program')
+assert Fraction(leaf('native-program','first')['result']['sum']['rational']) == 4
+assert leaf('native-program','first')['result'] == leaf('native-program','second')['result']
+assert native_index['results'][1]['source_digest'] != native_index['results'][0]['derived_digest']
+producer_schema = run('record-view', '--input', root/'native-program'/'native/result.rfcxs', '--member', 'schema')
+binding_schema = run('record-view', '--input', root/'native-program'/'bound/result.rfcxs', '--member', 'schema')
+assert producer_schema == 'gadget.operation.native.v1' and binding_schema == 'gadget.assay.workspace.native.v2'
+for item in native_index['results']:
+    data = (root/'native-program'/item['result']).read_bytes()
+    assert item['result_sha256'] == 'sha256:'+hashlib.sha256(data).hexdigest()
+failed_program = copy.deepcopy(native_program)
+failed_program['steps'][2]['request']['query']['field'] = 'all.absent'
+run('pipeline', '--workspace', coverage_manifest, '--request', save('native-failure.json', failed_program),
+    '--out', root/'native-failure', fail=True)
+assert not (root/'native-failure').exists() and not list(root.glob('.gadget-pipeline-*'))
+
+print(json.dumps(dict(status='PASS',command_checks=checks,derived_source_binding=True,atomic_failure=True,model_proposal_admission=True,assay_recipes=['rna_seq','single_cell','spatial','atac_seq'],matched_units_above_former_cap=pair_count,recipe_planning=True,dependency_chain=300,native_producer_branches=True)))

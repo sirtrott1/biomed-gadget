@@ -360,14 +360,28 @@ NativeRecord AssayWorkspace::publish_studies(
 }
 Json AssayWorkspace::materialize_record(const NativeRecord &request, const fs::path &destination,
                                         std::shared_ptr<CpuResources> resources) const {
-    if (request.at("recipe").at("operation").text() == "controlled_coverage" ||
-        request.at("recipe").at("operation").text() == "spatial_relations")
-        return materialize_native_fields(request, destination, std::move(resources));
+    if (supports_native_materialization(request.at("recipe").at("operation").text())) {
+        const auto workspace = materialize_workspace(request, destination, std::move(resources));
+        auto result = render_record_view(workspace->native_publication().at("manifest"));
+        result.set("manifest_sha256", Json::string(workspace->digest()));
+        result.set("capabilities", bioinformatics_capabilities());
+        return result;
+    }
     return materialize(render_record_view(request), destination, std::move(resources));
 }
-Json AssayWorkspace::materialize_native_fields(const NativeRecord &request, const fs::path &destination,
-                                          std::shared_ptr<CpuResources> resources,
-                                          std::shared_ptr<const ScientificStudy> *retained) const {
+bool AssayWorkspace::supports_native_materialization(std::string_view operation) {
+    return operation == "controlled_coverage" || operation == "spatial_relations";
+}
+std::shared_ptr<const AssayWorkspace> AssayWorkspace::materialize_workspace(
+    const NativeRecord &request, const fs::path &destination,
+    std::shared_ptr<CpuResources> resources) const {
+    require(supports_native_materialization(request.at("recipe").at("operation").text()),
+            "operation has no native materialization producer");
+    return materialize_native_fields(request, destination, std::move(resources));
+}
+std::shared_ptr<const AssayWorkspace> AssayWorkspace::materialize_native_fields(
+    const NativeRecord &request, const fs::path &destination,
+    std::shared_ptr<CpuResources> resources) const {
     const auto view = render_record_view(request);
     members(view, {"schema", "id", "source_namespace", "design", "recipe", "channel"});
     require(request.at("schema").text() == "gadget.assays.materialize.v1",
@@ -393,15 +407,12 @@ Json AssayWorkspace::materialize_native_fields(const NativeRecord &request, cons
             fs::remove_all(path, ec);
         }
     } cleanup{stage};
+    auto workspace = std::shared_ptr<const AssayWorkspace>(new AssayWorkspace(
+        destination / "workspace.rfcxs", {{request.at("id").text(), {std::move(admitted)}}},
+        collection));
     collection.write(stage / "workspace.rfcxs");
-    auto result = render_record_view(collection.at("manifest"));
-    result.set("manifest_sha256",
-               Json::string(native_declaration_digest(collection.at("manifest"))));
-    result.set("capabilities", bioinformatics_capabilities());
     fs::rename(stage, destination);
-    if (retained)
-        *retained = std::move(admitted);
-    return result;
+    return workspace;
 }
 Json AssayWorkspace::replay_native_derivation(const std::string &id, const fs::path &destination,
                                               std::shared_ptr<CpuResources> resources) const {
@@ -430,9 +441,9 @@ Json AssayWorkspace::replay_native_derivation(const std::string &id, const fs::p
     AssayWorkspace generating(stage / "original-workspace.rfcxs");
     require(generating.digest() == producer.at("result").at("source_digest").text(),
             "generating workspace binding differs");
-    std::shared_ptr<const ScientificStudy> regenerated;
-    generating.materialize_native_fields(request, stage / "replayed", std::move(resources),
-                                   &regenerated);
+    const auto regenerated_workspace = generating.materialize_workspace(
+        request, stage / "replayed", std::move(resources));
+    const auto regenerated = regenerated_workspace->study(request.at("id").text());
     const auto actual = regenerated->producer_publication();
     equal_source(producer, actual);
     auto receipt = Json::object();

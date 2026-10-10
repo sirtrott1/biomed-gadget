@@ -39,9 +39,8 @@ class AssayWorkspace {
         std::optional<std::uint64_t> source_namespace = {}) const;
     NativeRecord execute_spatial(const NativeRecord &, std::shared_ptr<CpuResources>,
         std::optional<std::uint64_t> source_namespace = {}) const;
-    Json materialize_native_fields(const NativeRecord &, const fs::path &,
-        std::shared_ptr<CpuResources>,
-        std::shared_ptr<const ScientificStudy> *retained = nullptr) const;
+    std::shared_ptr<const AssayWorkspace> materialize_native_fields(
+        const NativeRecord &, const fs::path &, std::shared_ptr<CpuResources>) const;
     Json replay_native_derivation(const std::string &, const fs::path &,
         std::shared_ptr<CpuResources>) const;
 
@@ -50,6 +49,13 @@ class AssayWorkspace {
     AssayWorkspace(const fs::path &manifest, const ScientificAdmissionObserver &observer);
     static NativeRecord publish_studies(const NativeRecord &request, const std::string &id,
         const std::map<std::string, std::shared_ptr<const ScientificStudy>> &studies);
+    static bool supports_native_materialization(std::string_view operation);
+    // Publish once and return the admitted workspace with its actual study,
+    // source history, byte owners and field accessions available to consumers.
+    // Unsupported native producers refuse before creating a destination.
+    std::shared_ptr<const AssayWorkspace> materialize_workspace(
+        const NativeRecord &request, const fs::path &destination,
+        std::shared_ptr<CpuResources> resources = {}) const;
     Json materialize_record(const NativeRecord &request, const fs::path &destination,
         std::shared_ptr<CpuResources> resources = {}) const;
     ~AssayWorkspace();
@@ -68,6 +74,10 @@ class AssayWorkspace {
     static Json
     bind_inputs(const std::map<std::string, std::shared_ptr<const AssayWorkspace>> &inputs,
                 const Json &request, const fs::path &destination);
+    // Bind selected native publications while retaining their admitted owners.
+    static std::shared_ptr<const AssayWorkspace> bind_workspaces(
+        const std::map<std::string, std::shared_ptr<const AssayWorkspace>> &inputs,
+        const NativeRecord &request, const fs::path &destination);
     Json execute(const Json &request, std::shared_ptr<CpuResources> resources = {}) const;
     NativeRecord execute_record(const NativeRecord &request,
                                 std::shared_ptr<CpuResources> resources = {}) const;
