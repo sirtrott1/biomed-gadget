@@ -233,13 +233,17 @@ def main():
         save(name+'-derive.json',request)
         destination = root/('derived-'+name)
         admitted = run('derive-assays','--workspace',workspace,'--request',root/(name+'-derive.json'),'--out',destination)
-        check(len(admitted['assays'][0]['declaration']['provenance']) >= 3,'derived source lineage')
+        if name != 'spatial':
+            check(len(admitted['assays'][0]['declaration']['provenance']) >= 3,'derived source lineage')
         if name == 'spatial':
-            relations = json.loads((destination/admitted['assays'][0]['originals']['relations']['path']).read_text())
-            check(len(relations['relations']) == 3 and relations['relations'][0]['id'] == 'authored-contact','authored topology retained')
+            check(admitted['schema'] == 'gadget.assays.workspace.v2','native spatial publication')
+            reference = run('record-view','--input',destination/'workspace.rfcxs','--assay','derived-spatial')['result']
+            check(reference['neighbor_begin'] == 1 and reference['neighbor_count'] == 2,'authored topology and appended physical relations retained')
+            check(reference['source_index']['catalog_sections']['cells'] == 7 and
+                  reference['source_index']['catalog_sections']['occurrences'] == 6,'complete native spatial cells and occurrences')
             q = dict(schema='gadget.assays.query.v1',operation='native_query',assay='derived-spatial',query=dict(operation='hodge',context='all',field='all.g1'))
             save('derived-query.json',q)
-            native = run('assay-query','--workspace',destination/'workspace.json','--request',root/'derived-query.json')
+            native = run('assay-query','--workspace',destination/'workspace.rfcxs','--request',root/'derived-query.json')
             check('answers' in native['result'],'derived spatial native field pipeline')
             values = native['result']['answers'][0]['certificate']['result']
             check([v['value']['rational'] for v in values] == ['-12','2','4','6'],'native Hodge uses authored and physical relations together')
@@ -252,7 +256,7 @@ def main():
                                 dict(id='hodge',after=[],node=dict(id='hodge',type='query',query=q['query'])),
                                 dict(id='summary',after=[],node=dict(id='summary',type='query',query=dict(operation='field_summary',field='all.g1',support='reported_only')))]))
             save('derived-spatial-workflow.json',workflow)
-            graph = run('workflow','--workspace',destination/'workspace.json','--assay','derived-spatial','--request',root/'derived-spatial-workflow.json')
+            graph = run('workflow','--workspace',destination/'workspace.rfcxs','--assay','derived-spatial','--request',root/'derived-spatial-workflow.json')
             save('derived-spatial-workflow-result.json',graph)
             check(graph['status'] == 'complete','derived assay joined parallel workflow')
         if name == 'alignment-ties':
@@ -274,12 +278,16 @@ def main():
         moved = root/('relocated '+name)
         shutil.copytree(destination,moved)
         reimported = root/('reimported-'+name)
-        run('import-assays','--spec',moved/'reimport.json','--out',reimported)
-        check((reimported/'workspace.json').exists(),'portable derived reimport')
+        if name == 'spatial':
+            check((moved/'workspace.rfcxs').read_bytes() == (destination/'workspace.rfcxs').read_bytes(),
+                  'complete portable native spatial publication')
+        else:
+            run('import-assays','--spec',moved/'reimport.json','--out',reimported)
+            check((reimported/'workspace.json').exists(),'portable derived reimport')
         original_location = root/'workspace unavailable during generation replay'
         (root/'workspace').rename(original_location)
         try:
-            replay = run('replay-derivation','--workspace',moved/'workspace.json','--assay','derived-'+name,'--out',root/('regenerated-'+name))
+            replay = run('replay-derivation','--workspace',moved/('workspace.rfcxs' if name == 'spatial' else 'workspace.json'),'--assay','derived-'+name,'--out',root/('regenerated-'+name))
             check(replay['status'] == 'PASS','original generating method re-executed from relocated lineage alone')
             save(name+'-generation-replay.json',replay)
         finally:

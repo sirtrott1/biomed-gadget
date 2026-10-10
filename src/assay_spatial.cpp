@@ -9,11 +9,11 @@
 #include <rfc/storage/native_series_codec.hpp>
 
 namespace gadget::assay_detail {
-Json spatial_analysis(const Json &assay, const Json &request) {
+Json spatial_analysis(const Json &assay, const Json &request, const SpatialRelationSink &sink) {
     members(request,
             {"schema", "operation", "assay", "coordinates", "frame", "units", "metric_diagonal",
              "radius_squared", "relation_type", "evidence"},
-            {"execution_certificate"});
+            {"execution_certificate", "charts"});
     const auto columns = request.at("coordinates"), diagonal = request.at("metric_diagonal");
     require(columns.size() > 0 && columns.size() == diagonal.size(),
             "spatial coordinate dimensions");
@@ -80,6 +80,7 @@ Json spatial_analysis(const Json &assay, const Json &request) {
     for (std::size_t i = 0; i < positions.size(); ++i)
         builder.declare_witness_identity(i + 1);
     std::uint64_t occurrence = 0;
+    std::size_t neighbors = 0;
     for (std::size_t i = 0; i < positions.size(); ++i) {
         const auto anchor = order.begin() + inverse[i];
         const auto within = [&](auto j) {
@@ -101,7 +102,11 @@ Json spatial_analysis(const Json &assay, const Json &request) {
             const auto distance = metric.inner(delta, delta);
             if (distance > radius)
                 continue;
-            const auto k = relations.size();
+            const auto k = neighbors++;
+            if (sink) {
+                sink(i, j, distance);
+                continue;
+            }
             auto relation = Json::object(), participants = Json::array();
             relation.set("id", Json::string("physical-neighbor:" + std::to_string(k)));
             relation.set("grade", cardinality(1));
@@ -135,7 +140,7 @@ Json spatial_analysis(const Json &assay, const Json &request) {
     }
     auto declaration = Json::object();
     declaration.set("relations", relations);
-    const auto bytes = rfc::storage::encode_native_series(
+    const auto bytes = sink ? std::vector<std::byte>{} : rfc::storage::encode_native_series(
         rfc::storage::NativeTemporalSeries(rfc::storage::TemporalEndpoint(builder.freeze()), 1,
                                            source_codec_limits(source_byte_limit())));
     auto out = Json::object();
@@ -143,7 +148,7 @@ Json spatial_analysis(const Json &assay, const Json &request) {
     out.set("distances", distances);
     out.set("frame", request.at("frame"));
     out.set("units", request.at("units"));
-    out.set("native_complex_sha256",
+    if (!sink) out.set("native_complex_sha256",
             Json::string(
                 "sha256:" +
                 sha256(std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size()))));
@@ -156,10 +161,7 @@ Json spatial_analysis(const Json &assay, const Json &request) {
         receipt.set("complete", Json::boolean(true));
         out.set("execution", receipt);
     }
-    out.set("scope",
-            Json::string("Native exact metric neighborhoods over retained physical coordinates. "
-                         "This relation describes the declared geometry; it does not infer a "
-                         "biochemical interaction or a higher attachment."));
+    out.set("scope", Json::string("Physical neighborhoods in the declared coordinate frame."));
     return out;
 }
 NativeRecordValue quality_fields(const ResourceImage &resource, const Json &request) {

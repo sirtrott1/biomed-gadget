@@ -232,6 +232,9 @@ The [chromatin fragment walkthrough](chromatin-fragments.md) supplies pinned
 public inputs, native requests and complete independent source verification
 across chromosomes. The [spliced RNA walkthrough](spliced-rna.md) covers original
 alignment blocks, splice occurrences and exact feature assignment bounds.
+The [spatial expression walkthrough](spatial-expression.md) covers complete
+measured expression, physical coordinates, native local charts, compatible
+sections, Hodge actions and shifted Green responses.
 
 `tests/assay_cli.py` independently enumerates varied allocation fixtures, checks
 coverage at every reference base, verifies native paired fields and spatial sheaf

@@ -40,7 +40,11 @@ Json feature_allocation_evidence(const ResourceImages &images, const Json &reque
 Json expression_allocations(const ResourceImages &images, const Json &request,
                             std::shared_ptr<CpuResources> resources);
 Json controlled_coverage(const ResourceImages &images, const Json &request);
-Json spatial_analysis(const Json &assay, const Json &request);
+using SpatialRelationSink = std::function<void(std::size_t, std::size_t, const Rational &)>;
+Json spatial_analysis(const Json &assay, const Json &request,
+                      const SpatialRelationSink &sink = {});
+AlignmentFieldsSource spatial_fields_source(const ScientificStudy &source, const Json &assay,
+                                            const Json &request);
 Json quality_analysis(const ResourceImage &resource, const Json &request);
 Json aggregate_analysis(const Matrix &matrix, const Json &declaration, const Json &request,
                         const rfc::runtime::CpuResourceCoordinator::Reservation &reservation);

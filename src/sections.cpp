@@ -115,7 +115,7 @@ Json analyze_local_sections(const NativeStudy &study, const Json &query, bool va
     std::vector<Vector> values;
     for (std::size_t i = 0; i < sections.size(); ++i) {
         const auto item = sections.at(i);
-        members(item, {"id", "grade", "values", "quantity", "units"}, {"fields"});
+        members(item, {"id", "grade", "values", "quantity", "units"}, {"fields", "axes"});
         require(ids.insert(text(item.at("id"))).second, "duplicate section identity");
         (void)text(item.at("quantity"));
         (void)text(item.at("units"));

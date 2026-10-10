@@ -1941,7 +1941,8 @@ Json AssayWorkspace::materialize(const Json &request, const fs::path &destinatio
             "assay sections publication requires a view and component");
     if (!resources)
         resources = CpuResources::local();
-    if(op=="controlled_coverage")return materialize_coverage(admit_record_view(request),destination,std::move(resources));
+    if (op == "controlled_coverage" || op == "spatial_relations")
+        return materialize_native_fields(admit_record_view(request), destination, std::move(resources));
     const auto certificate = execute(recipe, resources), result = certificate.at("result");
     fs::create_directories(fs::absolute(destination).parent_path());
     const auto stage =
@@ -2005,45 +2006,7 @@ Json AssayWorkspace::materialize(const Json &request, const fs::path &destinatio
     std::string features_text = "id\n", observations_text = "id\n", matrix_text;
     std::vector<std::string> feature_ids, observation_ids;
     std::vector<std::vector<std::string>> rows;
-    if (op == "spatial_relations") {
-        const auto source = state_->assays.at(recipe.at("assay").text());
-        require(source.at("declaration").at("carrier").text() == "observations",
-                "spatial topology requires an observation-carrier assay");
-        assay = Json::parse(source.at("declaration").dump());
-        const auto originals = source.at("originals");
-        for (const auto &name : originals.native().names()) {
-            const auto bytes = state_->artifact( originals.at(name));
-            retain(bytes);
-            const auto target = std::string(name) == "matrix" ? "source" : std::string(name);
-            if (target == "source" || target == "features" || target == "observations" ||
-                target == "missing") {
-                const auto path = "assay-" + target;
-                write_text(stage / path, bytes);
-                assay.set(target, file_record(path, bytes));
-            }
-        }
-        descriptor.set("assay", source.at("declaration"));
-        auto relations = Json::object();
-        std::vector<Json> ordered;
-        if (originals.has("relations")) {
-            relations = Json::parse(state_->artifact( originals.at("relations")));
-            for (std::size_t i = 0; i < relations.at("relations").size(); ++i)
-                ordered.push_back(relations.at("relations").at(i));
-        }
-        for (std::size_t i = 0; i < result.at("relations").at("relations").size(); ++i)
-            ordered.push_back(result.at("relations").at("relations").at(i));
-        std::stable_sort(ordered.begin(), ordered.end(), [](const auto &a, const auto &b) {
-            return (a.has("grade") ? a.at("grade").integer() : 1) <
-                   (b.has("grade") ? b.at("grade").integer() : 1);
-        });
-        auto all = Json::array();
-        for (const auto &r : ordered)
-            all.push(r);
-        relations.set("relations", all);
-        const auto bytes = relations.dump() + "\n";
-        write_text(stage / "relations.json", bytes);
-        assay.set("relations", file_record("relations.json", bytes));
-    } else {
+    {
         std::string quantity, units;
         if (op == "assay_sections") {
             const auto view_id = request.at("view").text(),
@@ -2532,11 +2495,47 @@ NativeRecord AssayWorkspace::execute_coverage(const NativeRecord &request,
         fields.sources.push_back(std::move(owner));
         return retain_operation(std::move(fields.endpoint),source_namespace.value_or(new_native_record_namespace()),std::move(fields.sources),request,std::move(certificate));
 }
+NativeRecord AssayWorkspace::execute_spatial(const NativeRecord &request,
+    std::shared_ptr<CpuResources> resources, std::optional<std::uint64_t> source_namespace) const {
+    using N = NativeRecordValue;
+    const auto query = render_record_view(request);
+    require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
+    const auto id = text(query.at("assay"));
+    require(state_->assays.contains(id), "unknown spatial assay");
+    const auto assay = state_->assays.at(id);
+    require(assay.at("partitions").size() == 1,
+            "spatial topology requires one complete observation carrier");
+    if (!resources) resources = CpuResources::local();
+    auto reservation = resources->reserve(1);
+    const auto original = study(id);
+    auto fields = spatial_fields_source(*original, assay, query);
+    fields.sources = original->native_publication().raw_sources();
+    std::uint64_t key = 1;
+    for (const auto &source : fields.sources) {
+        require(source.key() < std::numeric_limits<std::uint64_t>::max(), "raw source identity space exhausted");
+        key = std::max(key, source.key() + 1);
+    }
+    auto workspace = native_publication().archive_source(key);
+    const auto bytes = workspace.bytes().size();
+    auto &members = std::get<N::Object>(fields.declaration.data).members;
+    members.emplace_back("source_study", original->native_publication().at("study").unbound_value());
+    members.emplace_back("source_documents", original->native_publication().at("documents").unbound_value());
+    fields.sources.push_back(std::move(workspace));
+    N certificate(N::Object{{{"schema", N(std::string("gadget.assay.result.native.v1"))},
+        {"query", import_record_view(query)}, {"source_digest", N(digest())},
+        {"result", std::move(fields.declaration)}, {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
+        {"arithmetic", N(std::string("rational"))}, {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+        {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+    return retain_operation(std::move(fields.endpoint), source_namespace.value_or(new_native_record_namespace()),
+                            std::move(fields.sources), request, std::move(certificate));
+}
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
     std::shared_ptr<CpuResources> resources) const {
     const auto query = render_record_view(request);
     if (query.has("operation") && query.at("operation").text() == "controlled_coverage")
         return execute_coverage(request,std::move(resources));
+    if (query.has("operation") && query.at("operation").text() == "spatial_relations")
+        return execute_spatial(request, std::move(resources));
     if (query.has("operation") && (query.at("operation").text() == "alignment_evidence" ||
                                    query.at("operation").text() == "feature_counts")) {
         using N = NativeRecordValue;

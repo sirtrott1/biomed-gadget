@@ -272,6 +272,10 @@
                 ]
               }
             ]
+          },
+          "witness_scope": {
+            "const": "block",
+            "description": "Use exactly the witnesses in the declared strict subcomplex."
           }
         },
         "required": [

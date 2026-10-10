@@ -15,6 +15,95 @@ N span_reference(const std::string &id, std::size_t bytes) {
                         {"start", N(rfc::numeric::Integer(0))},
                         {"end", N(rfc::numeric::Integer(std::to_string(bytes)))}}});
 }
+std::map<std::uint64_t, std::uint64_t> retained_request_sources(const NativeRecord &producer,
+                                                             const NativeRecord &request) {
+    std::map<std::uint64_t, std::uint64_t> bindings;
+    const auto retained = producer.raw_sources();
+    for (const auto &source : request.raw_sources()) {
+        const auto found = std::find_if(retained.begin(), retained.end(),
+                                       [&](const auto &item) { return item.shares_owner(source); });
+        require(found != retained.end(), "generating request byte owner was lost");
+        bindings.emplace(source.key(), found->key());
+    }
+    return bindings;
+}
+NativeRecord spatial_study(const NativeRecord &producer, const NativeRecord &request) {
+    const auto spatial = producer.at("result").at("result");
+    require(spatial.at("schema").text() == "gadget.spatial.fields.v1", "unsupported spatial producer");
+    const auto source = spatial.at("source_study");
+    auto docs = source.at("documents").unbound_value();
+    auto raw = spatial.at("source_documents").unbound_value();
+    const auto protocol = producer.at("request_publication");
+    const auto bytes = protocol.bytes();
+    const auto protocol_id = "spatial_protocol";
+    for (std::size_t i = 0; i < source.at("documents").size(); ++i)
+        require(source.at("documents").at(i).at("id").text() != protocol_id,
+                "spatial protocol document identity already exists");
+    std::get<N::Array>(docs.data).elements.emplace_back(N::Object{{{"id", string(protocol_id)},
+        {"path", string(protocol_id)}, {"sha256", N("sha256:" + sha256(std::string_view(
+            reinterpret_cast<const char *>(bytes.data()), bytes.size())))}, {"format", string("binary")}}});
+    std::get<N::Array>(raw.data).elements.emplace_back(N::Object{{{"id", string(protocol_id)},
+        {"bytes", protocol.materialize_value()}}});
+    auto fields = source.at("fields").unbound_value();
+    std::map<std::string, std::string> spatial_keys;
+    const auto additions = spatial.at("fields");
+    const N evidence(N::Array{{span_reference(protocol_id, bytes.size())}});
+    for (std::size_t i = 0; i < additions.size(); ++i) {
+        const auto f = additions.at(i);
+        const auto name = f.at("id").text();
+        spatial_keys.emplace(name, f.at("key").text());
+        for (std::size_t j = 0; j < source.at("fields").size(); ++j)
+            require(source.at("fields").at(j).at("id").text() != "all." + name,
+                    "spatial field identity already exists");
+        std::get<N::Array>(fields.data).elements.emplace_back(N::Object{{{"id", N("all." + name)},
+            {"key", N(f.at("key").text())}, {"context", string("all")}, {"channel", string("covariate")},
+            {"quantity", N(f.at("quantity").text())}, {"units", N(f.at("units").text())},
+            {"method", string("Declared spatial coordinate map")}, {"value_type", string("quantitative")},
+            {"evidence", evidence}}});
+    }
+    N::Array bindings, metrics, contexts;
+    for (std::size_t k = 0; k < producer.endpoint()->source.grade_count(); ++k) {
+        N binding = k == 0
+            ? N(N::Object{{{"kind", string("spans")},
+                {"document_index_field", N(spatial_keys.at("spatial.source_document"))},
+                {"start_field", N(spatial_keys.at("spatial.source_start"))},
+                {"end_field", N(spatial_keys.at("spatial.source_end"))},
+                {"documents", N(N::Array{{string("carrier_axis")}})}}})
+            : N(N::Object{{{"kind", string("documents")},
+                {"documents", N(N::Array{{string(protocol_id)}})}}});
+        bindings.elements.emplace_back(N::Object{{{"grade", N(rfc::numeric::Integer(std::to_string(k)))},
+            {"id_prefix", N("grade" + std::to_string(k) + ":")},
+            {"label_prefix", N(k == 0 ? "Observation " : "Relation ")},
+            {"kind", N(k == 0 ? "source_observation" : "retained_relation")}, {"evidence", std::move(binding)}}});
+        metrics.elements.emplace_back(N::Object{{{"kind", string("identity")}}});
+    }
+    // These source assays declare identity metrics. A different existing form
+    // requires a supplied transport to the enlarged carrier.
+    const auto original_contexts = source.at("contexts");
+    require(original_contexts.size() == 1 && original_contexts.at(0).at("id").text() == "all",
+            "spatial materialization requires the complete source context");
+    const auto original_metrics = original_contexts.at(0).at("metrics");
+    for (std::size_t i = 0; i < original_metrics.size(); ++i)
+        require(original_metrics.at(i).at("kind").text() == "identity",
+                "spatial materialization needs an explicit transport for a nonidentity source metric");
+    contexts.elements.emplace_back(N::Object{{{"id", string("all")}, {"block", N{}},
+        {"metrics", N(metrics)}, {"time", N{}}}});
+    const auto charts = spatial.at("charts");
+    for (std::size_t i = 0; i < charts.size(); ++i)
+        contexts.elements.emplace_back(N::Object{{{"id", N(charts.at(i).at("id").text())},
+            {"block", N(charts.at(i).at("block").text())}, {"metrics", N(metrics)}, {"time", N{}},
+            {"witness_scope", string("block")}}});
+    auto design = request.at("design").unbound_value(retained_request_sources(producer, request));
+    require(!request.at("design").has("covariates"), "derived design covariates use field bindings");
+    std::get<N::Object>(design.data).members.emplace_back("covariates", N(N::Array{}));
+    require(request.at("channel").text() == source.at("fields").at(0).at("channel").text(),
+            "spatial materialization must preserve the measured field channel");
+    N study(N::Object{{{"schema", string("gadget.scientific.study.v3")}, {"id", N(request.at("id").text())},
+        {"design", std::move(design)}, {"documents", std::move(docs)}, {"cell_bindings", N(std::move(bindings))},
+        {"occurrence_evidence", string("parent_cell")}, {"contexts", N(std::move(contexts))},
+        {"fields", std::move(fields)}, {"field_sets", source.at("field_sets").unbound_value()}}});
+    return ScientificStudy::publish_annotations(producer, std::move(study), std::move(raw));
+}
 NativeRecord coverage_study(const NativeRecord &producer, const NativeRecord &request) {
     const auto coverage = producer.at("result").at("result");
     require(coverage.at("schema").text() == "gadget.coverage.fields.v1",
@@ -106,16 +195,7 @@ NativeRecord coverage_study(const NativeRecord &producer, const NativeRecord &re
                        {"value_type", string(categorical ? "categorical" : "quantitative")},
                        {"evidence", N(all_evidence)}}});
     }
-    std::map<std::uint64_t, std::uint64_t> request_sources;
-    const auto producer_sources = producer.raw_sources();
-    for (const auto &source : request.raw_sources()) {
-        const auto retained =
-            std::find_if(producer_sources.begin(), producer_sources.end(),
-                         [&](const auto &item) { return item.shares_owner(source); });
-        require(retained != producer_sources.end(), "generating request byte owner was lost");
-        request_sources.emplace(source.key(), retained->key());
-    }
-    auto design = request.at("design").unbound_value(request_sources);
+    auto design = request.at("design").unbound_value(retained_request_sources(producer, request));
     auto &design_members = std::get<N::Object>(design.data).members;
     require(!request.at("design").has("covariates"),
             "materialization design declares covariates through the study field bindings");
@@ -131,12 +211,54 @@ NativeRecord coverage_study(const NativeRecord &producer, const NativeRecord &re
                        {"field_sets", N(N::Array{})}}});
     return ScientificStudy::publish_annotations(producer, std::move(study), N(std::move(raw_docs)));
 }
+void equal_record_content(const NativeRecord &expected, const NativeRecord &actual) {
+    require(expected.kind() == actual.kind(), "replayed declaration constructor differs");
+    switch (expected.kind()) {
+    case NativeRecordKind::Null: return;
+    case NativeRecordKind::Boolean:
+        require(expected.boolean() == actual.boolean(), "replayed boolean differs"); return;
+    case NativeRecordKind::Integer:
+        require(expected.integer() == actual.integer(), "replayed integer differs"); return;
+    case NativeRecordKind::Rational: case NativeRecordKind::ExactNumber:
+        require(expected.rational() == actual.rational() &&
+                    (expected.kind() != NativeRecordKind::ExactNumber ||
+                     expected.approximate_view() == actual.approximate_view()),
+                "replayed exact value differs"); return;
+    case NativeRecordKind::Decimal:
+        require(expected.rational() == actual.rational() && expected.text() == actual.text(),
+                "replayed decimal differs"); return;
+    case NativeRecordKind::Text: case NativeRecordKind::Bytes: {
+        const auto a = expected.bytes(), b = actual.bytes();
+        require(a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin()),
+                "replayed original bytes differ"); return;
+    }
+    case NativeRecordKind::Object:
+        require(expected.names() == actual.names(), "replayed declaration members differ");
+        for (const auto &name : expected.names()) equal_record_content(expected.at(name), actual.at(name));
+        return;
+    case NativeRecordKind::Array:
+        require(expected.size() == actual.size(), "replayed declaration cardinality differs");
+        for (std::size_t i = 0; i < expected.size(); ++i) equal_record_content(expected.at(i), actual.at(i));
+        return;
+    case NativeRecordKind::Tensor:
+        require(expected.tensor().domain() == actual.tensor().domain() &&
+                    temporal_endpoint_detail::support_equal(expected.tensor().support(), actual.tensor().support()) &&
+                    expected.tensor().values().entries() == actual.tensor().values().entries(),
+                "replayed tensor value differs"); return;
+    }
+    throw std::invalid_argument("unsupported replay declaration constructor");
+}
 void equal_source(const NativeRecord &expected, const NativeRecord &actual) {
     const auto a = expected.endpoint(), b = actual.endpoint();
     require(encode_rfcx(a->source).bytes == encode_rfcx(b->source).bytes,
             "replayed complete relational source differs");
-    require(a->local_blocks.empty() && b->local_blocks.empty(),
-            "coverage replay must retain its ambient source without reconstructed blocks");
+    require(a->local_blocks.size() == b->local_blocks.size(), "replayed local chart family differs");
+    for (std::size_t i = 0; i < a->local_blocks.size(); ++i) {
+        const auto &x = a->local_blocks[i], &y = b->local_blocks[i];
+        require(x.block_key == y.block_key && x.kind == y.kind && x.cells == y.cells &&
+                    x.occurrences == y.occurrences && x.payloads.empty() && y.payloads.empty(),
+                "replayed local chart differs");
+    }
     require(a->carriers.size() == b->carriers.size() && a->tensors.size() == b->tensors.size(),
             "replayed carrier/field family differs");
     for (std::size_t i = 0; i < a->carriers.size(); ++i) {
@@ -155,6 +277,10 @@ void equal_source(const NativeRecord &expected, const NativeRecord &actual) {
     const auto old = expected.at("result").at("result"), now = actual.at("result").at("result");
     require(old.at("schema").text() == now.at("schema").text(),
             "replayed declaration schema differs");
+    if (old.at("schema").text() == "gadget.spatial.fields.v1") {
+        equal_record_content(old, now);
+        return;
+    }
     const auto originals = old.at("resources"), replayed = now.at("resources");
     require(originals.size() == replayed.size(), "replayed original resource count differs");
     for (std::size_t i = 0; i < originals.size(); ++i) {
@@ -234,11 +360,12 @@ NativeRecord AssayWorkspace::publish_studies(
 }
 Json AssayWorkspace::materialize_record(const NativeRecord &request, const fs::path &destination,
                                         std::shared_ptr<CpuResources> resources) const {
-    if (request.at("recipe").at("operation").text() == "controlled_coverage")
-        return materialize_coverage(request, destination, std::move(resources));
+    if (request.at("recipe").at("operation").text() == "controlled_coverage" ||
+        request.at("recipe").at("operation").text() == "spatial_relations")
+        return materialize_native_fields(request, destination, std::move(resources));
     return materialize(render_record_view(request), destination, std::move(resources));
 }
-Json AssayWorkspace::materialize_coverage(const NativeRecord &request, const fs::path &destination,
+Json AssayWorkspace::materialize_native_fields(const NativeRecord &request, const fs::path &destination,
                                           std::shared_ptr<CpuResources> resources,
                                           std::shared_ptr<const ScientificStudy> *retained) const {
     const auto view = render_record_view(request);
@@ -249,8 +376,11 @@ Json AssayWorkspace::materialize_coverage(const NativeRecord &request, const fs:
     const auto ns = key(view.at("source_namespace"));
     require(ns != native_publication().source_namespace() && ns != request.source_namespace(),
             "derived source must have its own namespace");
-    const auto operation = execute_coverage(request.at("recipe"), std::move(resources), ns);
-    auto admitted = std::make_shared<const ScientificStudy>(coverage_study(operation, request));
+    const bool spatial = request.at("recipe").at("operation").text() == "spatial_relations";
+    const auto operation = spatial ? execute_spatial(request.at("recipe"), std::move(resources), ns)
+                                   : execute_coverage(request.at("recipe"), std::move(resources), ns);
+    auto admitted = std::make_shared<const ScientificStudy>(
+        spatial ? spatial_study(operation, request) : coverage_study(operation, request));
     const auto collection =
         publish_studies(request, request.at("id").text(), {{request.at("id").text(), admitted}});
     fs::create_directories(fs::absolute(destination).parent_path());
@@ -283,8 +413,9 @@ Json AssayWorkspace::replay_native_derivation(const std::string &id, const fs::p
     const auto request_bytes = producer.at("request_publication").bytes();
     const auto request = NativeRecord::decode(request_bytes);
     require(request.at("schema").text() == "gadget.assays.materialize.v1" &&
-                request.at("recipe").at("operation").text() == "controlled_coverage",
-            "generating request is not a native coverage materialization");
+                (request.at("recipe").at("operation").text() == "controlled_coverage" ||
+                 request.at("recipe").at("operation").text() == "spatial_relations"),
+            "generating request is not a native field materialization");
     fs::create_directories(fs::absolute(destination).parent_path());
     const auto stage =
         private_directory(fs::absolute(destination).parent_path(), ".gadget-native-replay-");
@@ -300,7 +431,7 @@ Json AssayWorkspace::replay_native_derivation(const std::string &id, const fs::p
     require(generating.digest() == producer.at("result").at("source_digest").text(),
             "generating workspace binding differs");
     std::shared_ptr<const ScientificStudy> regenerated;
-    generating.materialize_coverage(request, stage / "replayed", std::move(resources),
+    generating.materialize_native_fields(request, stage / "replayed", std::move(resources),
                                    &regenerated);
     const auto actual = regenerated->producer_publication();
     equal_source(producer, actual);
@@ -323,17 +454,20 @@ Json AssayWorkspace::derivation_certificate(const std::string &id) const {
     const auto source = study(id);
     const auto producer = source->producer_publication();
     const auto generated = producer.at("result"), coverage = generated.at("result");
-    require(coverage.at("schema").text() == "gadget.coverage.fields.v1",
+    const bool spatial = coverage.at("schema").text() == "gadget.spatial.fields.v1";
+    require(spatial || coverage.at("schema").text() == "gadget.coverage.fields.v1",
             "unsupported native generating result");
     auto result = Json::object();
-    result.set("schema", Json::string("gadget.coverage.fields.reference.v1"));
+    result.set("schema", Json::string(spatial ? "gadget.spatial.fields.reference.v1"
+                                               : "gadget.coverage.fields.reference.v1"));
     result.set("native", source->declaration().at("native"));
     result.set("source_index", source->source_index());
     for (const auto *name : {"intervals", "segments", "sample_fields", "metric_diagonal",
-                             "contrasts", "units", "thresholds"})
+                             "contrasts", "units", "thresholds", "fields", "frame", "charts",
+                             "neighbor_begin", "neighbor_count"})
         if (coverage.has(name))
             result.set(name, render_record_view(coverage.at(name)));
-    result.set("control_rank", render_record_view(coverage.at("controls").at("rank")));
+    if (!spatial) result.set("control_rank", render_record_view(coverage.at("controls").at("rank")));
     result.set("native_declaration_sha256", Json::string(native_declaration_digest(generated)));
     auto certificate = Json::object();
     certificate.set("schema", Json::string("gadget.assay.result.v1"));

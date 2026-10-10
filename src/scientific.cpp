@@ -511,7 +511,10 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
     require(declared_contexts.size() > 0, "at least one declared context required");
     for (std::size_t i = 0; i < declared_contexts.size(); ++i) {
         auto item = declared_contexts.at(i);
-        members(item, {"id", "block", "metrics", "time"});
+        members(item, {"id", "block", "metrics", "time"}, {"witness_scope"});
+        if (item.has("witness_scope"))
+            require(item.at("witness_scope").text() == "block" && item.at("block").raw(),
+                    "block witness scope requires a declared strict subcomplex");
         Context context{this->declaration.member("contexts").element(i), {}};
         if (!json_object_is_type(item.at("block").raw(), json_type_null)) {
             context.block = key(item.at("block"));

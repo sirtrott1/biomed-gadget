@@ -247,7 +247,10 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
     require(declared_contexts.size() > 0, "study needs a context");
     for (std::size_t i = 0; i < declared_contexts.size(); ++i) {
         const auto item = declared_contexts.at(i);
-        members(item, {"id", "block", "metrics", "time"});
+        members(item, {"id", "block", "metrics", "time"}, {"witness_scope"});
+        if (item.has("witness_scope"))
+            require(item.at("witness_scope").text() == "block" && item.at("block").raw(),
+                    "block witness scope requires a declared strict subcomplex");
         Context context{declaration.at("contexts").at(i), {}};
         if (item.at("block").raw()) {
             context.block = key(item.at("block"));

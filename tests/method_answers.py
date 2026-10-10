@@ -75,7 +75,21 @@ def qualify(binary, root, workspace, cases):
                 goal['partition_jobs'] = request['concurrent_jobs']
         recipes.append(dict(id=name, purpose='Retained output for independently verified ' + label, goal=goal))
         requirements.append(dict(id=name, observable=MEANINGS[method], bindings=[name]))
-        expected[name] = result
+        if operation == 'spatial_relations':
+            request_path = save(name + '-direct.json', request)
+            publication = root / (name + '-direct.rfcxs')
+            p = subprocess.run([str(binary), 'assay-query', '--workspace', str(workspace),
+                                '--request', str(request_path), '--out-record', str(publication)],
+                               text=True, capture_output=True, timeout=180)
+            check(p.returncode == 0)
+            certificate = run('record-view', '--input', publication, '--member', 'result')
+            native_result = certificate['result']
+            check(native_result['schema'] == 'gadget.spatial.fields.v1')
+            old = result['result'] if result.get('schema') == 'gadget.assay.result.v1' else result
+            check(native_result['neighbor_count'] == len(old['relations']['relations']))
+            expected[name] = certificate
+        else:
+            expected[name] = result
         actual_requests[name] = request
     check(bool(recipes))
     question = 'Execute the declared methods and retain their complete scientific results.'

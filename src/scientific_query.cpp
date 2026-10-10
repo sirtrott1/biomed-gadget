@@ -131,9 +131,11 @@ struct ScientificSession::State {
                     mask.select({grade, static_cast<std::uint32_t>(i)});
             }
         }
-        // Explicit common ambient grade-zero carrier, including isolated cells.
-        for (std::size_t i = 0; i < endpoint->source.grade(rfc::core::Grade{0}).cell_count(); ++i)
-            mask.select({rfc::core::Grade{0}, static_cast<std::uint32_t>(i)});
+        // Legacy contexts share ambient witnesses. Explicit block contexts keep
+        // precisely the carrier certified by their strict subcomplex.
+        if (!declared.declaration.has("witness_scope"))
+            for (std::size_t i = 0; i < endpoint->source.grade(rfc::core::Grade{0}).cell_count(); ++i)
+                mask.select({rfc::core::Grade{0}, static_cast<std::uint32_t>(i)});
         for (std::size_t k = 0; k < endpoint->source.grade_count(); ++k)
             require(mask.grade(rfc::core::Grade{static_cast<std::uint16_t>(k)}).count() <=
                         coordinate_limit,
@@ -163,8 +165,7 @@ struct ScientificSession::State {
     }
     const TemporalTensor &tensor(const std::string &field) const {
         require(source.fields.contains(field), "unknown field: " + field);
-        return *temporal_endpoint_detail::tensors(*source.directory->pin_snapshot())
-                    .at(source.fields.at(field).tensor);
+        return *source.field_pins.at(source.fields.at(field).tensor).tensor_declaration();
     }
     std::pair<Vector, std::uint16_t> input(const std::string &name, const std::string &field,
                                            bool legacy_budget = true) {
@@ -172,14 +173,19 @@ struct ScientificSession::State {
         const auto &meaning = source.fields.at(field).declaration;
         require(meaning.at("value_type").text() != "categorical",
                 "categorical codes cannot be linear field amplitudes");
-        require(meaning.at("context").text() == name, "field/context mismatch");
-        const auto carrier =
-            temporal_endpoint_detail::carriers(*source.directory->pin_snapshot()).at(*t.output);
+        const auto carrier = source.field_pins.at(t.key).carrier();
         require(carrier->kind == TemporalCarrierKind::SourceGrade &&
                     carrier->domain.extents().size() == 1,
                 "scalar tower field requires a rank-one SourceGrade carrier");
         auto &prepared = context(name);
         const auto grade = carrier->grade.value;
+        if (meaning.at("context").text() != name) {
+            require(source.contexts.at(name).declaration.has("witness_scope"), "field/context mismatch");
+            const auto &parent = context(meaning.at("context").text()).to_ambient.at(grade);
+            const auto &child = prepared.to_ambient.at(grade);
+            require(std::includes(parent.begin(), parent.end(), child.begin(), child.end()),
+                    "field carrier does not contain the declared block context");
+        }
         Vector values;
         for (const auto coordinate : prepared.to_ambient.at(grade)) {
             require(
@@ -399,6 +405,11 @@ struct ScientificSession::State {
                     item.at("grade"), std::numeric_limits<std::uint16_t>::max(), "section grade"));
                 std::vector<Vector> inputs;
                 std::set<std::string> seen;
+                const auto axes = item.has("axes") ? item.at("axes") : ids;
+                require(axes.size() == ids.size(), "section axis binding dimension");
+                std::set<std::string> axis_names;
+                for (std::size_t axis = 0; axis < axes.size(); ++axis)
+                    require(axis_names.insert(text(axes.at(axis))).second, "duplicate section axis label");
                 for (std::size_t f = 0; f < ids.size(); ++f) {
                     const auto id = text(ids.at(f));
                     require(seen.insert(id).second, "duplicate section source field");
@@ -413,8 +424,8 @@ struct ScientificSession::State {
                 for (std::size_t c = 0; c < query.at("stalks").size(); ++c) {
                     const auto stalk = query.at("stalks").at(c);
                     if (stalk.at("grade").integer() == grade)
-                        require(stalk.at("axes").dump() == ids.dump(),
-                                "source section axes must name their exact fields in order");
+                        require(stalk.at("axes").dump() == axes.dump(),
+                                "source section axes must follow their declared field bindings");
                 }
                 auto values = Json::array();
                 for (std::size_t c = 0; c < prepared.to_ambient.at(grade).size(); ++c)
