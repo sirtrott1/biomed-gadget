@@ -367,6 +367,8 @@ if(BUILD_TESTING)
   add_executable(gadget_packed_bench tests/packed_bench.cpp)
   target_link_libraries(gadget_packed_bench PRIVATE gadget::core)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME gadget_source_export_contracts COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_export.py" "${GADGET_TEST_DATA_DIR}/source-export-contracts")
   add_executable(gadget_sparse_reduction_tests tests/sparse_reductions.cpp)
   target_link_libraries(gadget_sparse_reduction_tests PRIVATE gadget::core)
   target_compile_options(gadget_sparse_reduction_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <gadget/pipeline.hpp>
 #include <gadget/record_view.hpp>
+#include <mutex>
 #include <optional>
 #include <rfc/runtime/work_graph.hpp>
 #include <set>
@@ -254,8 +255,22 @@ void validate(const Json &plan, const std::string &digest) {
                 "pipeline plan seal mismatch");
     }
 }
+struct WorkspaceLease {
+    std::mutex mutex;
+    std::shared_ptr<const AssayWorkspace> workspace;
+    std::size_t consumers;
+    WorkspaceLease(std::shared_ptr<const AssayWorkspace> source, std::size_t users)
+        : workspace(std::move(source)), consumers(users) {}
+    std::shared_ptr<const AssayWorkspace> acquire() {
+        std::lock_guard lock(mutex);
+        require(workspace && consumers, "pipeline workspace has no remaining consumer");
+        auto source = workspace;
+        if (!--consumers) workspace.reset();
+        return source;
+    }
+};
 struct Artifact {
-    fs::path manifest;
+    std::shared_ptr<WorkspaceLease> workspace;
     RetainedRecord receipt;
 };
 } // namespace
@@ -840,6 +855,18 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
     } cleanup{stage};
     std::vector<rfc::runtime::WorkJob> jobs;
     std::map<std::string, rfc::runtime::WorkKey> identities;
+    std::map<std::string, std::size_t> workspace_consumers;
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        const auto node = nodes.at(i);
+        std::set<std::string> selected{node.at("input").text()};
+        if (node.at("type").text() == "bind") {
+            const auto inputs = binding_inputs(node.at("request"));
+            selected.insert(inputs.begin(), inputs.end());
+        }
+        selected.erase("source");
+        for (const auto &input : selected)
+            workspace_consumers[input] = rfc::machine::checked_size_add(workspace_consumers[input], 1);
+    }
     const auto buffer = resources->coordinator().policy().declared_buffer_byte_limit /
                         std::min(concurrency, nodes.size());
     for (std::size_t i = 0; i < nodes.size(); ++i) {
@@ -886,14 +913,28 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
         // use that same coordinator rather than a competing application pool.
         jobs.push_back(rfc::runtime::WorkJob::make<Artifact>(
             key, {static_cast<std::size_t>(workers), buffer, sizeof(Artifact)}, dependencies,
-            [workspace, resources, stage, node, input_key, selected_inputs, &models,
+            [workspace, resources, stage, node, input_key, selected_inputs,
+             consumers = workspace_consumers[id], &models,
              evidence](const auto &inputs, auto &assigned, std::stop_token stop) {
                 if (stop.stop_requested())
                     throw rfc::runtime::ExecutionCancelled{};
                 const auto parent =
                     input_key.id ? inputs.at(input_key).template as<Artifact>() : nullptr;
-                const auto source =
-                    parent ? std::make_shared<const AssayWorkspace>(parent->manifest) : workspace;
+                std::map<rfc::runtime::WorkKey, std::shared_ptr<const AssayWorkspace>> owners;
+                const auto acquire = [&](rfc::runtime::WorkKey key) {
+                    if (!owners.contains(key)) {
+                        const auto artifact = inputs.at(key).template as<Artifact>();
+                        require(static_cast<bool>(artifact->workspace),
+                                "pipeline input has no admitted workspace");
+                        auto owner = artifact->workspace->acquire();
+                        require(owner->digest() == artifact->receipt.at("derived_digest").text(),
+                                "pipeline input digest mismatch");
+                        owners.emplace(key, std::move(owner));
+                    }
+                    return owners.at(key);
+                };
+                const auto source = parent ? acquire(input_key) : workspace;
+                require(static_cast<bool>(source), "pipeline input has no admitted workspace");
                 if (parent)
                     require(source->digest() == parent->receipt.at("derived_digest").text(),
                             "derived pipeline input digest mismatch");
@@ -926,21 +967,15 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                 std::optional<NativeRecord> direct_result;
                 std::shared_ptr<const AssayWorkspace> produced;
                 if (node.at("type").text() == "bind") {
-                    std::map<std::string, std::shared_ptr<const AssayWorkspace>> owners;
+                    std::map<std::string, std::shared_ptr<const AssayWorkspace>> bindings;
                     for (const auto &[name, key] : selected_inputs) {
                         if (!key.id)
-                            owners.emplace(name, workspace);
+                            bindings.emplace(name, workspace);
                         else {
-                            const auto artifact = inputs.at(key).template as<Artifact>();
-                            const auto selected =
-                                std::make_shared<const AssayWorkspace>(artifact->manifest);
-                            require(selected->digest() ==
-                                        artifact->receipt.at("derived_digest").text(),
-                                    "bound pipeline input digest mismatch");
-                            owners.emplace(name, selected);
+                            bindings.emplace(name, acquire(key));
                         }
                     }
-                    certificate = AssayWorkspace::bind_inputs(owners, request, job / "workspace");
+                    certificate = AssayWorkspace::bind_inputs(bindings, request, job / "workspace");
                     produced =
                         std::make_shared<const AssayWorkspace>(job / "workspace/workspace.rfcxs");
                 } else if (node.at("type").text() == "derive") {
@@ -993,8 +1028,8 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                                 Json::string(node.at("id").text() + "/workspace/workspace.rfcxs"));
                     receipt.set("derived_digest", Json::string(produced->digest()));
                 }
-                return Artifact{produced ? job / "workspace" / "workspace.rfcxs" : fs::path{},
-                                receipt};
+                return Artifact{produced && consumers ?
+                    std::make_shared<WorkspaceLease>(std::move(produced), consumers) : nullptr, receipt};
             }));
         identities.emplace(id, key);
     }

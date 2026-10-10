@@ -458,6 +458,7 @@ struct NativeRecord::State {
             ID type; const V *value; std::uint64_t completed_reference{};
             std::shared_ptr<const V> owner;
             std::optional<PackedAddress> completed_packed;
+            std::size_t next{};
         };
         std::vector<Visit> pending{{root_type,root,0,{}, {}}};
         // Retained declarations can contain packed values even when a later
@@ -483,13 +484,17 @@ struct NativeRecord::State {
         std::set<std::uint64_t> active, completed;
         std::set<PackedAddress> active_packed, completed_packed;
         while(!pending.empty()) {
-            auto visit = std::move(pending.back()); pending.pop_back();
+            auto &visit = pending.back();
             const auto type = visit.type; const auto *value = visit.value;
             const auto exit_key = visit.completed_reference;
-            if(exit_key) { active.erase(exit_key); completed.insert(exit_key); continue; }
+            if(exit_key) {
+                active.erase(exit_key); completed.insert(exit_key);
+                pending.pop_back(); continue;
+            }
             if (visit.completed_packed) {
                 active_packed.erase(*visit.completed_packed);
                 completed_packed.insert(*visit.completed_packed);
+                pending.pop_back();
                 continue;
             }
             if (type == packed_value_type) {
@@ -501,9 +506,9 @@ struct NativeRecord::State {
                             "packed application reference nesting exceeds declaration profile");
                     const auto [decoded_type, decoded] = unpack(*value);
                     active_packed.insert(address);
-                    pending.push_back({type, value, 0, visit.owner, address});
+                    visit.completed_packed = address;
                     pending.push_back({decoded_type, decoded.get(), 0, decoded, {}});
-                }
+                } else pending.pop_back();
                 continue;
             }
             if(type==owned_reference_type) {
@@ -512,29 +517,39 @@ struct NativeRecord::State {
                 require(target.type==ID{unsigned_value(p.at(1)),unsigned_value(p.at(2)),unsigned_value(p.at(3))},"owned application value type differs from reference");
                 require(!active.contains(key),"cyclic application value reference");
                 if(!completed.contains(key)) {
-                    active.insert(key); pending.push_back({type,value,key,visit.owner,{}});
+                    active.insert(key); visit.completed_reference = key;
                     pending.push_back({target.type,&target.value,0,{}, {}});
-                }
+                } else pending.pop_back();
                 continue;
             }
-            if(type==text_type || type==bytes_type) {(void)span(*value);continue;}
-            if(type==decimal_type) {(void)span(parts(*value).at(1));continue;}
-            if(type==exact_number_type)continue;
+            if(type==text_type || type==bytes_type) {
+                (void)span(*value); pending.pop_back(); continue;
+            }
+            if(type==decimal_type) {
+                (void)span(parts(*value).at(1)); pending.pop_back(); continue;
+            }
+            if(type==exact_number_type) { pending.pop_back(); continue; }
             const auto &d=endpoint.declarations->registry.at(type);
             if(d.kind==composite::DeclarationKind::Product) {
                 const auto &xs=parts(*value);
-                for(std::size_t i=0;i<d.factors.size();++i) {
-                    require(labels.contains(d.factors[i].key),"native product has no factor name binding");
-                    pending.push_back({d.factors[i].type,&xs.at(i),0,visit.owner,{}});
-                }
+                if(visit.next==d.factors.size()) { pending.pop_back(); continue; }
+                const auto i=visit.next++;
+                require(labels.contains(d.factors[i].key),"native product has no factor name binding");
+                const auto owner=visit.owner;
+                pending.push_back({d.factors[i].type,&xs.at(i),0,owner,{}});
             } else if(d.kind==composite::DeclarationKind::Repeated) {
-                for(const auto &x:std::get<V::Repeated>(value->data).elements)
-                    pending.push_back({d.element,&x,0,visit.owner,{}});
+                const auto &xs=std::get<V::Repeated>(value->data).elements;
+                if(visit.next==xs.size()) { pending.pop_back(); continue; }
+                const auto i=visit.next++;
+                const auto owner=visit.owner;
+                pending.push_back({d.element,&xs.at(i),0,owner,{}});
             } else if(d.kind==composite::DeclarationKind::Alternative) {
+                if(visit.next++) { pending.pop_back(); continue; }
                 const auto &a=std::get<V::Alternative>(value->data);
                 const auto i=endpoint.declarations->registry.alternative_ordinal(type,a.key);
-                pending.push_back({d.factors.at(i).type,&a.element.at(0),0,visit.owner,{}});
-            }
+                const auto owner=visit.owner;
+                pending.push_back({d.factors.at(i).type,&a.element.at(0),0,owner,{}});
+            } else pending.pop_back();
         }
     }
     std::span<const std::byte> span(const V &value) const {
