@@ -51,3 +51,31 @@ Inspect the scientific partition publication when measuring an assay's
 mathematical complex. An administrative collection publication can contain
 independent scientific archives in its original byte owners; its own source
 counts do not describe those nested complexes.
+
+## Raw import profiling
+
+The same build option supplies `gadget_raw_import_profile`. It imports a complete
+assay specification into a new directory and reports completed stages:
+
+```sh
+gadget_raw_import_profile import.rfcxs new-workspace > import.tsv
+```
+
+Stages separate matrix reading, original artifact retention, source construction,
+native series publication, study declaration and admission, workspace publication,
+and final application validation. Repeated assays and partitions produce repeated
+stage names in execution order. A stage time starts after the preceding report;
+`total` measures the complete call, including reporting. The process peak is
+cumulative and cannot be attributed to one stage's retained allocations.
+Resource-only workspaces have no matrix stages. Imports retain all original
+records, axes, support and coefficients; profiling does not select a subset.
+
+Specifications use the native record format; JSON specifications remain accepted
+through the compatibility reader. Original specification bytes are retained in
+either case.
+
+The C++ `import_assay_workspace` function returns the admitted workspace and its
+native publication. Subsequent operations can use that owner without reopening
+the output file. Existing `import_assays` callers retain their void interface.
+Both APIs accept an optional observer of completed stages. Observer exceptions
+abort the import and remove its unpublished destination.

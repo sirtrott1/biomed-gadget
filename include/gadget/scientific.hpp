@@ -2,6 +2,8 @@
 #include <gadget/compute.hpp>
 #include <gadget/io.hpp>
 #include <gadget/native_record.hpp>
+#include <functional>
+#include <string_view>
 #include <rfc/runtime/execution_policy.hpp>
 #include <rfc/storage/native_accession.hpp>
 #include <rfc/storage/native_series_prefix.hpp>
@@ -10,6 +12,7 @@
 namespace rfc::storage { class NativeAtlasSource; }
 namespace gadget {
 class CpuResources;
+class AssayWorkspace;
 // Biomedical admission over a canonical archive and explicitly pinned publication
 // declarations. Each referenced archive owns its native endpoint. Mathematical source/storage
 // and tensor ownership remain RexGraph's. Public JSON views are detached copies.
@@ -19,6 +22,10 @@ class ScientificStudy {
     explicit ScientificStudy(std::unique_ptr<State> state);
     friend class ScientificSession;
     friend void import_assays(const fs::path &, const fs::path &);
+    friend void import_assays(const fs::path &, const fs::path &,
+                              const std::function<void(std::string_view)> &);
+    friend std::shared_ptr<const AssayWorkspace> import_assay_workspace(
+        const fs::path &, const fs::path &, const std::function<void(std::string_view)> &);
     static std::shared_ptr<const ScientificStudy> admit_generated(const fs::path &,
         rfc::storage::NativeTemporalSeries history);
 

@@ -1,7 +1,9 @@
 #pragma once
 #include <gadget/scientific.hpp>
 #include <gadget/workflow.hpp>
+#include <functional>
 #include <map>
+#include <string_view>
 
 namespace gadget {
 // A portable collection of independently admitted assays and physical resources.
@@ -11,13 +13,28 @@ Json inspect_bioinformatics_file(const fs::path &specification);
 // Native physical records retain source spans and typed source-grade columns.
 NativeRecord inspect_bioinformatics_record(const fs::path &specification);
 void import_assays(const fs::path &specification, const fs::path &destination);
+// Report completed import stages. An observer exception aborts the import and
+// removes its unpublished destination, as for other admission failures.
+using AssayImportObserver = std::function<void(std::string_view)>;
+void import_assays(const fs::path &specification, const fs::path &destination,
+                   const AssayImportObserver &observer);
+class AssayWorkspace;
+// Return the admitted workspace and its immutable native publication. Source
+// owners used during import remain available for subsequent analyses.
+std::shared_ptr<const AssayWorkspace> import_assay_workspace(
+    const fs::path &specification, const fs::path &destination,
+    const AssayImportObserver &observer = {});
 class AssayWorkspace {
     struct State;
     std::unique_ptr<State> state_;
     using AdmittedSources =
         std::map<std::string, std::vector<std::shared_ptr<const ScientificStudy>>>;
     AssayWorkspace(const fs::path &manifest, AdmittedSources sources);
+    AssayWorkspace(const fs::path &manifest, AdmittedSources sources, NativeRecord publication);
     friend void import_assays(const fs::path &, const fs::path &);
+    friend void import_assays(const fs::path &, const fs::path &, const AssayImportObserver &);
+    friend std::shared_ptr<const AssayWorkspace> import_assay_workspace(
+        const fs::path &, const fs::path &, const AssayImportObserver &);
     NativeRecord execute_coverage(const NativeRecord &, std::shared_ptr<CpuResources>,
         std::optional<std::uint64_t> source_namespace = {}) const;
     Json materialize_coverage(const NativeRecord &, const fs::path &,

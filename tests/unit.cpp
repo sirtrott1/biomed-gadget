@@ -62,7 +62,15 @@ int main() {
               "small exact p-value");
         check(exact_decimal("-0.125") == numeric::rational(-1, 8), "exact decimal sign");
         check(exact_decimal("+12e2") == 1200, "decimal exponent");
-        for (const auto &s : {"", "nan", "inf", "1x", "1e", "1e9000", ".", "1.2.3"})
+        numeric::Integer wide_power;
+        mpz_ui_pow_ui(wide_power.get_mpz_t(), 10, 9000);
+        check(exact_decimal("1e9000") == numeric::Rational(wide_power) &&
+                  exact_decimal("-1e-9000") == numeric::Rational(-1, wide_power) &&
+                  exact_decimal(std::string(9000, '0') + "1") == 1,
+              "valid decimal rejected by a fixed precision ceiling");
+        check(exact_decimal("-12.00e2") == -1200 && exact_decimal("0e9000") == 0,
+              "integer decimal realization changed");
+        for (const auto &s : {"", "nan", "inf", "1x", "1e", "1e184467440737095516160", ".", "1.2.3"})
             rejects([&] { (void)exact_decimal(s); }, "invalid decimal accepted");
         auto csv = gadget::read_csv("id,text\r\na,\"quoted, \"\"word\"\"\nnext\"\r\n");
         check(csv.rows.size() == 1 && csv.get(csv.rows[0], "text") == "quoted, \"word\"\nnext",

@@ -25,6 +25,23 @@ int main(int argc,char **argv) {
     field.tensor=numeric::SparseRationalTensor(numeric::IndexDomain::linear(3),
         numeric::StructuralSupport::sparse(3,{0,2}),numeric::SparseRationalVector(3,{{2,numeric::Rational{-5,13}}}));
     endpoint.tensors.push_back(field);
+    endpoint.carriers.push_back({881, storage::TemporalCarrierKind::SourceGrade, {0}, {}, 0,
+                                  numeric::IndexDomain::linear(1)});
+    endpoint.carriers.push_back({882, storage::TemporalCarrierKind::SourceGrade, {1}, {}, 0,
+                                  numeric::IndexDomain::linear(1)});
+    storage::TemporalTensor measured;
+    measured.key = 891;
+    measured.role = storage::TemporalTensorRole::Field;
+    measured.output = 881;
+    measured.tensor = numeric::SparseRationalTensor(
+        numeric::IndexDomain::linear(1), numeric::StructuralSupport::full(1),
+        numeric::SparseRationalVector(1, {{0, numeric::Rational{-7, 5}}}));
+    endpoint.tensors.push_back(measured);
+    measured.key = 892;
+    measured.output = 882;
+    measured.tensor = numeric::SparseRationalTensor::zero(
+        numeric::IndexDomain::linear(1), numeric::StructuralSupport::full(1));
+    endpoint.tensors.push_back(measured);
     const auto original=storage::encode_rfcx(endpoint.source).bytes;
     auto collided=endpoint;
     storage::TemporalDeclarationState retained_declarations;
@@ -70,6 +87,16 @@ int main(int argc,char **argv) {
     const auto frame=storage::decode_temporal_segment(annotation_history.segment_bytes(0),native_data_limits().temporal);
     check(frame.source.grades.empty() && frame.tensors.empty() && frame.carriers.empty() && frame.declarations.has_value(),
           "annotation redundantly published its mathematical source");
+    const auto origin_publication = origin.tail();
+    for (const auto &field : origin_publication.endpoint().tensors)
+        check(!field.tensor.values().materialized_entries(),
+              "declaration annotation materialized an unchanged source field");
+    const auto reference_frame = storage::make_temporal_segment(
+        origin_publication.endpoint(), *annotated.endpoint(), {}, {},
+        storage::RelationalCodeEncoding::Automatic, {}, frame.declarations);
+    check(storage::encode_temporal_segment(reference_frame) ==
+              storage::encode_temporal_segment(frame),
+          "declared annotation differs from complete target comparison");
     check(annotated.endpoint()==annotation_history.tail().pin(),
           "record directory copied an actual native publication");
     annotated.write(directory/"annotated.bin");

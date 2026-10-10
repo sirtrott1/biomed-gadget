@@ -231,10 +231,8 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (command == "import-assays") {
-            gadget::import_assays(required("--spec"), required("--out"));
-            gadget::AssayWorkspace workspace(gadget::fs::path(required("--out")) /
-                                             "workspace.json");
-            std::cout << workspace.catalog().dump() << '\n';
+            const auto workspace = gadget::import_assay_workspace(required("--spec"), required("--out"));
+            std::cout << workspace->catalog().dump() << '\n';
             return 0;
         }
         if (command == "pipelines") {

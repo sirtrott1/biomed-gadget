@@ -655,7 +655,19 @@ NativeRecord NativeRecord::create_owned(const NativeRecordValue &value,std::uint
             :std::vector<composite::DeclarationMap>{};
         auto update=storage::make_temporal_declaration_update(base.endpoint().declarations,
             endpoint.declarations,std::move(maps));
-        history->append_target(endpoint,{},{},storage::RelationalCodeEncoding::Automatic,{},std::move(update));
+        // This operation changes declarations only. Publish that operation
+        // directly; a general target difference would compute field transport
+        // and innovations for numerical channels that did not change.
+        storage::TemporalSegment annotation;
+        annotation.base_sequence = base.endpoint().sequence;
+        annotation.target_sequence = endpoint.sequence;
+        annotation.base_source_hash = storage::encode_rfcx(base.endpoint().source).stats.payload_hash;
+        annotation.target_source_hash = annotation.base_source_hash;
+        annotation.base_endpoint_hash = storage::temporal_endpoint_hash(base.endpoint());
+        annotation.target_endpoint_hash = storage::temporal_endpoint_hash(endpoint);
+        annotation.source = storage::make_temporal_source_patch(base.endpoint().source, endpoint.source);
+        annotation.declarations = std::move(update);
+        history->append(annotation);
         const auto tail=history->tail();
         auto state=std::make_shared<const State>(tail,std::move(sources),std::move(*history));
         return {state,state->root_type,state->root};

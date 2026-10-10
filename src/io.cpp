@@ -9,6 +9,7 @@
 #include <openssl/rand.h>
 #include <sstream>
 #include <stdexcept>
+#include <rfc/machine/checked_size.hpp>
 
 namespace gadget {
 std::recursive_mutex &Json::mutex() {
@@ -242,7 +243,7 @@ Rational exact_rational(const std::string &literal) {
 }
 Rational exact_decimal(const std::string &input) {
     auto s = trim(input);
-    if (s.empty() || s.size() > 4096)
+    if (s.empty() || s.size() > source_byte_limit())
         throw std::invalid_argument("missing or oversized exact decimal");
     std::size_t i = 0;
     bool negative = false;
@@ -251,7 +252,7 @@ Rational exact_decimal(const std::string &input) {
         ++i;
     }
     std::string digits;
-    long fractional = 0;
+    std::size_t fractional = 0;
     bool point = false;
     for (; i < s.size(); ++i) {
         char c = s[i];
@@ -266,38 +267,42 @@ Rational exact_decimal(const std::string &input) {
     }
     if (digits.empty())
         throw std::invalid_argument("invalid decimal: " + s);
-    long exponent = 0;
+    std::size_t exponent = 0;
+    bool eneg = false;
     if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
         ++i;
-        bool eneg = false;
         if (i < s.size() && (s[i] == '+' || s[i] == '-')) {
             eneg = s[i] == '-';
             ++i;
         }
         std::size_t begin = i;
         for (; i < s.size() && s[i] >= '0' && s[i] <= '9'; ++i) {
-            exponent = exponent * 10 + s[i] - '0';
-            if (exponent > 4096)
-                throw std::invalid_argument("decimal exponent budget exceeded");
+            exponent = rfc::machine::checked_size_add(
+                rfc::machine::checked_size_mul(exponent, 10), s[i] - '0');
         }
         if (i == begin)
             throw std::invalid_argument("invalid decimal exponent");
-        if (eneg)
-            exponent = -exponent;
     }
     if (i != s.size())
         throw std::invalid_argument("invalid decimal: " + s);
-    rfc::numeric::Integer numerator(digits, 10), denominator = 1, power = 1;
-    const long scale = fractional - exponent;
-    if (std::abs(scale) > 4096)
-        throw std::invalid_argument("decimal scale budget exceeded");
-    mpz_ui_pow_ui(power.get_mpz_t(), 10, static_cast<unsigned long>(std::abs(scale)));
-    if (scale >= 0)
+    const bool denominator_power = eneg || fractional >= exponent;
+    const auto scale = eneg ? rfc::machine::checked_size_add(fractional, exponent)
+                           : denominator_power ? fractional - exponent : exponent - fractional;
+    if (scale >= source_byte_limit() || scale > std::numeric_limits<unsigned long>::max())
+        throw std::invalid_argument("decimal power exceeds its addressable representation");
+    rfc::numeric::Integer numerator(digits, 10);
+    if (negative)
+        numerator = -numerator;
+    if (numerator == 0)
+        return Rational{0};
+    if (scale == 0)
+        return Rational(numerator);
+    rfc::numeric::Integer denominator = 1, power = 1;
+    mpz_ui_pow_ui(power.get_mpz_t(), 10, static_cast<unsigned long>(scale));
+    if (denominator_power)
         denominator = power;
     else
         numerator *= power;
-    if (negative)
-        numerator = -numerator;
     Rational value(numerator, denominator);
     value.canonicalize();
     return value;

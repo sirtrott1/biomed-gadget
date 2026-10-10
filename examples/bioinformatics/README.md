@@ -33,7 +33,10 @@ python3 examples/bioinformatics/prepare.py \
   --population 'The specimens in the supplied observation dictionary' \
   --carrier features --implicit-entries measured_zero --arithmetic exact_decimal \
   --out data/import
-build/gadget/gadget import-assays --spec data/import/import.json --out data/workspace
+build/presets/cpu/gadget native-record \
+  --input data/import/import.json --out data/import/import.rfcxs
+build/presets/cpu/gadget import-assays \
+  --spec data/import/import.rfcxs --out data/workspace
 ```
 
 A sparse omitted value is a measured zero only when the caller declares that

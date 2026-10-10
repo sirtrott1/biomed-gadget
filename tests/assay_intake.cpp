@@ -92,7 +92,38 @@ int main(int argc, char **argv) {
         for (const auto *name : {"features", "observations"}) assay.set(name, spec.at(name));
         import.at("assays").push(assay);
         write_text(root / "import.json", import.dump());
-        import_assays(root / "import.json", root / "whole");
+        std::vector<std::string> stages;
+        const auto imported = import_assay_workspace(root / "import.json", root / "whole",
+            [&](std::string_view stage) { stages.emplace_back(stage); });
+        check(stages.front() == "specification" && stages.back() == "workspace_validation",
+              "import stage boundaries missing");
+        check(imported->study("x")->digest() ==
+                  AssayWorkspace(root / "whole/workspace.rfcxs").study("x")->digest(),
+              "returned import owner differs from independent native replay");
+        check(imported->native_publication().encode() ==
+                  rfc::storage::read_file_exact(root / "whole/workspace.rfcxs",
+                                                native_data_limits().max_archive_bytes),
+              "returned native publication differs from its complete output bytes");
+        bool aborted = false;
+        try {
+            import_assays(root / "import.json", root / "aborted", [](std::string_view stage) {
+                if (stage == "matrix_read") throw std::runtime_error("observer aborted import");
+            });
+        } catch (const std::runtime_error &) { aborted = true; }
+        check(aborted && !fs::exists(root / "aborted"),
+              "observer failure retained an unpublished workspace");
+        admit_record_view(import).write(root / "import.rfcxs");
+        const auto native_imported = import_assay_workspace(root / "import.rfcxs", root / "native-import");
+        check(rfc::storage::read_file_exact(root / "native-import/assays/0/partitions/0/source.rfcxs",
+                                       native_data_limits().max_archive_bytes) ==
+                  rfc::storage::read_file_exact(root / "whole/assays/0/partitions/0/source.rfcxs",
+                                           native_data_limits().max_archive_bytes),
+              "native import declaration changed the complete numerical source");
+        check(rfc::storage::read_file_exact(root / "native-import/import-spec.rfcxs",
+                                       native_data_limits().max_archive_bytes) ==
+                  rfc::storage::read_file_exact(root / "import.rfcxs", native_data_limits().max_archive_bytes) &&
+                  native_imported->study("x")->endpoint()->tensors[0].tensor.state(2) == Rational{-2},
+              "native declaration bytes or exact signed values changed");
         const auto publication=NativeRecord::read(root/"whole/assays/0/partitions/0/study.rfcxs");
         check(publication.at("schema").text()=="gadget.biomedical.native.v2" &&
               publication.at("history").at("kind").text()=="publication_prefix",
@@ -111,7 +142,7 @@ int main(int argc, char **argv) {
         try {ScientificStudy altered(NativeRecord::from_history(corrupt));}
         catch(const std::exception &) {refused=true;}
         check(refused,"annotation was allowed to change its bound field data");
-        const auto whole_study=AssayWorkspace(root / "whole/workspace.json").study("x");
+        const auto whole_study=imported->study("x");
         const auto source_tail=whole_study->native_history()->tail();
         check(whole_study->endpoint()==source_tail.pin(),
               "numerical execution uses a copied or later annotation endpoint");

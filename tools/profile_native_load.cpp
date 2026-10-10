@@ -1,3 +1,4 @@
+#include "profile_process.hpp"
 #include <gadget/native_record.hpp>
 #include <rfc/machine/checked_size.hpp>
 #include <rfc/storage/mapped_file.hpp>
@@ -17,39 +18,11 @@
 
 namespace {
 using namespace rfc;
-using Clock = std::chrono::steady_clock;
+using gadget::profiling::Clock;
+using gadget::profiling::process_memory;
+using gadget::profiling::phase;
 void require(bool value, const char *message) {
     if (!value) throw std::invalid_argument(message);
-}
-struct ProcessMemory {
-    std::optional<std::size_t> resident, peak;
-};
-ProcessMemory process_memory() {
-    ProcessMemory result;
-    std::ifstream input("/proc/self/status");
-    std::string line;
-    while (std::getline(input, line)) {
-        const auto read = [&]() {
-            std::istringstream value(line.substr(line.find(':') + 1));
-            std::size_t kib{};
-            std::string unit;
-            require(static_cast<bool>(value >> kib >> unit) && unit == "kB",
-                    "invalid process memory observation");
-            return machine::checked_size_mul(kib, 1024);
-        };
-        if (line.starts_with("VmRSS:")) result.resident = read();
-        if (line.starts_with("VmHWM:")) result.peak = read();
-    }
-    return result;
-}
-void phase(std::string_view name, Clock::time_point start) {
-    const auto seconds = std::chrono::duration<double>(Clock::now() - start).count();
-    const auto memory = process_memory();
-    std::cout << "phase\t" << name << '\t' << std::setprecision(9) << seconds << '\t';
-    if (memory.resident) std::cout << *memory.resident; else std::cout << "unavailable";
-    std::cout << '\t';
-    if (memory.peak) std::cout << *memory.peak; else std::cout << "unavailable";
-    std::cout << std::endl;
 }
 using Counts = std::map<std::string, std::size_t>;
 void add(Counts &counts, const std::string &key, std::size_t value) {

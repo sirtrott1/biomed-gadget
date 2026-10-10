@@ -129,7 +129,8 @@ RelationEvidence relation_evidence(const Json &declaration) {
 Json make_packet(const fs::path &destination, Matrix &matrix, const Json &spec,
                  const Json &design, std::size_t begin, std::size_t end,
                  std::uint64_t namespace_key, const Json &relation_data,
-                 std::vector<NativeTemporalSeries> &produced) {
+                 std::vector<NativeTemporalSeries> &produced,
+                 const AssayImportObserver &observer) {
     const bool by_features = spec.at("carrier").text() == "features";
     const auto &axis = by_features ? matrix.features : matrix.observations;
     const auto &field_axis = by_features ? matrix.observations : matrix.features;
@@ -459,10 +460,15 @@ Json make_packet(const fs::path &destination, Matrix &matrix, const Json &spec,
             fields.push(meaning);
         }
     }
+    if (observer)
+        observer("source_construction");
     fs::create_directories(destination);
     {
         const NativeTemporalSeries series(endpoint, namespace_key,
                                           source_codec_limits(source_byte_limit()));
+        // The immutable publication owns the complete admitted coefficient
+        // lanes. Release the producer's private expanded field storage.
+        std::vector<TemporalTensor>().swap(endpoint.tensors);
         publish_file_exact(destination / "source.rfcxs", FilePublication::CreateNew,
                            [&](std::ostream &output) {
                                stream_native_series(series, [&](auto chunk) {
@@ -471,6 +477,8 @@ Json make_packet(const fs::path &destination, Matrix &matrix, const Json &spec,
                            });
         produced.push_back(series);
     }
+    if (observer)
+        observer("series_publication");
     auto declaration = Json::object();
     declaration.set("schema", Json::string("gadget.scientific.study.v1"));
     declaration.set("id", spec.at("id"));
@@ -533,6 +541,8 @@ Json make_packet(const fs::path &destination, Matrix &matrix, const Json &spec,
     packet.set("begin", cardinality(begin));
     packet.set("end", cardinality(end));
     packet.set("carrier_ids", string_array(axis.ids, begin, end));
+    if (observer)
+        observer("study_declaration");
     return packet;
 }
 Json unwrap(const Json &manifest) {
@@ -603,19 +613,33 @@ NativeRecord admit_native_workspace(const fs::path &root,const Json &manifest,
         {"manifest",import_record_view(manifest)},{"originals",N(std::move(originals))},
         {"publications",N(std::move(publications))}}}),new_native_record_namespace(),std::move(raw));
 }
-void publish_native_workspace(const fs::path &root,const Json &manifest,
+NativeRecord publish_native_workspace(const fs::path &root,const Json &manifest,
                               const std::map<std::string,std::vector<std::shared_ptr<const ScientificStudy>>> &sources={}) {
-    admit_native_workspace(root,manifest,sources).write(root/"workspace.rfcxs");
+    auto publication = admit_native_workspace(root,manifest,sources);
+    publication.write(root/"workspace.rfcxs");
+    return publication;
 }
 } // namespace
 void import_assays(const fs::path &specification, const fs::path &destination) {
+    import_assays(specification, destination, {});
+}
+void import_assays(const fs::path &specification, const fs::path &destination,
+                   const AssayImportObserver &observer) {
+    (void)import_assay_workspace(specification, destination, observer);
+}
+std::shared_ptr<const AssayWorkspace> import_assay_workspace(
+    const fs::path &specification, const fs::path &destination,
+    const AssayImportObserver &observer) {
     using namespace assay_detail;
     require(fs::is_regular_file(fs::symlink_status(specification)),
             "assay specification must be regular");
     require(!fs::exists(destination), "assay destination already exists");
     const auto path = fs::canonical(specification), root = path.parent_path();
     const auto bytes = read_text(path);
-    const auto spec = Json::parse(bytes);
+    const auto raw_spec = std::as_bytes(std::span(bytes.data(), bytes.size()));
+    const bool native_spec = detect_native_data(raw_spec) == NativeDataFormat::TemporalSeries;
+    const auto spec = static_cast<Json>(decode_record(raw_spec));
+    const auto import_spec_path = native_spec ? "import-spec.rfcxs" : "import-spec.json";
     members(spec, {"schema", "id", "design", "assays", "resources", "links"});
     require(spec.at("schema").text() == "gadget.assays.import.v1", "assay import schema");
     (void)text(spec.at("id"));
@@ -635,13 +659,17 @@ void import_assays(const fs::path &specification, const fs::path &destination) {
     fs::create_directories(fs::absolute(destination).parent_path());
     require(fs::create_directory(destination), "workspace creation conflict");
     try {
-        write_text(destination / "import-spec.json", bytes);
+        write_text(destination / import_spec_path, bytes);
+        if (observer)
+            observer("specification");
         for (std::size_t a = 0; a < assays.size(); ++a) {
             auto item = assays.at(a);
             admit_matrix_spec(item);
             const auto id = text(item.at("id"));
             require(assay_ids.insert(id).second, "duplicate assay identity");
             auto matrix = read_matrix(root, item);
+            if (observer)
+                observer("matrix_read");
             observations.emplace(id, std::set<std::string>(matrix.observations.ids.begin(),
                                                            matrix.observations.ids.end()));
             const auto dir = "assays/" + std::to_string(a);
@@ -688,6 +716,8 @@ void import_assays(const fs::path &specification, const fs::path &destination) {
             const auto chunk = relation_data.has("relations")
                                    ? carrier.ids.size()
                                    : std::min(requested_chunk, carrier.ids.size());
+            if (observer)
+                observer("originals");
             auto packets = Json::array();
             const auto base = key(item.at("source_namespace"));
             for (std::size_t begin = 0, index = 0; begin < carrier.ids.size();
@@ -698,7 +728,8 @@ void import_assays(const fs::path &specification, const fs::path &destination) {
                 const auto rel = dir + "/partitions/" + std::to_string(index);
                 auto packet = make_packet(destination / rel, matrix, item, design, begin,
                                           std::min(begin + chunk, carrier.ids.size()), base + index,
-                                          relation_data,produced_histories[item.at("id").text()]);
+                                          relation_data,produced_histories[item.at("id").text()],
+                                          observer);
                 packet.set("path", Json::string(rel + "/study.json"));
                 packets.push(packet);
             }
@@ -750,6 +781,8 @@ void import_assays(const fs::path &specification, const fs::path &destination) {
             item.set("inspection", inspected);
             admitted_resources.push(item);
         }
+        if (observer)
+            observer("resources");
         std::set<std::string> link_ids;
         for (std::size_t i = 0; i < links.size(); ++i) {
             const auto link = links.at(i);
@@ -781,11 +814,13 @@ void import_assays(const fs::path &specification, const fs::path &destination) {
             }
             produced_histories.erase(id);
         }
+        if (observer)
+            observer("study_admission");
         auto manifest = Json::object();
         manifest.set("schema", Json::string("gadget.assays.workspace.v1"));
         manifest.set("id", spec.at("id"));
         manifest.set("design", spec.at("design"));
-        manifest.set("import_spec", file_record("import-spec.json", bytes));
+        manifest.set("import_spec", file_record(import_spec_path, bytes));
         // Retain the original declaration and a distinct replay declaration
         // pointing only to artifacts inside this portable workspace.
         auto replay = Json::parse(spec.dump());
@@ -826,8 +861,14 @@ void import_assays(const fs::path &specification, const fs::path &destination) {
         manifest.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
         manifest = seal(manifest, "manifest_sha256");
         write_text(destination / "workspace.json", manifest.dump() + "\n");
-        publish_native_workspace(destination,manifest,admitted_sources);
-        AssayWorkspace verify(destination / "workspace.rfcxs", std::move(admitted_sources));
+        auto publication = publish_native_workspace(destination,manifest,admitted_sources);
+        if (observer)
+            observer("workspace_publication");
+        auto workspace = std::shared_ptr<const AssayWorkspace>(new AssayWorkspace(
+            destination / "workspace.rfcxs", std::move(admitted_sources), std::move(publication)));
+        if (observer)
+            observer("workspace_validation");
+        return workspace;
     } catch (...) {
         fs::remove_all(destination);
         throw;
@@ -847,11 +888,13 @@ struct AssayWorkspace::State {
     mutable std::map<std::tuple<std::string, std::size_t, CpuResources *>,
                      std::shared_ptr<ScientificSession>>
         novelty_sessions;
-    explicit State(const fs::path &path, AssayWorkspace::AdmittedSources supplied = {}) {
+    explicit State(const fs::path &path, AssayWorkspace::AdmittedSources supplied = {},
+                   std::optional<NativeRecord> admitted_publication = {}) {
         require(fs::is_regular_file(fs::symlink_status(path)),
                 "workspace manifest must be regular");
         root = fs::canonical(path).parent_path();
-        this->manifest = read_record(path);
+        this->manifest = admitted_publication ? RetainedRecord(std::move(*admitted_publication))
+                                             : read_record(path);
         if(this->manifest.has("schema") && (this->manifest.at("schema").text()=="gadget.assay.workspace.native.v1" || this->manifest.at("schema").text()=="gadget.assay.workspace.native.v2")) {
             publication=this->manifest.native();this->manifest=publication->at("manifest");
             const auto originals=publication->at("originals");
@@ -1005,6 +1048,9 @@ struct AssayWorkspace::State {
 AssayWorkspace::AssayWorkspace(const fs::path &path) : state_(std::make_unique<State>(path)) {}
 AssayWorkspace::AssayWorkspace(const fs::path &path, AdmittedSources sources)
     : state_(std::make_unique<State>(path, std::move(sources))) {}
+AssayWorkspace::AssayWorkspace(const fs::path &path, AdmittedSources sources,
+                               NativeRecord publication)
+    : state_(std::make_unique<State>(path, std::move(sources), std::move(publication))) {}
 AssayWorkspace::~AssayWorkspace() = default;
 const NativeRecord &AssayWorkspace::native_publication() const {return state_->publication.value();}
 void AssayWorkspace::write_native(const fs::path &path) const {native_publication().write(path);}

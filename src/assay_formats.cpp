@@ -238,6 +238,24 @@ Matrix read_matrix(const fs::path &root, const Json &spec) {
         const auto nnz = matrix_unsigned(shape[2]);
         require(matrix_unsigned(shape[0]) == nr && matrix_unsigned(shape[1]) == nc,
                 "Matrix Market shape differs from axes");
+        // Count actual records in the same immutable input before reserving
+        // column storage. No coefficient or support is inferred by this pass.
+        auto census = records;
+        std::vector<std::size_t> column_counts(nc);
+        for (std::uint64_t n = 0; n < nnz; ++n) {
+            require(census.next(record), "Matrix Market entry count");
+            const auto fields = matrix_tokens(record);
+            const auto row = matrix_unsigned(fields[0]), column = matrix_unsigned(fields[1]);
+            require(row && row <= nr && column && column <= nc,
+                    "Matrix Market one-based coordinate range");
+            column_counts[column - 1] = rfc::machine::checked_size_add(
+                column_counts[column - 1], 1);
+        }
+        require(!census.next(record), "Matrix Market entry count");
+        for (std::size_t c = 0; c < nc; ++c) {
+            entries[c].reserve(column_counts[c]);
+            reported[c].reserve(column_counts[c]);
+        }
         for (std::uint64_t n = 0; n < nnz; ++n) {
             require(records.next(record), "Matrix Market entry count");
             const auto f = matrix_tokens(record);

@@ -46,7 +46,7 @@ jobs:
       - name: Configure
         env:
           CXX: ${{ matrix.compiler }}
-        run: cmake --preset cpu -DREXGRAPH_SOURCE_DIR="$RUNNER_TEMP/sdk/rexgraphcpp"
+        run: cmake --preset cpu -DREXGRAPH_SOURCE_DIR="$RUNNER_TEMP/sdk/rexgraph-cpp/rexgraphcpp"
       - name: Build
         run: |
           cmake --build --preset cpu --target gadget_native --parallel 1
@@ -54,7 +54,7 @@ jobs:
       - name: Test
         run: ctest --preset cpu --output-junit contracts.xml
       - name: Verify dependency inputs
-        run: python3 tools/check_dependency.py --build build/presets/cpu --rexgraph "$RUNNER_TEMP/sdk/rexgraphcpp" --report build/presets/cpu/dependency.json
+        run: python3 tools/check_dependency.py --build build/presets/cpu --rexgraph "$RUNNER_TEMP/sdk/rexgraph-cpp/rexgraphcpp" --report build/presets/cpu/dependency.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
