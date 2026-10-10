@@ -38,7 +38,8 @@ class AssayWorkspace {
     NativeRecord execute_coverage(const NativeRecord &, std::shared_ptr<CpuResources>,
         std::optional<std::uint64_t> source_namespace = {}) const;
     Json materialize_coverage(const NativeRecord &, const fs::path &,
-        std::shared_ptr<CpuResources>) const;
+        std::shared_ptr<CpuResources>,
+        std::shared_ptr<const ScientificStudy> *retained = nullptr) const;
     Json replay_native_derivation(const std::string &, const fs::path &,
         std::shared_ptr<CpuResources>) const;
 

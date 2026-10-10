@@ -239,7 +239,8 @@ Json AssayWorkspace::materialize_record(const NativeRecord &request, const fs::p
     return materialize(render_record_view(request), destination, std::move(resources));
 }
 Json AssayWorkspace::materialize_coverage(const NativeRecord &request, const fs::path &destination,
-                                          std::shared_ptr<CpuResources> resources) const {
+                                          std::shared_ptr<CpuResources> resources,
+                                          std::shared_ptr<const ScientificStudy> *retained) const {
     const auto view = render_record_view(request);
     members(view, {"schema", "id", "source_namespace", "design", "recipe", "channel"});
     require(request.at("schema").text() == "gadget.assays.materialize.v1",
@@ -268,6 +269,8 @@ Json AssayWorkspace::materialize_coverage(const NativeRecord &request, const fs:
                Json::string(native_declaration_digest(collection.at("manifest"))));
     result.set("capabilities", bioinformatics_capabilities());
     fs::rename(stage, destination);
+    if (retained)
+        *retained = std::move(admitted);
     return result;
 }
 Json AssayWorkspace::replay_native_derivation(const std::string &id, const fs::path &destination,
@@ -296,16 +299,17 @@ Json AssayWorkspace::replay_native_derivation(const std::string &id, const fs::p
     AssayWorkspace generating(stage / "original-workspace.rfcxs");
     require(generating.digest() == producer.at("result").at("source_digest").text(),
             "generating workspace binding differs");
-    generating.materialize_record(request, stage / "replayed", std::move(resources));
-    AssayWorkspace regenerated(stage / "replayed/workspace.rfcxs");
-    const auto actual = regenerated.study(request.at("id").text())->producer_publication();
+    std::shared_ptr<const ScientificStudy> regenerated;
+    generating.materialize_coverage(request, stage / "replayed", std::move(resources),
+                                   &regenerated);
+    const auto actual = regenerated->producer_publication();
     equal_source(producer, actual);
     auto receipt = Json::object();
     receipt.set("schema", Json::string("gadget.assay.derivation.replay.v2"));
     receipt.set("status", Json::string("PASS"));
     receipt.set("source_digest", Json::string(original->digest()));
     receipt.set("replayed_source_digest",
-                Json::string(regenerated.study(request.at("id").text())->digest()));
+                Json::string(regenerated->digest()));
     receipt.set("source_cells", original->source_index().at("catalog_sections").at("cells"));
     receipt.set("source_occurrences",
                 original->source_index().at("catalog_sections").at("occurrences"));

@@ -665,7 +665,8 @@ NativeRecord NativeRecord::create_owned(const NativeRecordValue &value,std::uint
         annotation.target_source_hash = annotation.base_source_hash;
         annotation.base_endpoint_hash = storage::temporal_endpoint_hash(base.endpoint());
         annotation.target_endpoint_hash = storage::temporal_endpoint_hash(endpoint);
-        annotation.source = storage::make_temporal_source_patch(base.endpoint().source, endpoint.source);
+        annotation.source.target_grade_count =
+            static_cast<std::uint32_t>(base.endpoint().source.grade_count());
         annotation.declarations = std::move(update);
         history->append(annotation);
         const auto tail=history->tail();

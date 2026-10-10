@@ -83,4 +83,8 @@ run(gadget, 'derive-assays', '--workspace', workspace, '--request', materialize,
     '--out', root/'derived')
 derived_workspace = root/'derived/workspace.rfcxs'
 run(verifier, '--assay', 'coverage', derived_workspace, bed, workspace, materialize)
+replayed = root/'replayed'
+run(gadget, 'replay-derivation', '--workspace', derived_workspace, '--assay', 'coverage',
+    '--out', replayed)
+run(verifier, '--assay', 'coverage', replayed/'workspace.rfcxs', bed, workspace, materialize)
 print('Complete contig separation, source multiplicity, supported zeros and provenance PASS')
