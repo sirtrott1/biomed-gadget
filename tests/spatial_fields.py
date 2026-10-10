@@ -126,7 +126,21 @@ assert [Q(row['value']['rational']) for row in isolated] == [Q(0)]
 program = native('chain-sequence', dict(schema='gadget.scientific.sequence.v1', assay='geometry',
     context_template=dict(fields=['all.g1', 'all.g2'], methods=['local_sections', 'green_action', 'hodge'],
                           restriction='scalar_identity', metric='identity', green_lambda='1')))
-run(sequence, workspace, program, folder / 'sequence.rfcxs')
+profiled = run(sequence, workspace, program, folder / 'sequence.rfcxs', '--profile')
+phases = [line.split('\t') for line in profiled.stdout.splitlines() if line.startswith('phase\t')]
+assert len(phases) == len({row[1] for row in phases})
+assert all(len(row) == 5 and float(row[2]) >= 0 for row in phases)
+assert {'workspace', 'study_admission', 'query_planning', 'validation', 'execution_and_encoding',
+        'composite_values', 'declaration_channels', 'native_freeze', 'record_bindings', 'native_write', 'total'} <= {row[1] for row in phases}
+answers = json.loads(run(gadget, 'record-view', '--input', folder / 'sequence.rfcxs').stdout)['result']['answers']
+authored = native('chain-authored-sequence', dict(schema='gadget.scientific.sequence.v1', assay='geometry',
+    queries=[dict(id=row['id'], query=row['certificate']['query']) for row in answers]))
+run(sequence, workspace, authored, folder / 'authored-sequence.rfcxs')
+assert json.loads(run(gadget, 'record-view', '--input', folder / 'authored-sequence.rfcxs').stdout)['result']['answers'] == answers
+duplicate = native('chain-duplicate-sequence', dict(schema='gadget.scientific.sequence.v1', assay='geometry',
+    queries=[dict(id='repeated', query=row['certificate']['query']) for row in answers]))
+run(sequence, workspace, duplicate, folder / 'refused-sequence.rfcxs', success=False)
+assert not (folder / 'refused-sequence.rfcxs').exists()
 verified = run(section_verifier, folder / 'sequence.rfcxs', workspace, 'geometry', folder / 'summary.tsv')
 assert 'sections\t8\n' in verified.stdout and 'Green_identities\t8\n' in verified.stdout
 old = dict(relations=[dict(id=name, grade=1, type='authored.branch', meaning='Original multiway observation',

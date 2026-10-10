@@ -49,6 +49,32 @@ Hodge actions, metric adjoints and shifted Green actions. For other stalks,
 restrictions, grades or metrics, provide complete individual scientific queries
 through `queries`. All requests are validated before execution.
 
+The template keeps ordered context, field and method bindings, and constructs
+each query when visited. It does not retain the expanded query collection.
+After validation, each complete answer is encoded immediately into a native
+packed collection. The output still contains every certificate, its original
+request and the source publication. Both authored and template requests use the
+same scientific session and native result reader.
+
+Append `--profile` to report tab separated phase times and current and peak
+resident bytes:
+
+```sh
+build/presets/cpu/gadget_scientific_sequence \
+  workspace.rfcxs sequence.rfcxs answers.rfcxs --profile > phases.tsv
+```
+
+Phases separate workspace admission, query planning, validation, execution with
+immediate encoding, declaration assembly, canonical freezing, record binding
+validation and file writing. Execution and encoding occur within composite
+value construction. `execution_and_encoding` reports that producer's completed
+work; the following `composite_values` phase measures its remaining assembly.
+Phase intervals are consecutive. `total` covers those same intervals and
+precedes object destruction. Use an external process measurement for complete
+elapsed time.
+Linux memory observations use `/proc/self/status`; other systems report
+`unavailable`. Peak memory is cumulative for the process.
+
 Fields may restrict from their declared context to an explicitly selected block
 only when the native carrier inclusion is valid. Required missing measurements
 are rejected. Supported zeros remain measurements.

@@ -3,12 +3,42 @@
 #include <rfc/core/builder.hpp>
 #include <rfc/storage/native_series_prefix.hpp>
 #include <iostream>
+#include <algorithm>
 
 using namespace gadget;
 using namespace rfc;
 namespace {
 void check(bool ok,const char *message) {if(!ok)throw std::runtime_error(message);}
 template<class F>void rejects(F &&f) {bool threw=false;try{f();}catch(const std::exception &){threw=true;}check(threw,"invalid native record admitted");}
+void equal_value(const NativeRecord &a, const NativeRecord &b) {
+    check(a.kind() == b.kind(), "native value constructor changed");
+    switch (a.kind()) {
+    case NativeRecordKind::Null: break;
+    case NativeRecordKind::Boolean: check(a.boolean() == b.boolean(), "Boolean changed"); break;
+    case NativeRecordKind::Integer: check(a.integer() == b.integer(), "Integer changed"); break;
+    case NativeRecordKind::Rational: check(a.rational() == b.rational(), "Rational changed"); break;
+    case NativeRecordKind::ExactNumber:
+        check(a.rational() == b.rational() && a.approximate_view() == b.approximate_view(), "exact number changed"); break;
+    case NativeRecordKind::Decimal:
+        check(a.rational() == b.rational() && a.text() == b.text(), "decimal changed"); break;
+    case NativeRecordKind::Text:
+    case NativeRecordKind::Bytes:
+        check(std::ranges::equal(a.bytes(), b.bytes()), "native byte span changed"); break;
+    case NativeRecordKind::Object:
+        check(a.names() == b.names(), "native factor names or order changed");
+        for (const auto &name : a.names()) equal_value(a.at(name), b.at(name));
+        break;
+    case NativeRecordKind::Array:
+        check(a.size() == b.size(), "native cardinality changed");
+        for (std::size_t i = 0; i < a.size(); ++i) equal_value(a.at(i), b.at(i));
+        break;
+    case NativeRecordKind::Tensor:
+        check(a.tensor().domain() == b.tensor().domain(), "native tensor domain changed");
+        for (std::size_t i = 0; i < a.tensor().domain().logical_size(); ++i)
+            check(a.tensor().state(i) == b.tensor().state(i), "native tensor/support changed");
+        break;
+    }
+}
 }
 int main(int argc,char **argv) {
  try {
@@ -321,6 +351,57 @@ int main(int argc,char **argv) {
             malformed.append_target(invalid, {}, {}, storage::RelationalCodeEncoding::Automatic, {},
                                     std::move(update));
             rejects([&] { (void)NativeRecord::from_history(malformed); });
+        }
+    }
+    N::Array family;
+    N::Object item;
+    item.members.emplace_back("text", N(std::string("same\0text", 9)));
+    item.members.emplace_back("q", N(numeric::Rational{"-17/101"}));
+    item.members.emplace_back("raw", N(N::ByteSpan{42, 0, raw.size(), false}));
+    item.members.emplace_back("tensor", N(field.tensor));
+    family.elements.emplace_back(std::move(item));
+    family.elements.emplace_back(numeric::Integer{numeric::Integer{1} << 3073});
+    family.elements.emplace_back(N::Array{{N(true), N{}, N(N::ExactNumber{numeric::Rational{"2/7"}, false})}});
+    const auto expanded = record.derive(N(family));
+    std::size_t supplied{};
+    const N streamed(N::PackedArray{family.elements.size(), [&](const auto &emit) {
+        for (const auto &value : family.elements) { emit(value); ++supplied; }
+    }});
+    const auto compact = record.derive(streamed);
+    check(supplied == family.elements.size(), "packed producer was replayed during admission");
+    check(compact.format_version() == 4 && expanded.format_version() == 3, "packed format negotiation");
+    equal_value(compact, expanded);
+    check(storage::encode_rfcx(compact.endpoint()->source).bytes == original, "packing changed source relations");
+    const auto compact_reopened = NativeRecord::decode(compact.encode());
+    equal_value(compact_reopened, expanded);
+    check(compact_reopened.encode() == compact.encode(), "packed canonical encoding changed");
+    compact.write(directory / "packed.rfcxs");
+    equal_value(NativeRecord::read(directory / "packed.rfcxs"), expanded);
+    const auto escaped = [&] { const auto owner = NativeRecord::decode(compact.encode()); return owner.at(0).at("q"); }();
+    check(escaped.rational() == numeric::Rational{"-17/101"}, "decoded child lost its payload owner");
+    const auto nested_packed = record.derive(N(N::PackedArray{1, [&](const auto &emit) { emit(streamed); }}));
+    equal_value(nested_packed.at(0), expanded);
+    equal_value(NativeRecord::decode(nested_packed.encode()).at(0), expanded);
+    const auto descendant = compact.derive(N(std::string("later")));
+    check(descendant.parent().has_value(), "packed parent lost");
+    equal_value(*descendant.parent(), expanded);
+    check(NativeRecord::decode(descendant.encode()).parent()->at(0).at("q").rational() == numeric::Rational{"-17/101"},
+          "packed ancestor did not survive publication");
+    rejects([&] { (void)record.derive(N(N::PackedArray{1, [](const auto &) {}})); });
+    rejects([&] { (void)record.derive(N(N::PackedArray{0, [](const auto &emit) { emit(N(true)); }})); });
+    rejects([&] { (void)record.derive(N(N::PackedArray{1, [](const auto &) { throw std::runtime_error("producer failure"); }})); });
+    const auto empty = record.derive(N(N::PackedArray{0, [](const auto &) {}}));
+    check(empty.size() == 0 && NativeRecord::decode(empty.encode()).size() == 0, "empty packed array changed");
+    for (const auto index : {std::size_t{0}, std::size_t{3}, std::size_t{6}}) {
+        for (const auto &publication : {compact, descendant}) {
+            auto bad = *publication.endpoint();
+            for (auto &value : bad.declarations->values)
+                if (value.type == compact.type()) {
+                    auto &reference = std::get<composite::DeclaredValue::Product>(
+                        std::get<composite::DeclaredValue::Repeated>(value.value.data).elements.at(0).data).elements;
+                    reference.at(index) = composite::DeclaredValue::integer(numeric::Integer{"999999999999999999"});
+                }
+            rejects([&] { (void)NativeRecord::from_endpoint(bad, publication.source_namespace()); });
         }
     }
     std::cout

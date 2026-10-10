@@ -8,6 +8,8 @@
 #include <cerrno>
 #include <cstring>
 #include <set>
+#include <mutex>
+#include <tuple>
 
 namespace gadget {
 namespace {
@@ -28,7 +30,8 @@ constexpr ID integer_type{format_namespace, 1, 1}, boolean_type{format_namespace
     bytes_type{format_namespace, 13, 1}, owned_reference_type{format_namespace, 14, 1},
     historical_source_type{format_namespace, 15, 1}, source_payload_type{format_namespace, 16, 1},
     referenced_source_type{format_namespace, 17, 1},
-    referenced_sources_type{format_namespace, 18, 1};
+    referenced_sources_type{format_namespace, 18, 1},
+    packed_value_type{format_namespace, 19, 1};
 constexpr auto addressable = std::numeric_limits<std::size_t>::max();
 void require(bool ok, const char *message) {
     if (!ok)
@@ -43,7 +46,7 @@ std::uint64_t unsigned_value(const V &value) {
     return std::stoull(n.get_str());
 }
 const auto &parts(const V &v) { return std::get<V::Product>(v.data).elements; }
-std::vector<D> definitions(bool historical_sources = true) {
+std::vector<D> definitions(bool historical_sources = true, bool packed_values = false) {
     std::vector<D> out{
         D::integer(integer_type),
         D::boolean(boolean_type),
@@ -82,6 +85,11 @@ std::vector<D> definitions(bool historical_sources = true) {
             {{1, integer_type, {}}, {2, integer_type, {}}, {3, source_payload_type, {}}}));
         out.push_back(D::repeated(referenced_sources_type, referenced_source_type, 0, addressable));
     }
+    if (packed_values)
+        out.push_back(D::product(packed_value_type,
+            {{1, integer_type, {}}, {2, integer_type, {}}, {3, integer_type, {}},
+             {4, integer_type, {}}, {5, integer_type, {}}, {6, integer_type, {}},
+             {7, integer_type, {}}}));
     return out;
 }
 struct Compiler {
@@ -90,7 +98,10 @@ struct Compiler {
     std::map<std::string,std::uint64_t> name_keys;
     std::vector<V> labels;
     std::vector<std::byte> text_bytes;
+    std::map<std::string, std::pair<std::size_t, std::size_t>, std::less<>> text_spans;
     std::map<std::string,ID> shapes;
+    std::map<ID, composite::CompiledLayout> layouts;
+    bool packed_values{};
     std::set<std::uint64_t> source_keys,value_keys;
     std::vector<storage::TemporalDeclaredValue> owned_values;
     std::uint64_t next_value{1};
@@ -107,9 +118,12 @@ struct Compiler {
         return V::product({number(source),number(offset),number(length)});
     }
     V text(std::string_view bytes) {
+        if (const auto found = text_spans.find(bytes); found != text_spans.end())
+            return span(pool, found->second.first, found->second.second);
         const auto offset=text_bytes.size();
         (void)machine::checked_size_add(offset,bytes.size());
         for (const unsigned char byte:bytes) text_bytes.push_back(static_cast<std::byte>(byte));
+        text_spans.emplace(std::string(bytes), std::make_pair(offset, bytes.size()));
         return span(pool,offset,bytes.size());
     }
     ID shape(std::string key, D definition) {
@@ -129,14 +143,28 @@ struct Compiler {
     static std::string signature(ID id) {
         return std::to_string(id.name_space)+":"+std::to_string(id.key)+":"+std::to_string(id.version);
     }
-    std::pair<ID,V> compile(const NativeRecordValue &input, std::size_t depth=1) {
+    V pack(NativeRecordValue input, std::size_t depth) {
+        auto [type, value] = compile(std::move(input), depth);
+        if (!layouts.contains(type))
+            layouts.emplace(type, composite::CompiledLayout(
+                composite::DeclarationRegistry(defs, native_data_limits().temporal.declarations),
+                type, composite::BooleanLayoutProfile::Lsb0OctetsV1,
+                native_data_limits().temporal.declarations));
+        const auto bits = storage::encode_declared_bits(layouts.at(type), value);
+        const auto offset = text_bytes.size();
+        (void)machine::checked_size_add(offset, bits.bytes.size());
+        text_bytes.insert(text_bytes.end(), bits.bytes.begin(), bits.bytes.end());
+        return V::product({number(pool), number(offset), number(bits.bytes.size()),
+            number(type.name_space), number(type.key), number(type.version), number(bits.bit_count)});
+    }
+    std::pair<ID,V> compile(NativeRecordValue input, std::size_t depth=1) {
         require(depth<=native_data_limits().temporal.declarations.max_depth,"native composite nesting profile exceeded");
-        return std::visit([&](const auto &x)->std::pair<ID,V>{
+        return std::visit([&](auto &x)->std::pair<ID,V>{
             using T=std::decay_t<decltype(x)>;
             if constexpr(std::is_same_v<T,std::monostate>) return {null_type,V::product({})};
             else if constexpr(std::is_same_v<T,bool>) return {boolean_type,V::boolean(x)};
-            else if constexpr(std::is_same_v<T,numeric::Integer>) return {integer_type,V::integer(x)};
-            else if constexpr(std::is_same_v<T,numeric::Rational>) return {rational_type,V::rational(x)};
+            else if constexpr(std::is_same_v<T,numeric::Integer>) return {integer_type,V::integer(std::move(x))};
+            else if constexpr(std::is_same_v<T,numeric::Rational>) return {rational_type,V::rational(std::move(x))};
             else if constexpr(std::is_same_v<T,std::string>) return {text_type,text(x)};
             else if constexpr(std::is_same_v<T,NativeRecordValue::Owned>) {
                 require(static_cast<bool>(x.payload),"owned declaration requires its complete payload");
@@ -156,16 +184,18 @@ struct Compiler {
             } else if constexpr(std::is_same_v<T,NativeRecordValue::Object>) {
                 std::vector<composite::DeclarationFactor> factors;std::vector<V> values;
                 std::string key="product";std::set<std::string> seen;
-                for(const auto &[label,item]:x.members) {
+                values.reserve(x.members.size()); factors.reserve(x.members.size());
+                for(auto &[label,item]:x.members) {
                     require(seen.insert(label).second,"duplicate native record member");
-                    const auto factor=name(label);auto [type,value]=compile(item,depth+1);
+                    const auto factor=name(label);auto [type,value]=compile(std::move(item),depth+1);
                     factors.push_back({factor,type,{}});values.push_back(std::move(value));
                     key+="/"+std::to_string(factor)+":"+signature(type);
                 }
                 return {shape(key,D::product({},std::move(factors))),V::product(std::move(values))};
             } else if constexpr(std::is_same_v<T,NativeRecordValue::Array>) {
                 std::vector<std::pair<ID,V>> children;std::map<ID,std::uint64_t> types;
-                for(const auto &item:x.elements) {children.push_back(compile(item,depth+1));types.emplace(children.back().first,0);}
+                children.reserve(x.elements.size());
+                for(auto &item:x.elements) {children.push_back(compile(std::move(item),depth+1));types.emplace(children.back().first,0);}
                 ID element=null_type;
                 if(types.size()==1)element=types.begin()->first;
                 else if(types.size()>1) {
@@ -181,10 +211,26 @@ struct Compiler {
                 std::vector<V> values;values.reserve(children.size());
                 for(auto &[child,value]:children)values.push_back(types.size()>1?V::alternative(types.at(child),std::move(value)):std::move(value));
                 return {type,V::repeated(std::move(values))};
+            } else if constexpr(std::is_same_v<T,NativeRecordValue::PackedArray>) {
+                require(static_cast<bool>(x.emit), "packed array requires an owning producer");
+                if (!packed_values) {
+                    defs.push_back(definitions(true, true).back());
+                    packed_values = true;
+                }
+                std::vector<V> values;
+                values.reserve(x.count);
+                x.emit([&](NativeRecordValue item) {
+                    require(values.size() < x.count, "packed array producer exceeded its declared cardinality");
+                    values.push_back(pack(std::move(item), depth + 1));
+                });
+                require(values.size() == x.count, "packed array producer did not supply its declared cardinality");
+                const auto type = shape("packed-repeated/" + std::to_string(x.count),
+                    D::repeated({}, packed_value_type, x.count, x.count));
+                return {type, V::repeated(std::move(values))};
             } else {
                 std::vector<composite::DeclarationAxis> axes;std::string key="tensor";
                 for(const auto extent:x.domain().extents()) {axes.push_back({axes.size()+1,extent,{}});key+="/"+std::to_string(extent);}
-                return {shape(key,D::rational_tensor({},std::move(axes))),V::tensor(x)};
+                return {shape(key,D::rational_tensor({},std::move(axes))),V::tensor(std::move(x))};
             }
         },input.data);
     }
@@ -258,12 +304,12 @@ struct NativeRecord::State {
                     "historical record control missing");
             const auto &h = parts(header->value);
             const auto revision = unsigned_value(h.at(0));
-            require((revision == 2 || revision == 3) && unsigned_value(h.at(1)) == ns,
+            require((revision == 2 || revision == 3 || revision == 4) && unsigned_value(h.at(1)) == ns,
                     "historical record identity mismatch");
-            for (const auto &definition : definitions(revision == 3))
+            for (const auto &definition : definitions(revision >= 3, revision >= 4))
                 require(endpoint->declarations->registry.at(definition.id) == definition,
                         "historical record declaration changed");
-            require(sources->type == (revision == 3 ? referenced_sources_type : sources_type),
+            require(sources->type == (revision >= 3 ? referenced_sources_type : sources_type),
                     "historical byte source declaration mismatch");
             current = nullptr;
             for (const auto &item : std::get<V::Repeated>(sources->value.data).elements)
@@ -276,6 +322,33 @@ struct NativeRecord::State {
     }
     std::map<std::uint64_t, const storage::TemporalDeclaredValue *> values;
     std::map<const V *, const storage::TemporalDeclaredValue *> owners;
+    using PackedAddress = std::tuple<ID, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t>;
+    mutable std::mutex layout_mutex;
+    mutable std::optional<composite::PreparedLayoutRegistry> packed_registry;
+    mutable std::map<ID, std::shared_ptr<const composite::CompiledLayout>> packed_layouts;
+    static PackedAddress packed_address(const V &value) {
+        const auto &p = parts(value);
+        return {{unsigned_value(p.at(3)), unsigned_value(p.at(4)), unsigned_value(p.at(5))},
+                unsigned_value(p.at(0)), unsigned_value(p.at(1)), unsigned_value(p.at(2)), unsigned_value(p.at(6))};
+    }
+    std::pair<ID, std::shared_ptr<const V>> unpack(const V &value) const {
+        const auto &[type, source, offset, length, bits] = packed_address(value);
+        (void)source; (void)offset; (void)length;
+        const auto &declarations = *study.endpoint()->declarations;
+        std::shared_ptr<const composite::CompiledLayout> layout;
+        {
+            std::lock_guard lock(layout_mutex);
+            if (!packed_registry)
+                packed_registry.emplace(declarations.registry, declarations.resource_limits);
+            if (!packed_layouts.contains(type))
+                packed_layouts.emplace(type, std::make_shared<const composite::CompiledLayout>(
+                    *packed_registry, type, declarations.profile));
+            layout = packed_layouts.at(type);
+        }
+        const auto bytes = span(value);
+        return {type, std::make_shared<const V>(storage::decode_declared_bits(
+            *layout, bytes, machine::checked_size(bits)))};
+    }
     State(const storage::TemporalEndpoint &endpoint, std::uint64_t source_namespace,
           std::vector<RawByteSource> compiled_sources = {})
         : State(NativeStudy(endpoint, source_namespace), source_namespace,
@@ -306,9 +379,9 @@ struct NativeRecord::State {
         require(header.type==header_type,"native record header declaration mismatch");
         const auto &h=parts(header.value);
         version = unsigned_value(h.at(0));
-        require((version == 2 || version == 3) && unsigned_value(h.at(1)) == source_namespace,
+        require((version == 2 || version == 3 || version == 4) && unsigned_value(h.at(1)) == source_namespace,
                 "native record version/namespace mismatch");
-        for (const auto &definition : definitions(version == 3))
+        for (const auto &definition : definitions(version >= 3, version >= 4))
             require(endpoint.declarations->registry.at(definition.id) == definition,
                     "native record format declaration was changed");
         root_type = {unsigned_value(h.at(2)), unsigned_value(h.at(3)), unsigned_value(h.at(4))};
@@ -318,7 +391,7 @@ struct NativeRecord::State {
                     root_value_key != sources_key,
                 "invalid native root selector");
         const auto &raw = declared(sources_key);
-        require(raw.type == (version == 3 ? referenced_sources_type : sources_type),
+        require(raw.type == (version >= 3 ? referenced_sources_type : sources_type),
                 "native record source declaration mismatch");
         std::size_t raw_materialization{};
         std::map<SourceOrigin, RawByteSource> materialized;
@@ -381,20 +454,66 @@ struct NativeRecord::State {
         root=&data.value;
         // The canonical validator checks all declaration constructors. This
         // traversal additionally checks every physical byte address and label.
-        struct Visit { ID type; const V *value; std::uint64_t completed_reference{}; };
-        std::vector<Visit> pending{{root_type,root,0}};
+        struct Visit {
+            ID type; const V *value; std::uint64_t completed_reference{};
+            std::shared_ptr<const V> owner;
+            std::optional<PackedAddress> completed_packed;
+        };
+        std::vector<Visit> pending{{root_type,root,0,{}, {}}};
+        // Retained declarations can contain packed values even when a later
+        // root no longer selects them. Validate their byte addresses as well.
+        std::map<ID, bool> contains_packed;
+        const std::function<bool(ID)> has_packed = [&](ID type) {
+            if (const auto found = contains_packed.find(type); found != contains_packed.end())
+                return found->second;
+            const auto &declaration = endpoint.declarations->registry.at(type);
+            bool found = type == packed_value_type;
+            if (declaration.kind == composite::DeclarationKind::Repeated)
+                found = found || has_packed(declaration.element);
+            else if (declaration.kind == composite::DeclarationKind::Product ||
+                     declaration.kind == composite::DeclarationKind::Alternative)
+                for (const auto &factor : declaration.factors)
+                    found = found || has_packed(factor.type);
+            contains_packed.emplace(type, found);
+            return found;
+        };
+        for (const auto &value : endpoint.declarations->values)
+            if (value.key != root_value_key && has_packed(value.type))
+                pending.push_back({value.type, &value.value, 0, {}, {}});
         std::set<std::uint64_t> active, completed;
+        std::set<PackedAddress> active_packed, completed_packed;
         while(!pending.empty()) {
-            const auto [type,value,exit_key]=pending.back();pending.pop_back();
+            auto visit = std::move(pending.back()); pending.pop_back();
+            const auto type = visit.type; const auto *value = visit.value;
+            const auto exit_key = visit.completed_reference;
             if(exit_key) { active.erase(exit_key); completed.insert(exit_key); continue; }
+            if (visit.completed_packed) {
+                active_packed.erase(*visit.completed_packed);
+                completed_packed.insert(*visit.completed_packed);
+                continue;
+            }
+            if (type == packed_value_type) {
+                require(version >= 4, "packed application values require record format 4");
+                const auto address = packed_address(*value);
+                require(!active_packed.contains(address), "cyclic packed application value");
+                if (!completed_packed.contains(address)) {
+                    require(active_packed.size() < endpoint.declarations->resource_limits.max_depth,
+                            "packed application reference nesting exceeds declaration profile");
+                    const auto [decoded_type, decoded] = unpack(*value);
+                    active_packed.insert(address);
+                    pending.push_back({type, value, 0, visit.owner, address});
+                    pending.push_back({decoded_type, decoded.get(), 0, decoded, {}});
+                }
+                continue;
+            }
             if(type==owned_reference_type) {
                 const auto &p=parts(*value);const auto key=unsigned_value(p.at(0));
                 require(values.contains(key),"owned application value absent");const auto &target=*values.at(key);
                 require(target.type==ID{unsigned_value(p.at(1)),unsigned_value(p.at(2)),unsigned_value(p.at(3))},"owned application value type differs from reference");
                 require(!active.contains(key),"cyclic application value reference");
                 if(!completed.contains(key)) {
-                    active.insert(key); pending.push_back({type,value,key});
-                    pending.push_back({target.type,&target.value,0});
+                    active.insert(key); pending.push_back({type,value,key,visit.owner,{}});
+                    pending.push_back({target.type,&target.value,0,{}, {}});
                 }
                 continue;
             }
@@ -406,14 +525,15 @@ struct NativeRecord::State {
                 const auto &xs=parts(*value);
                 for(std::size_t i=0;i<d.factors.size();++i) {
                     require(labels.contains(d.factors[i].key),"native product has no factor name binding");
-                    pending.emplace_back(d.factors[i].type,&xs.at(i));
+                    pending.push_back({d.factors[i].type,&xs.at(i),0,visit.owner,{}});
                 }
             } else if(d.kind==composite::DeclarationKind::Repeated) {
-                for(const auto &x:std::get<V::Repeated>(value->data).elements)pending.emplace_back(d.element,&x);
+                for(const auto &x:std::get<V::Repeated>(value->data).elements)
+                    pending.push_back({d.element,&x,0,visit.owner,{}});
             } else if(d.kind==composite::DeclarationKind::Alternative) {
                 const auto &a=std::get<V::Alternative>(value->data);
                 const auto i=endpoint.declarations->registry.alternative_ordinal(type,a.key);
-                pending.emplace_back(d.factors.at(i).type,&a.element.at(0));
+                pending.push_back({d.factors.at(i).type,&a.element.at(0),0,visit.owner,{}});
             }
         }
     }
@@ -424,10 +544,20 @@ struct NativeRecord::State {
         return bytes.subspan(machine::checked_size(offset),machine::checked_size(length));
     }
 };
-NativeRecord::NativeRecord(std::shared_ptr<const State> state,ID type,const V *value)
-    :state_(std::move(state)),type_(type),value_(value),root_view_(value==state_->root) {
+NativeRecord::NativeRecord(std::shared_ptr<const State> state,ID type,const V *value,
+                          std::shared_ptr<const V> owner)
+    :state_(std::move(state)),type_(type),value_(value),value_owner_(std::move(owner)),
+      root_view_(value==state_->root) {
     std::set<std::uint64_t> visited;
-    while(type_==owned_reference_type) {
+    std::set<State::PackedAddress> packed;
+    while(type_==owned_reference_type || type_==packed_value_type) {
+        if (type_ == packed_value_type) {
+            require(packed.insert(State::packed_address(*value_)).second,
+                    "cyclic packed value reference");
+            auto [decoded_type, decoded] = state_->unpack(*value_);
+            type_ = decoded_type; value_owner_ = std::move(decoded); value_ = value_owner_.get();
+            continue;
+        }
         const auto &p=parts(*value_);const auto key=unsigned_value(p.at(0));
         require(visited.insert(key).second && state_->values.contains(key),"cyclic or missing owned value reference");
         const auto &target=*state_->values.at(key);
@@ -508,15 +638,19 @@ NativeRecordValue operation_value(const std::vector<RawByteSource> &sources,
     }
     const auto archive_key=next();auto archive=request.owning_publication().archive_source(archive_key);const auto count=archive.bytes().size();
     raw.push_back(std::move(archive));
-    return N(N::Object{{{"schema",N(std::string("gadget.operation.native.v1"))},
-        {"request",request.unbound_value(bindings)},{"result",std::move(result)},
-        {"request_publication",N(N::ByteSpan{archive_key,0,count,false})}}});
+    N::Object value;
+    value.members.emplace_back("schema", N(std::string("gadget.operation.native.v1")));
+    value.members.emplace_back("request", request.unbound_value(bindings));
+    value.members.emplace_back("result", std::move(result));
+    value.members.emplace_back("request_publication", N(N::ByteSpan{archive_key,0,count,false}));
+    return N(std::move(value));
 }
 } // namespace
-NativeRecord retain_operation(const NativeRecord &source,const NativeRecord &request,NativeRecordValue result) {
+NativeRecord retain_operation(const NativeRecord &source,const NativeRecord &request,NativeRecordValue result,
+                              const NativeRecordObserver &observer) {
     std::vector<RawByteSource> raw;
     auto value=operation_value(source.raw_sources(),raw,request,std::move(result));
-    return source.derive(value,std::move(raw));
+    return source.derive(std::move(value),std::move(raw),observer);
 }
 NativeRecord retain_operation(const storage::TemporalEndpoint &source,std::uint64_t source_namespace,
     std::vector<RawByteSource> sources,const NativeRecord &request,NativeRecordValue result) {
@@ -528,7 +662,7 @@ NativeRecord retain_operation(storage::TemporalEndpoint &&source,std::uint64_t s
     std::vector<RawByteSource> added;
     auto value=operation_value(sources,added,request,std::move(result));
     for(auto &bytes:added)sources.push_back(std::move(bytes));
-    return NativeRecord::create_from_endpoint(value,source_namespace,std::move(sources),std::move(source));
+    return NativeRecord::create_from_endpoint(std::move(value),source_namespace,std::move(sources),std::move(source));
 }
 NativeRecord NativeRecord::create(const NativeRecordValue &value,std::uint64_t ns,
     std::vector<RawByteSource> sources,const storage::TemporalEndpoint *source) {
@@ -541,9 +675,14 @@ NativeRecord NativeRecord::create_from_endpoint(const NativeRecordValue &value,s
     std::vector<RawByteSource> sources,storage::TemporalEndpoint endpoint) {
     return create_owned(value,ns,std::move(sources),std::move(endpoint),nullptr);
 }
-NativeRecord NativeRecord::create_owned(const NativeRecordValue &value,std::uint64_t ns,
+NativeRecord NativeRecord::create_from_endpoint(NativeRecordValue &&value,std::uint64_t ns,
+    std::vector<RawByteSource> sources,storage::TemporalEndpoint endpoint,const NativeRecordObserver &observer) {
+    return create_owned(std::move(value),ns,std::move(sources),std::move(endpoint),nullptr,{},observer);
+}
+NativeRecord NativeRecord::create_owned(NativeRecordValue value,std::uint64_t ns,
     std::vector<RawByteSource> sources,storage::TemporalEndpoint endpoint,
-    const NativeRecord *retained_parent,std::optional<storage::NativeTemporalSeries> history) {
+    const NativeRecord *retained_parent,std::optional<storage::NativeTemporalSeries> history,
+    const NativeRecordObserver &observer) {
     require(ns,"native record requires its actual source namespace");
     std::optional<NativeRecord> previous;
     if(retained_parent)previous=*retained_parent;
@@ -575,7 +714,9 @@ NativeRecord NativeRecord::create_owned(const NativeRecordValue &value,std::uint
         for(const auto &v:declarations.values)if(v.key==labels_key)
             compiler.labels=std::get<V::Repeated>(v.value.data).elements;
     }
-    auto [type,data]=compiler.compile(value);
+    if(observer)observer("source_declarations");
+    auto [type,data]=compiler.compile(std::move(value));
+    if(observer)observer("composite_values");
     sources.push_back(RawByteSource::adopt_fresh(compiler.pool,std::move(compiler.text_bytes)));
     auto all_definitions=declarations.registry.definitions();
     std::set<ID> ids;for(const auto &d:all_definitions)ids.insert(d.id);
@@ -640,11 +781,13 @@ NativeRecord NativeRecord::create_owned(const NativeRecordValue &value,std::uint
         else
             *found = std::move(next);
     };
-    replace(header_key,header_type,V::product({number(3),number(ns),number(type.name_space),number(type.key),number(type.version),number(data_key),number(previous?previous->state_->root_value_key:0)}));
+    const auto version = compiler.packed_values || (previous && previous->format_version() >= 4) ? 4 : 3;
+    replace(header_key,header_type,V::product({number(version),number(ns),number(type.name_space),number(type.key),number(type.version),number(data_key),number(previous?previous->state_->root_value_key:0)}));
     replace(data_key,type,std::move(data));
     replace(labels_key,labels_type,V::repeated(std::move(compiler.labels)));
     replace(sources_key,referenced_sources_type,V::repeated(std::move(raw)));
     endpoint.declarations=std::move(declarations);
+    if(observer)observer("declaration_channels");
     if(history) {
         require(history->last_sequence()!=std::numeric_limits<std::uint64_t>::max(),
                 "native annotation publication sequence exhausted");
@@ -670,12 +813,16 @@ NativeRecord NativeRecord::create_owned(const NativeRecordValue &value,std::uint
         annotation.declarations = std::move(update);
         history->append(annotation);
         const auto tail=history->tail();
+        if(observer)observer("native_freeze");
         auto state=std::make_shared<const State>(tail,std::move(sources),std::move(*history));
+        if(observer)observer("record_bindings");
         return {state,state->root_type,state->root};
     }
     storage::NativeTemporalSeries publication(endpoint,ns,native_data_limits());
     const auto tail=publication.tail();
+    if(observer)observer("native_freeze");
     auto state=std::make_shared<const State>(tail,std::move(sources),std::move(publication));
+    if(observer)observer("record_bindings");
     return {state,state->root_type,state->root};
 }
 NativeRecord NativeRecord::annotate(const NativeRecordValue &value,storage::NativeTemporalSeries history,
@@ -694,6 +841,12 @@ NativeRecord NativeRecord::derive(const NativeRecordValue &value,std::vector<Raw
     const auto source=endpoint();
     auto history=state_->history && state_->history->segment_count()!=0?state_->history:std::nullopt;
     return create_owned(value,source_namespace(),std::move(sources),*source,this,std::move(history));
+}
+NativeRecord NativeRecord::derive(NativeRecordValue &&value,std::vector<RawByteSource> sources,
+                                 const NativeRecordObserver &observer) const {
+    const auto source=endpoint();
+    auto history=state_->history && state_->history->segment_count()!=0?state_->history:std::nullopt;
+    return create_owned(std::move(value),source_namespace(),std::move(sources),*source,this,std::move(history),observer);
 }
 std::vector<std::uint64_t> NativeRecord::source_keys(const storage::TemporalEndpoint &endpoint) {
     std::vector<std::uint64_t> keys;
@@ -801,7 +954,7 @@ NativeRecord NativeRecord::at(std::string_view name) const {
     require(kind()==NativeRecordKind::Object,"native member selection requires a product");
     const auto key=state_->names.at(std::string(name));const auto &d=endpoint()->declarations->registry.at(type_);
     const auto index=endpoint()->declarations->registry.factor_ordinal(type_,key);
-    return {state_,d.factors.at(index).type,&parts(*value_).at(index)};
+    return {state_,d.factors.at(index).type,&parts(*value_).at(index),value_owner_};
 }
 NativeRecord NativeRecord::at(std::size_t index) const {
     require(kind()==NativeRecordKind::Array,"native index selection requires a repeated declaration");
@@ -811,7 +964,7 @@ NativeRecord NativeRecord::at(std::size_t index) const {
     if(d.kind==composite::DeclarationKind::Alternative) {
         const auto &a=std::get<V::Alternative>(value->data);type=d.factors.at(endpoint()->declarations->registry.alternative_ordinal(type,a.key)).type;value=&a.element.at(0);
     }
-    return {state_,type,value};
+    return {state_,type,value,value_owner_};
 }
 std::vector<std::string> NativeRecord::names() const {
     require(kind()==NativeRecordKind::Object,"native factor names require a product");

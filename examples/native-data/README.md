@@ -118,6 +118,47 @@ publication, so writing again reuses its encoded components. `RawByteSource::rek
 assigns another declared identity to the same frozen byte owner. Transferred
 vectors with possible mutable aliases are copied before that owner is shared.
 
+For a large result collection, `NativeRecordValue::PackedArray` accepts a count
+and a synchronous producer. The producer emits complete values in order:
+
+```cpp
+using Value = gadget::NativeRecordValue;
+Value answers(Value::PackedArray{requests.size(), [&](const auto &emit) {
+    for (const auto &request : requests)
+        emit(compute_complete_value(request));
+}});
+auto publication = source.derive(std::move(answers));
+publication.write("answers.rfcxs");
+```
+
+`source`, `requests` and `compute_complete_value` are supplied by the caller.
+Each emitted value is encoded with RexGraphCpp's `CompiledLayout` and
+`encode_declared_bits` before the next value is requested. The publication
+retains the complete declaration registry, encoded bytes and ordered addresses.
+It also shares equal generated text spans within the new byte pool. Explicit
+original source identities and their bytes remain distinct.
+
+Reading validates every packed value with `decode_declared_bits`, including
+values retained by later publications. Selecting an element decodes that
+element; member views retain its decoded owner after the parent view is
+destroyed. Keep the selected `NativeRecord` while using references returned by
+`value()` or `tensor()`; that view owns the decoded storage. Producer exceptions,
+incorrect counts, invalid declarations, byte
+addresses, bit lengths, padding and cyclic references are refused. The producer
+must complete synchronously and must not retain the emitter.
+
+Packed collections use GADGET application record revision 4 inside RFCXS.
+Ordinary records continue to use revision 3. This reader accepts revisions 2,
+3 and 4; older GADGET readers cannot admit revision 4. The RexGraphCpp RFCXS and
+composite binary formats are unchanged. Packed collections reduce expanded
+application value storage; the actual scientific complex, fields, source bytes
+and complete results still occupy memory and storage.
+
+The consuming `derive` and `create_from_endpoint` overloads and
+`retain_operation` accept an optional `NativeRecordObserver`. It reports
+completed source declaration, composite value, declaration channel, canonical
+freeze and record binding stages. An observer exception aborts construction.
+
 Biomedical stores, scientific studies, assay workspaces, snapshots, workflow
 histories and pipeline artifacts use these native owners. A snapshot directory
 contains `study.rfcxs` by default. Assay workspaces publish `workspace.rfcxs`;

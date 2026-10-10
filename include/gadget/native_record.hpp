@@ -1,6 +1,7 @@
 #pragma once
 #include <gadget/native_data.hpp>
 #include <rfc/storage/native_encoded_tensor.hpp>
+#include <functional>
 #include <variant>
 
 namespace gadget {
@@ -9,6 +10,12 @@ namespace gadget {
 struct NativeRecordValue {
     struct Object { std::vector<std::pair<std::string, NativeRecordValue>> members; };
     struct Array { std::vector<NativeRecordValue> elements; };
+    // Emit exactly the declared number of complete values in order. Each value
+    // is encoded with its native declaration before the next value is requested.
+    struct PackedArray {
+        std::size_t count{};
+        std::function<void(const std::function<void(NativeRecordValue)> &)> emit;
+    };
     struct ByteSpan { std::uint64_t source; std::size_t offset, length; bool text{true}; };
     struct Decimal { rfc::numeric::Rational exact; std::string literal; };
     struct ExactNumber { rfc::numeric::Rational exact; bool approximate_view; };
@@ -20,26 +27,30 @@ struct NativeRecordValue {
     };
     using Data = std::variant<std::monostate, bool, rfc::numeric::Integer,
         rfc::numeric::Rational, std::string, Object, Array, ByteSpan, Decimal,
-        rfc::numeric::SparseRationalTensor, ExactNumber, Owned>;
+        rfc::numeric::SparseRationalTensor, ExactNumber, Owned, PackedArray>;
     Data data;
     NativeRecordValue() = default;
     template<class T> explicit NativeRecordValue(T value) : data(std::move(value)) {}
 };
 enum class NativeRecordKind { Null, Boolean, Integer, Rational, Text, Object, Array, Decimal, Tensor, ExactNumber, Bytes };
+using NativeRecordObserver = std::function<void(std::string_view)>;
 
 class NativeRecord {
     struct State;
     std::shared_ptr<const State> state_;
     rfc::composite::DeclarationId type_;
     const rfc::composite::DeclaredValue *value_{};
+    std::shared_ptr<const rfc::composite::DeclaredValue> value_owner_;
     bool root_view_{};
     NativeRecordValue copy_value(const std::map<std::uint64_t,std::uint64_t> &,bool) const;
     NativeRecord(std::shared_ptr<const State>, rfc::composite::DeclarationId,
-                 const rfc::composite::DeclaredValue *);
-    static NativeRecord create_owned(const NativeRecordValue &, std::uint64_t,
+                 const rfc::composite::DeclaredValue *,
+                 std::shared_ptr<const rfc::composite::DeclaredValue> = {});
+    static NativeRecord create_owned(NativeRecordValue, std::uint64_t,
         std::vector<RawByteSource>, rfc::storage::TemporalEndpoint,
         const NativeRecord *previous,
-        std::optional<rfc::storage::NativeTemporalSeries> history = {});
+        std::optional<rfc::storage::NativeTemporalSeries> history = {},
+        const NativeRecordObserver &observer = {});
   public:
     // A new application publication has its own explicit namespace. Supplying
     // an endpoint retains its actual complex, tensor fields and existing codes.
@@ -50,6 +61,9 @@ class NativeRecord {
     static NativeRecord create_from_endpoint(const NativeRecordValue &value,
         std::uint64_t source_namespace, std::vector<RawByteSource> sources,
         rfc::storage::TemporalEndpoint endpoint);
+    static NativeRecord create_from_endpoint(NativeRecordValue &&value,
+        std::uint64_t source_namespace, std::vector<RawByteSource> sources,
+        rfc::storage::TemporalEndpoint endpoint, const NativeRecordObserver &observer = {});
     // Publish declarations after an actual owning history. Unchanged source
     // fields stay in its original base; the canonical frame retains the update.
     static NativeRecord annotate(const NativeRecordValue &value,
@@ -61,6 +75,8 @@ class NativeRecord {
     // Select a tensor from this publication's retained binary field storage.
     std::optional<rfc::storage::NativeEncodedTensor> encoded_tensor(std::uint64_t key) const;
     NativeRecord derive(const NativeRecordValue &value,std::vector<RawByteSource> added_sources = {}) const;
+    NativeRecord derive(NativeRecordValue &&value,std::vector<RawByteSource> added_sources = {},
+                        const NativeRecordObserver &observer = {}) const;
     static NativeRecord read(const std::filesystem::path &path);
     static std::optional<NativeRecord> read_if_record(const std::filesystem::path &path);
     static NativeRecord decode(std::span<const std::byte> bytes,
@@ -111,7 +127,7 @@ class NativeRecord {
 // does not identify sources. Persisted records keep their admitted namespace.
 std::uint64_t new_native_record_namespace();
 NativeRecord retain_operation(const NativeRecord &source,const NativeRecord &request,
-                              NativeRecordValue result);
+                              NativeRecordValue result, const NativeRecordObserver &observer = {});
 // Publish a newly constructed mathematical source and result together.
 NativeRecord retain_operation(const rfc::storage::TemporalEndpoint &source,
     std::uint64_t source_namespace, std::vector<RawByteSource> sources,
