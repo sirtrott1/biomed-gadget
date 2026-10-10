@@ -1,8 +1,10 @@
 #include <gadget/assay.hpp>
 #include <gadget/record_view.hpp>
 #include <iostream>
+#include <map>
 #include <rfc/storage/file_io.hpp>
 #include <rfc/storage/rfcx.hpp>
+#include <set>
 
 using namespace gadget;
 namespace {
@@ -42,6 +44,32 @@ NativeRecordValue without_native(const ScientificStudy &study) {
     std::erase_if(members, [](const auto &member) { return member.first == "native"; });
     return value;
 }
+void check_artifact_owners(const NativeRecord &workspace) {
+    const auto artifacts = workspace.at("originals");
+    std::set<std::string> paths;
+    std::map<std::string, RawByteSource> owners;
+    std::size_t aliases = 0;
+    for (std::size_t i = 0; i < artifacts.size(); ++i) {
+        const auto artifact = artifacts.at(i);
+        check(paths.insert(artifact.at("path").text()).second,
+              "original artifact path was duplicated");
+        const auto value = artifact.at("bytes");
+        const auto bytes = value.bytes();
+        const std::string contents(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+        const auto owner = value.byte_source();
+        const auto [previous, inserted] = owners.emplace(contents, owner);
+        if (!inserted) {
+            check(previous->second.shares_owner(owner) && previous->second.key() == owner.key(),
+                  "equal original artifacts have separate native byte owners");
+            ++aliases;
+        }
+        for (const auto &[other, source] : owners)
+            if (other != contents)
+                check(!source.shares_owner(owner) && source.key() != owner.key(),
+                      "different original artifacts share a byte identity");
+    }
+    check(aliases == 3, "shared reference and provenance paths were lost");
+}
 } // namespace
 int main(int argc, char **argv) {
     const fs::path root = argc > 1 ? argv[1] : "build/native-derivation-contracts";
@@ -52,10 +80,15 @@ int main(int argc, char **argv) {
                           "chr\t0\t4\tfirst\t3\t+\nchr\t4\t8\tzero\t0\t+\nchr\t8\t12\tlast\t2\t+\n";
     write_text(root / "control.bed", control);
     write_text(root / "treated.bed", treated);
+    const std::string fasta = ">chr\nACGTACGTACGT\n";
+    write_text(root / "reference.fa", fasta);
+    write_text(root / "shared.txt", "Original protocol A\n");
+    write_text(root / "distinct.txt", "Original protocol B\n");
     auto design = Json::parse(
         R"({"question":"Compare retained interval observations","population":"fixture","selection":"all original records","limitations":["synthetic fixture"]})");
     auto reference = Json::parse(
         R"({"assembly":"fixture","sequence_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","coordinate_convention":"zero_based_half_open","contigs":[{"id":"chr","length":12}]})");
+    reference.set("sequence_sha256", Json::string("sha256:" + sha256(fasta)));
     auto resources = Json::array();
     for (const auto &[id, bytes] :
          std::map<std::string, std::string>{{"control", control}, {"treated", treated}}) {
@@ -66,6 +99,11 @@ int main(int argc, char **argv) {
         resource.set("method", Json::string("Fixture original intervals"));
         resource.set("weight_column", Json::integer(4));
         resource.set("reference", reference);
+        resource.set("reference_source", file("reference.fa", fasta));
+        auto provenance = Json::array();
+        provenance.push(file("shared.txt", read_text(root / "shared.txt")));
+        provenance.push(file("distinct.txt", read_text(root / "distinct.txt")));
+        resource.set("provenance", provenance);
         resources.push(resource);
     }
     auto spec = Json::object();
@@ -78,6 +116,8 @@ int main(int argc, char **argv) {
     write_text(root / "import.json", spec.dump());
     import_assays(root / "import.json", root / "input");
     AssayWorkspace original(root / "input/workspace.rfcxs");
+    check_artifact_owners(original.native_publication());
+    check_artifact_owners(NativeRecord::decode(original.native_publication().encode()));
     const auto recipe = Json::parse(
         R"({"schema":"gadget.assays.query.v1","operation":"controlled_coverage","samples":[{"id":"base","resource":"control","scale":"1","scale_provenance":"fixture"},{"id":"treated","resource":"treated","scale":"1","scale_provenance":"fixture"}],"contrasts":[{"id":"change","terms":[{"sample":"treated","coefficient":"1"},{"sample":"base","coefficient":"-1"}],"evidence":"fixture"}],"controls":["base"],"intercept":true,"metric":"reference_length","strand_policy":"separate","thresholds":["1"],"absence_policy":"measured_zero_within_union","units":"count","evidence":"fixture","source_kernel":true})");
     auto request = Json::object();

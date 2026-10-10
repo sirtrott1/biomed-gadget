@@ -567,10 +567,24 @@ NativeRecord admit_native_workspace(const fs::path &root,const Json &manifest,
     using N=NativeRecordValue;
     std::vector<RawByteSource> raw;N::Array originals,publications;
     std::set<std::string> paths;
+    std::map<std::string,std::vector<std::size_t>> byte_owners;
     const auto capture=[&](const Json &record) {
         const auto path=record.at("path").text();if(!paths.insert(path).second)return;
-        const auto data=local_artifact(fs::canonical(root),record);const auto key=raw.size()+1;
-        raw.emplace_back(key,std::span<const std::byte>{reinterpret_cast<const std::byte *>(data.data()),data.size()});
+        const auto data=local_artifact(fs::canonical(root),record);
+        const auto bytes=std::as_bytes(std::span(data.data(),data.size()));
+        auto &candidates=byte_owners[record.at("sha256").text()];
+        const auto same=std::find_if(candidates.begin(),candidates.end(),[&](auto index) {
+            const auto retained=raw[index].bytes();
+            return retained.size()==bytes.size() && std::equal(retained.begin(),retained.end(),bytes.begin());
+        });
+        const auto index=same==candidates.end()?raw.size():*same;
+        if(same==candidates.end()) {
+            raw.emplace_back(raw.size()+1,bytes);
+            candidates.push_back(index);
+        }
+        // Paths retain separate declarations. Only their complete immutable
+        // byte payload is shared; no scientific carrier or identity is merged.
+        const auto key=raw[index].key();
         originals.elements.emplace_back(N::Object{{{"path",N(path)},{"bytes",N(N::ByteSpan{key,0,data.size(),false})}}});
     };
     for(const auto *name:{"import_spec","reimport","bindings"})if(manifest.has(name))capture(manifest.at(name));

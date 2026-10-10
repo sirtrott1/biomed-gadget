@@ -5,6 +5,10 @@ compares two explicitly declared changes, and separates the changes represented 
 an input control and a constant field. The `controlled_coverage` method is available
 in the ChIP-seq, ATAC-seq and custom pipeline profiles. These are authored inputs
 for verifying the method, rather than measurements from a biological experiment.
+The [published EGR1 example](../chip-coverage.md) qualifies the same method
+against complete chromosome 21 intervals from four original ChIP and input
+libraries. `gadget_verify_controlled_coverage` independently checks original
+rows, native occurrences, complete fields and the declared control projection.
 
 From the GADGET source root, with a built executable:
 
