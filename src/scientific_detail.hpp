@@ -74,7 +74,7 @@ struct ScientificStudy::State {
     std::vector<rfc::storage::StableOccurrenceKey> occurrence_keys;
     bool compact{};
     std::vector<NativeRecord> cell_bindings;
-    void admit_compact(NativeRecord publication);
+    void admit_compact(NativeRecord publication, const ScientificAdmissionObserver &observer);
     void admit_scoped_actions(const Json &operators,const Json &sets);
     Json cell_record(rfc::storage::StableCellKey cell) const;
     Json occurrence_record(rfc::storage::StableOccurrenceKey occurrence) const;
@@ -108,7 +108,8 @@ struct ScientificStudy::State {
     mutable std::map<std::tuple<std::string, std::size_t, std::size_t>, std::string>
         evidence_reference_hashes;
     explicit State(const fs::path &path, std::optional<NativeRecord> publication = {},
-                   std::optional<rfc::storage::NativeTemporalSeries> producer = {});
+                   std::optional<rfc::storage::NativeTemporalSeries> producer = {},
+                   const ScientificAdmissionObserver &observer = {});
     Json evidence(const Json &value) const;
     Json catalog() const;
     Json history_metadata() const;

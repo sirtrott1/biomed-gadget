@@ -45,6 +45,13 @@ Json reference(const std::string &document, std::size_t start, std::size_t end) 
     out.set("end", cardinality(end));
     return out;
 }
+N packed_collection(N value) {
+    if (!std::holds_alternative<N::Array>(value.data)) return value;
+    auto array = std::make_shared<N::Array>(std::get<N::Array>(std::move(value.data)));
+    return N(N::PackedArray{array->elements.size(), [array](const auto &emit) {
+        for (auto &element : array->elements) emit(std::move(element));
+    }});
+}
 } // namespace
 NativeRecord ScientificStudy::publish_annotations(const NativeRecord &producer,
                                                   NativeRecordValue study,
@@ -55,6 +62,11 @@ NativeRecord ScientificStudy::publish_annotations(const NativeRecord &producer,
     require(std::none_of(members.begin(), members.end(),
                          [](const auto &m) { return m.first == "native"; }),
             "producer binding is supplied by the actual history");
+    for (auto &[name, value] : members) {
+        (void)name;
+        value = packed_collection(std::move(value));
+    }
+    documents = packed_collection(std::move(documents));
     const auto hash =
         "sha256:" + sha256_chunks([&](const auto &sink) { stream_native_series(history, sink); });
     members.emplace_back(
@@ -74,7 +86,8 @@ NativeRecord ScientificStudy::producer_publication() const {
     require(state_->compact, "study does not declare a generating application publication");
     return state_->native_publication->historical_publication(state_->history->cutoff());
 }
-void ScientificStudy::State::admit_compact(NativeRecord publication) {
+void ScientificStudy::State::admit_compact(NativeRecord publication,
+                                             const ScientificAdmissionObserver &observer) {
     compact = true;
     native_publication = std::move(publication);
     const auto &owner = *native_publication;
@@ -88,6 +101,7 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
     require(view.at("schema").text() == "gadget.scientific.study.v3",
             "unsupported compact study schema");
     (void)text(view.at("id"));
+    if (observer) observer("study_declaration");
     const auto binding = owner.at("history");
     require(binding.at("kind").text() == "publication_prefix",
             "compact study needs an actual prefix");
@@ -113,6 +127,7 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
                     update.finite_systems.empty() && !update.codes && !update.source_migration,
                 "study annotation changed its generating mathematical source");
     }
+    if (observer) observer("study_prefix");
     native_digest = "sha256:" + sha256_chunks([&](const auto &sink) {
                         stream_native_series(history->history(), sink);
                     });
@@ -125,9 +140,11 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
     declaration_digest = native_declaration_digest(declaration);
     digest = "sha256:" +
              sha256("gadget.scientific.study.v3\n" + declaration_digest + "\n" + native_digest);
+    if (observer) observer("study_integrity");
     directory = std::make_shared<const NativeAccessionDirectory>(
         tail, std::vector<RelationalCodeObservationQuery>{},
         [](auto value) { return rfcx_detail::fnv1a64(value); }, native_accession_limits());
+    if (observer) observer("study_accessions");
     const auto design = view.at("design");
     members(design, {"question", "population", "selection", "covariates", "limitations"});
     for (const auto *name : {"question", "population", "selection"})
@@ -165,6 +182,7 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
         require(documents.emplace(id, Document{declaration.at("documents").at(i), span}).second,
                 "duplicate document");
     }
+    if (observer) observer("study_documents");
     source_array(design.at("covariates"), "covariates");
     std::set<std::string> covariates;
     for (std::size_t i = 0; i < design.at("covariates").size(); ++i) {
@@ -242,6 +260,7 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
             }
         }
     }
+    if (observer) observer("study_cells");
     const auto declared_contexts = view.at("contexts");
     source_array(declared_contexts, "contexts");
     require(declared_contexts.size() > 0, "study needs a context");
@@ -288,6 +307,7 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
         require(contexts.emplace(text(item.at("id")), std::move(context)).second,
                 "duplicate context");
     }
+    if (observer) observer("study_contexts");
     const auto fields = view.at("fields");
     source_array(fields, "fields");
     for (std::size_t i = 0; i < fields.size(); ++i) {
@@ -295,7 +315,14 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
         members(item, {"id", "key", "context", "channel", "quantity", "units", "method",
                        "value_type", "evidence"});
         const auto identity = key(item.at("key"));
-        const auto &field = tensor(*endpoint, identity);
+        if (!field_pins.contains(identity)) {
+            NativeAccessionRequest request;
+            request.kind = NativeAccessionKind::Field;
+            request.subject = identity;
+            field_pins.emplace(identity, directory->pin(request));
+        }
+        const auto field_owner = field_pins.at(identity).tensor_declaration();
+        const auto &field = *field_owner;
         require(field.role == TemporalTensorRole::Field && field.output,
                 "field must name a retained native field");
         require(contexts.contains(text(item.at("context"))), "unknown field context");
@@ -312,17 +339,12 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
             for (const auto &entry : field.tensor.values().entries())
                 require(entry.value == 0 || entry.value == 1, "indicator field must be zero/one");
         (void)evidence(item.at("evidence"));
-        if (!field_pins.contains(identity)) {
-            NativeAccessionRequest request;
-            request.kind = NativeAccessionKind::Field;
-            request.subject = identity;
-            field_pins.emplace(identity, directory->pin(request));
-        }
         require(this->fields
                     .emplace(text(item.at("id")), Field{declaration.at("fields").at(i), identity})
                     .second,
                 "duplicate field id");
     }
+    if (observer) observer("study_fields");
     for (std::size_t i = 0; i < design.at("covariates").size(); ++i) {
         const auto field = design.at("covariates").at(i).at("field");
         if (field.raw())
@@ -333,6 +355,7 @@ void ScientificStudy::State::admit_compact(NativeRecord publication) {
     }
     admit_scoped_actions(view.has("operators") ? view.at("operators") : Json{},
                          view.at("field_sets"));
+    if (observer) observer("study_actions");
     for (std::size_t k = 0; k < bindings.size(); ++k)
         grade_pins.push_back(directory->pin(
             NativeAccessionRequest::sparse_chain({static_cast<std::uint16_t>(k)}, {}, {})));

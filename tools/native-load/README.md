@@ -52,6 +52,40 @@ mathematical complex. An administrative collection publication can contain
 independent scientific archives in its original byte owners; its own source
 counts do not describe those nested complexes.
 
+## Workspace admission profiling
+
+`gadget_workspace_load_profile` measures the complete administrative workspace
+and every embedded scientific study. It links `gadget::core` and admits all
+original byte bindings, mathematical history prefixes and native accession
+directories before returning a workspace.
+
+```sh
+gadget_workspace_load_profile --input workspace.rfcxs \
+  --rewrite verified-workspace.rfcxs > workspace-load.tsv
+```
+
+The input must be canonical RFCXS. `workspace_record` includes decoding and
+application record validation. `workspace_artifacts` checks original paths and
+bytes. `workspace_study_record` decodes an embedded study. Compact studies
+report `study_declaration`, `study_prefix`, `study_integrity`, `study_accessions`,
+`study_documents`, `study_cells`, `study_contexts`, `study_fields` and
+`study_actions`; `study_complete` includes remaining admission and catalogue
+preparation. Compatibility study declarations report their complete admission
+through `study_complete`. `workspace_complete` finishes partition and resource
+bindings. Stages repeat for independent assays and partitions. A study reused
+through the same embedded byte source is admitted once.
+
+Each stage starts after the preceding report. `admission` spans the complete
+workspace constructor; `binding` computes its declaration digest. Optional
+rewriting compares every original archive byte. `release` destroys admitted
+owners, and `total` includes the complete workload and reporting. Linux memory
+observations have the same cumulative scope as the native profiler.
+
+`value` rows count actual assays, partitions and verified archive bytes. `binding`
+rows report the workspace digest. The public `AssayWorkspace` and `ScientificStudy`
+constructors accept `ScientificAdmissionObserver` callbacks for these completed
+stages. Observer exceptions abort construction without changing input files.
+
 ## Raw import profiling
 
 The same build option supplies `gadget_raw_import_profile`. It imports a complete

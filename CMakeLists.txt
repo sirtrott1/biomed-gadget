@@ -193,6 +193,9 @@ if(GADGET_BUILD_PROFILING_TOOLS)
   add_executable(gadget_native_load_profile tools/profile_native_load.cpp)
   target_link_libraries(gadget_native_load_profile PRIVATE gadget::native)
   target_compile_options(gadget_native_load_profile PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_executable(gadget_workspace_load_profile tools/profile_workspace_load.cpp)
+  target_link_libraries(gadget_workspace_load_profile PRIVATE gadget::core)
+  target_compile_options(gadget_workspace_load_profile PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 if(GADGET_BUILD_EXAMPLES OR BUILD_TESTING)
   add_executable(gadget_verify_coverage_fields examples/bioinformatics/verify_coverage_fields.cpp)
@@ -455,6 +458,10 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_load_profile.py"
       "$<TARGET_FILE:gadget_native_load_profile>" "$<TARGET_FILE:gadget_native_data_tests>"
       "$<TARGET_FILE:gadget_native_record_tests>" "${GADGET_TEST_DATA_DIR}/native-load-profile-contracts")
+    add_test(NAME gadget_workspace_load_profile_contracts COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/workspace_load_profile.py"
+      "$<TARGET_FILE:gadget_workspace_load_profile>" "$<TARGET_FILE:gadget_native_derivation_tests>"
+      "${GADGET_TEST_DATA_DIR}/workspace-load-profile-contracts")
   endif()
   target_link_libraries(gadget_gluing_ownership_tests PRIVATE gadget::core)
   target_compile_options(gadget_gluing_ownership_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

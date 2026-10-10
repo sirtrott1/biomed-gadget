@@ -47,6 +47,7 @@ class AssayWorkspace {
 
   public:
     explicit AssayWorkspace(const fs::path &manifest);
+    AssayWorkspace(const fs::path &manifest, const ScientificAdmissionObserver &observer);
     static NativeRecord publish_studies(const NativeRecord &request, const std::string &id,
         const std::map<std::string, std::shared_ptr<const ScientificStudy>> &studies);
     Json materialize_record(const NativeRecord &request, const fs::path &destination,

@@ -13,6 +13,9 @@ namespace rfc::storage { class NativeAtlasSource; }
 namespace gadget {
 class CpuResources;
 class AssayWorkspace;
+// Reports completed admission stages. Throwing aborts construction; no source
+// publication or input file is changed by admission.
+using ScientificAdmissionObserver = std::function<void(std::string_view)>;
 // Biomedical admission over a canonical archive and explicitly pinned publication
 // declarations. Each referenced archive owns its native endpoint. Mathematical source/storage
 // and tensor ownership remain RexGraph's. Public JSON views are detached copies.
@@ -32,6 +35,8 @@ class ScientificStudy {
   public:
     explicit ScientificStudy(const fs::path &declaration);
     explicit ScientificStudy(NativeRecord publication);
+    ScientificStudy(const fs::path &declaration, const ScientificAdmissionObserver &observer);
+    ScientificStudy(NativeRecord publication, const ScientificAdmissionObserver &observer);
     // Bind application declarations to an unchanged, complete producer history.
     // Document byte spans must name raw sources already retained by the producer.
     static NativeRecord publish_annotations(const NativeRecord &producer,

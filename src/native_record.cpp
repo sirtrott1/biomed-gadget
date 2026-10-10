@@ -966,6 +966,16 @@ NativeRecord NativeRecord::at(std::size_t index) const {
     }
     return {state_,type,value,value_owner_};
 }
+std::optional<NativeRecord::PackedEncoding> NativeRecord::packed_encoding(std::size_t index) const {
+    require(kind() == NativeRecordKind::Array, "packed encoding requires an array");
+    const auto &value = std::get<V::Repeated>(value_->data).elements.at(index);
+    if (endpoint()->declarations->registry.at(type_).element != packed_value_type)
+        return std::nullopt;
+    const auto &p = parts(value);
+    return PackedEncoding{{unsigned_value(p.at(3)), unsigned_value(p.at(4)),
+                           unsigned_value(p.at(5))},
+                          machine::checked_size(unsigned_value(p.at(6))), state_->span(value)};
+}
 std::vector<std::string> NativeRecord::names() const {
     require(kind()==NativeRecordKind::Object,"native factor names require a product");
     std::vector<std::string> result;for(const auto &f:endpoint()->declarations->registry.at(type_).factors)result.push_back(state_->labels.at(f.key));return result;

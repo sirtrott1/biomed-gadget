@@ -903,12 +903,14 @@ struct AssayWorkspace::State {
                      std::shared_ptr<ScientificSession>>
         novelty_sessions;
     explicit State(const fs::path &path, AssayWorkspace::AdmittedSources supplied = {},
-                   std::optional<NativeRecord> admitted_publication = {}) {
+                   std::optional<NativeRecord> admitted_publication = {},
+                   const ScientificAdmissionObserver &observer = {}) {
         require(fs::is_regular_file(fs::symlink_status(path)),
                 "workspace manifest must be regular");
         root = fs::canonical(path).parent_path();
         this->manifest = admitted_publication ? RetainedRecord(std::move(*admitted_publication))
                                              : read_record(path);
+        if (observer) observer("workspace_record");
         if(this->manifest.has("schema") && (this->manifest.at("schema").text()=="gadget.assay.workspace.native.v1" || this->manifest.at("schema").text()=="gadget.assay.workspace.native.v2")) {
             publication=this->manifest.native();this->manifest=publication->at("manifest");
             const auto originals=publication->at("originals");
@@ -964,6 +966,7 @@ struct AssayWorkspace::State {
             const auto originals = item.at("originals");
             for (const auto &name : originals.native().names())
                 verify_artifact(originals.at(name).native());
+            if (observer) observer("workspace_artifacts");
             for (std::size_t p = 0; p < item.at("partitions").size(); ++p) {
                 const auto packet = item.at("partitions").at(p);
                 const auto packet_bytes = publication?std::string{}:local_artifact(root,packet);
@@ -980,11 +983,13 @@ struct AssayWorkspace::State {
                     require(entry.at("path").text()==packet.at("path").text(),"native biomedical publication path binding");
                     const auto bytes=entry.at("bytes").byte_source();
                     if(!publication_owners.contains(bytes.key())) {
-                        publication_owners.emplace(bytes.key(),std::make_shared<const ScientificStudy>(NativeRecord::decode(bytes.bytes())));
+                        auto record = NativeRecord::decode(bytes.bytes());
+                        if (observer) observer("workspace_study_record");
+                        publication_owners.emplace(bytes.key(), std::make_shared<const ScientificStudy>(std::move(record), observer));
                     }
                     admitted=publication_owners.at(bytes.key());
                 } else {
-                    admitted = std::make_shared<const ScientificStudy>(root / packet.at("path").text());
+                    admitted = std::make_shared<const ScientificStudy>(root / packet.at("path").text(), observer);
                 }
                 require(admitted->digest() == packet.at("source_digest").text(),
                         "workspace native packet source digest");
@@ -1011,6 +1016,7 @@ struct AssayWorkspace::State {
             const auto originals=publication->at("originals");
             for(std::size_t i=0;i<originals.size();++i)raw_artifacts.emplace(originals.at(i).at("path").text(),originals.at(i).at("bytes").byte_source());
         }
+        if (observer) observer("workspace_complete");
     }
     template <class Record>
     static Json artifact_reference(const Record &record) {
@@ -1060,6 +1066,8 @@ struct AssayWorkspace::State {
     }
 };
 AssayWorkspace::AssayWorkspace(const fs::path &path) : state_(std::make_unique<State>(path)) {}
+AssayWorkspace::AssayWorkspace(const fs::path &path, const ScientificAdmissionObserver &observer)
+    : state_(std::make_unique<State>(path, AdmittedSources{}, std::nullopt, observer)) {}
 AssayWorkspace::AssayWorkspace(const fs::path &path, AdmittedSources sources)
     : state_(std::make_unique<State>(path, std::move(sources))) {}
 AssayWorkspace::AssayWorkspace(const fs::path &path, AdmittedSources sources,

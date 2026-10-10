@@ -373,6 +373,18 @@ int main(int argc,char **argv) {
     equal_value(compact, expanded);
     check(storage::encode_rfcx(compact.endpoint()->source).bytes == original, "packing changed source relations");
     const auto compact_reopened = NativeRecord::decode(compact.encode());
+    const auto encoding = compact_reopened.packed_encoding(0);
+    check(encoding && encoding->bit_count && !encoding->bytes.empty(), "packed encoding was not exposed");
+    const auto &declarations = compact_reopened.endpoint()->declarations.value();
+    const composite::CompiledLayout packed_layout(declarations.registry, encoding->type,
+        declarations.profile, declarations.resource_limits);
+    const auto selected_bits = storage::encode_declared_bits(packed_layout, compact_reopened.at(0).value());
+    check(selected_bits.bit_count == encoding->bit_count &&
+              selected_bits.bytes.size() == encoding->bytes.size() &&
+              std::equal(selected_bits.bytes.begin(), selected_bits.bytes.end(), encoding->bytes.begin()),
+          "packed encoding does not bind its selected value");
+    check(!expanded.packed_encoding(0), "ordinary array reported a packed encoding");
+    rejects([&] { (void)compact_reopened.packed_encoding(compact_reopened.size()); });
     equal_value(compact_reopened, expanded);
     check(compact_reopened.encode() == compact.encode(), "packed canonical encoding changed");
     compact.write(directory / "packed.rfcxs");

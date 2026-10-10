@@ -52,6 +52,11 @@ class NativeRecord {
         std::optional<rfc::storage::NativeTemporalSeries> history = {},
         const NativeRecordObserver &observer = {});
   public:
+    struct PackedEncoding {
+        rfc::composite::DeclarationId type;
+        std::size_t bit_count;
+        std::span<const std::byte> bytes;
+    };
     // A new application publication has its own explicit namespace. Supplying
     // an endpoint retains its actual complex, tensor fields and existing codes.
     static NativeRecord create(const NativeRecordValue &value, std::uint64_t source_namespace,
@@ -101,6 +106,9 @@ class NativeRecord {
     bool has(std::string_view name) const;
     NativeRecord at(std::string_view name) const;
     NativeRecord at(std::size_t index) const;
+    // The immutable parent owns this encoding. An ordinary array returns no
+    // encoding; selection still checks the index against its actual count.
+    std::optional<PackedEncoding> packed_encoding(std::size_t index) const;
     std::vector<std::string> names() const;
     bool boolean() const;
     rfc::numeric::Integer integer() const;

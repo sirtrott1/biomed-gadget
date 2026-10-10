@@ -65,22 +65,85 @@ NativeRecord admit_record_view(const Json &input,RecordByteBindings bytes,const 
 }
 std::string native_declaration_digest(const NativeRecord &record) {
     const auto &declaration=record.endpoint()->declarations.value();
-    const rfc::composite::CompiledLayout layout(declaration.registry,record.type(),
-        declaration.profile,declaration.resource_limits);
+    const rfc::composite::PreparedLayoutRegistry registry(declaration.registry, declaration.resource_limits);
+    std::map<rfc::composite::DeclarationId, rfc::composite::CompiledLayout> layouts;
+    const auto layout_for = [&](rfc::composite::DeclarationId type) -> const rfc::composite::CompiledLayout & {
+        if (!layouts.contains(type))
+            layouts.emplace(type, rfc::composite::CompiledLayout(registry, type, declaration.profile));
+        return layouts.at(type);
+    };
+    const auto &layout = layout_for(record.type());
     const auto schema=rfc::storage::encode_declarations(layout);
     const auto bits=rfc::storage::encode_declared_bits(layout,record.value());
     return "sha256:"+sha256_chunks([&](const auto &sink) {
         const auto count=std::to_string(schema.size())+"\n"+std::to_string(bits.bit_count)+"\n";
         sink(std::as_bytes(std::span(count.data(),count.size())));sink(schema);sink(bits.bytes);
-        std::vector<NativeRecord> pending{record};
+        struct Frame {
+            NativeRecord record;
+            std::vector<std::string> names;
+            std::size_t next{};
+            bool entered{};
+            bool packed_scope{};
+        };
+        std::vector<Frame> pending{{record, {}, 0, false, false}};
+        std::map<rfc::composite::DeclarationId, std::vector<std::byte>> packed_schemas;
         while(!pending.empty()) {
-            const auto item=pending.back();pending.pop_back();
-            if(item.kind()==NativeRecordKind::Text || item.kind()==NativeRecordKind::Bytes)sink(item.bytes());
-            else if(item.kind()==NativeRecordKind::Object) {
-                const auto names=item.names();for(auto name=names.rbegin();name!=names.rend();++name)pending.push_back(item.at(*name));
-            } else if(item.kind()==NativeRecordKind::Array) {
-                for(auto i=item.size();i>0;--i)pending.push_back(item.at(i-1));
+            auto &frame = pending.back();
+            const auto kind = frame.record.kind();
+            if (!frame.entered) {
+                frame.entered = true;
+                if (kind == NativeRecordKind::Text || kind == NativeRecordKind::Bytes)
+                    sink(frame.record.bytes());
+                if (kind == NativeRecordKind::Object) frame.names = frame.record.names();
+                else if (kind != NativeRecordKind::Array) {
+                    pending.pop_back();
+                    continue;
+                }
             }
+            const auto size = kind == NativeRecordKind::Object ? frame.names.size() : frame.record.size();
+            if (frame.next == size) { pending.pop_back(); continue; }
+            const auto index = frame.next++;
+            const auto &container = declaration.registry.at(frame.record.type());
+            auto stored_type = kind == NativeRecordKind::Object ? container.factors.at(index).type
+                                                               : container.element;
+            auto packed_scope = frame.packed_scope;
+            if (kind == NativeRecordKind::Array) {
+                if (const auto encoding = frame.record.packed_encoding(index)) {
+                    stored_type = encoding->type;
+                    packed_scope = true;
+                    if (!packed_schemas.contains(encoding->type)) {
+                        packed_schemas.emplace(encoding->type,
+                            rfc::storage::encode_declarations(layout_for(encoding->type)));
+                    }
+                    const auto &schema = packed_schemas.at(encoding->type);
+                    const auto framing = "gadget.packed.value\n" + std::to_string(schema.size()) +
+                        "\n" + std::to_string(encoding->bit_count) + "\n";
+                    sink(std::as_bytes(std::span(framing.data(), framing.size())));
+                    sink(schema);
+                    sink(encoding->bytes);
+                } else if (declaration.registry.at(stored_type).kind == rfc::composite::DeclarationKind::Alternative) {
+                    const auto &elements = std::get<rfc::composite::DeclaredValue::Repeated>(frame.record.value().data).elements;
+                    const auto &alternative = std::get<rfc::composite::DeclaredValue::Alternative>(elements.at(index).data);
+                    const auto ordinal = declaration.registry.alternative_ordinal(stored_type, alternative.key);
+                    stored_type = declaration.registry.at(stored_type).factors.at(ordinal).type;
+                }
+            }
+            auto child = kind == NativeRecordKind::Object ? frame.record.at(frame.names.at(index))
+                                                         : frame.record.at(index);
+            // A packet may name an owning declaration outside its encoded
+            // tree. Bind that resolved value as well as its reference address.
+            if (packed_scope && stored_type != child.type()) {
+                if (!packed_schemas.contains(child.type()))
+                    packed_schemas.emplace(child.type(), rfc::storage::encode_declarations(layout_for(child.type())));
+                const auto &resolved_schema = packed_schemas.at(child.type());
+                const auto resolved_bits = rfc::storage::encode_declared_bits(layout_for(child.type()), child.value());
+                const auto framing = "gadget.resolved.value\n" + std::to_string(resolved_schema.size()) +
+                    "\n" + std::to_string(resolved_bits.bit_count) + "\n";
+                sink(std::as_bytes(std::span(framing.data(), framing.size())));
+                sink(resolved_schema);
+                sink(resolved_bits.bytes);
+            }
+            pending.push_back({std::move(child), {}, 0, false, packed_scope});
         }
     });
 }

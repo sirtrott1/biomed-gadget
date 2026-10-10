@@ -178,7 +178,8 @@ Json ScientificStudy::State::evidence(const Json &value) const {
         value, documents, false, declaration.at("schema").text() != "gadget.scientific.study.v1");
 }
 ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> publication,
-                             std::optional<NativeTemporalSeries> producer) {
+                             std::optional<NativeTemporalSeries> producer,
+                             const ScientificAdmissionObserver &observer) {
     const bool generated=producer.has_value();
     if(!publication) {
         require(fs::is_regular_file(fs::symlink_status(path)), "declaration must be a regular file");
@@ -222,7 +223,7 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
         }
     }
     if(publication && publication->at("schema").text()=="gadget.biomedical.native.v3") {
-        root=fs::absolute(path).parent_path();admit_compact(std::move(*publication));return;
+        root=fs::absolute(path).parent_path();admit_compact(std::move(*publication), observer);return;
     }
     if(publication)require(publication->at("schema").text()=="gadget.biomedical.native.v1" ||
         publication->at("schema").text()=="gadget.biomedical.native.v2","unsupported native biomedical declaration");
@@ -907,11 +908,20 @@ Json ScientificStudy::State::catalog() const {
     return result;
 }
 ScientificStudy::ScientificStudy(const fs::path &path) : ScientificStudy(std::make_unique<State>(path)) {}
+ScientificStudy::ScientificStudy(const fs::path &path, const ScientificAdmissionObserver &observer)
+    : ScientificStudy(std::make_unique<State>(path, std::nullopt, std::nullopt, observer)) {
+    if (observer) observer("study_complete");
+}
 std::shared_ptr<const ScientificStudy> ScientificStudy::admit_generated(const fs::path &path,NativeTemporalSeries history) {
     return std::shared_ptr<const ScientificStudy>(new ScientificStudy(std::make_unique<State>(path,std::nullopt,std::move(history))));
 }
 ScientificStudy::ScientificStudy(NativeRecord publication)
     :ScientificStudy(std::make_unique<State>(fs::path("native-publication-"+std::to_string(new_native_record_namespace())),std::move(publication))) {}
+ScientificStudy::ScientificStudy(NativeRecord publication, const ScientificAdmissionObserver &observer)
+    : ScientificStudy(std::make_unique<State>(fs::path("native-publication-" +
+          std::to_string(new_native_record_namespace())), std::move(publication), std::nullopt, observer)) {
+    if (observer) observer("study_complete");
+}
 ScientificStudy::ScientificStudy(std::unique_ptr<State> state) :state_(std::move(state)) {
     auto index = [&](const std::string &section, const auto &items) {
         auto &keys = state_->catalog_keys[section];

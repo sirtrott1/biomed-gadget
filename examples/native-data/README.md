@@ -154,6 +154,15 @@ composite binary formats are unchanged. Packed collections reduce expanded
 application value storage; the actual scientific complex, fields, source bytes
 and complete results still occupy memory and storage.
 
+New compact biomedical annotations pack their complete top level collections,
+including fields, contexts and document bindings. The declared producer history
+and its measured tensors are retained unchanged. Ordinary and earlier study
+annotations remain readable. `packed_encoding(index)` exposes an array member's
+actual native type, bit count and encoded byte span; retain the parent while
+using that span. Declaration digests bind packed schemas and complete encoded
+payloads together with their referenced original bytes. Digest traversal selects
+one member at a time and preserves factor and collection order.
+
 The consuming `derive` and `create_from_endpoint` overloads and
 `retain_operation` accept an optional `NativeRecordObserver`. It reports
 completed source declaration, composite value, declaration channel, canonical

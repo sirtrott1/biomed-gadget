@@ -3,6 +3,7 @@
 #include <iostream>
 #include <map>
 #include <rfc/storage/file_io.hpp>
+#include <rfc/storage/declaration_codec.hpp>
 #include <rfc/storage/rfcx.hpp>
 #include <set>
 
@@ -133,6 +134,53 @@ int main(int argc, char **argv) {
           "native derivation generated a JSON authority");
     AssayWorkspace derived(root / "derived/workspace.rfcxs");
     auto study = derived.study("coverage");
+    check(study->native_publication().format_version() == 4 &&
+              study->native_publication().at("study").at("fields").packed_encoding(0).has_value(),
+          "study field declarations were expanded during publication");
+    std::vector<std::string> admission_stages;
+    ScientificStudy observed(study->native_publication(), [&](std::string_view name) {
+        admission_stages.emplace_back(name);
+    });
+    check(observed.digest() == study->digest() && admission_stages.back() == "study_complete" &&
+              std::find(admission_stages.begin(), admission_stages.end(), "study_prefix") != admission_stages.end(),
+          "observed study admission changed its source or omitted prefix checks");
+    const auto original_workspace = rfc::storage::read_file_exact(root / "derived/workspace.rfcxs",
+        native_data_limits().max_archive_bytes);
+    refuse([&] {
+        AssayWorkspace aborted(root / "derived/workspace.rfcxs", [](std::string_view) {
+            throw std::runtime_error("stop admission");
+        });
+    });
+    check(original_workspace == rfc::storage::read_file_exact(root / "derived/workspace.rfcxs",
+              native_data_limits().max_archive_bytes), "observer failure changed its input");
+    const auto packed_number = [](unsigned int value) {
+        using N = NativeRecordValue;
+        return NativeRecord::create(N(N::PackedArray{1, [value](const auto &emit) {
+            emit(N(rfc::numeric::Integer(value)));
+        }}), 94301);
+    };
+    const auto first = packed_number(85), second = packed_number(86);
+    const auto &declaration = first.endpoint()->declarations.value();
+    const rfc::composite::CompiledLayout address_layout(declaration.registry, first.type(),
+        declaration.profile, declaration.resource_limits);
+    check(rfc::storage::encode_declared_bits(address_layout, first.value()).bytes ==
+              rfc::storage::encode_declared_bits(address_layout, second.value()).bytes,
+          "digest fixture must retain identical packed addresses");
+    check(native_declaration_digest(first) != native_declaration_digest(second) &&
+              native_declaration_digest(first) == native_declaration_digest(NativeRecord::decode(first.encode())),
+          "packed coefficient bytes were omitted from the declaration digest");
+    const auto packed_reference = [](unsigned int value) {
+        using N = NativeRecordValue;
+        auto payload = std::make_shared<const N>(rfc::numeric::Integer(value));
+        return NativeRecord::create(N(N::PackedArray{1, [payload](const auto &emit) {
+            emit(N(N::Object{{{"value", N(N::Owned{0, {}, {}, payload})}}}));
+        }}), 94302);
+    };
+    const auto reference_first = packed_reference(85), reference_second = packed_reference(86);
+    check(native_declaration_digest(reference_first) != native_declaration_digest(reference_second) &&
+              native_declaration_digest(reference_first) ==
+                  native_declaration_digest(NativeRecord::decode(reference_first.encode())),
+          "owning declaration resolved from a packed reference was omitted from its digest");
     check(derived.native_publication().at("manifest").at("design").at("question").text() ==
                   design.at("question").text() &&
               study->declaration().at("design").at("question").text() ==
