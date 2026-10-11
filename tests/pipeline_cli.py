@@ -49,7 +49,7 @@ recipe_schemas=json.loads((schema_root/'pipeline-default.schema.json').read_text
 recipe_schemas={entry['properties']['method']['const']:entry for entry in recipe_schemas}
 assert set(recipe_schemas)=={recipe['method'] for recipe in profiles['recipes']}
 for recipe in profiles['recipes']:
-    assert recipe['native_materialization'] == (recipe['operation'] in ['controlled_coverage','spatial_relations','feature_counts','expression_allocations'])
+    assert recipe['native_materialization'] == (recipe['operation'] in ['controlled_coverage','spatial_relations','feature_counts','expression_allocations','aggregate_assay','design_aggregation'])
     parameters=recipe_schemas[recipe['method']]['properties']['parameters']
     refs=[value['$ref'] for value in parameters.get('properties',{}).values() if '$ref' in value]
     for ref in refs:
@@ -96,10 +96,10 @@ index = run('pipeline', '--workspace', manifest, '--request', save('custom.json'
 assert [r['id'] for r in index['results']] == ['sum','after','original']
 assert index['results'][1]['source_digest'] == index['results'][0]['derived_digest']
 agg = json.loads((root/'custom-run'/'sum'/'workspace'/'lineage.json').read_text()) if (root/'custom-run'/'sum'/'workspace'/'lineage.json').exists() else None
-assert (root/'custom-run'/'sum'/'workspace'/'workspace.json').exists()
+assert (root/'custom-run'/'sum'/'workspace'/'workspace.rfcxs').exists()
 native = json.loads((root/'custom-run'/'original'/'results'/'partition-0.json').read_text())
 assert Fraction(native['result']['sum']['rational']) == 19
-run('replay-derivation','--workspace',root/'custom-run'/'sum'/'workspace'/'workspace.json','--assay','summed','--out',root/'replayed')
+run('replay-derivation','--workspace',root/'custom-run'/'sum'/'workspace'/'workspace.rfcxs','--assay','summed','--out',root/'replayed')
 
 # A model's typed proposal uses the same admission and execution path.
 proposal = dict(schema='gadget.pipeline.proposal.v1', action='pipeline', source_digest=plan['source_digest'], profile='rna_seq', question='Inspect measured support', steps=[dict(id='support',type='query',input='source',request_json=json.dumps(request('native_query',assay='counts',query=dict(operation='coverage',field='all.A'))))])
@@ -193,7 +193,7 @@ result=leaf('pseudobulk-recipe','paired')['result']
 assert result['reported']==2 and result['missing']==1
 assert [f['entity'] for f in result['features']]==['g1','g2']
 assert [Fraction(f['mean_difference']) for f in result['features']]==[-8,-4]
-run('replay-derivation','--workspace',root/'pseudobulk-recipe/grouped/workspace/workspace.json','--assay','groups','--out',root/'pseudobulk-replay')
+run('replay-derivation','--workspace',root/'pseudobulk-recipe/grouped/workspace/workspace.rfcxs','--assay','groups','--out',root/'pseudobulk-replay')
 
 for name,mutate in [
     ('overlapping-cell-groups',lambda p:p['observation_groups'][1]['members'].append(dict(id='A',coefficient='1'))),

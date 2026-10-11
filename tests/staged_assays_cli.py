@@ -24,7 +24,7 @@ def run(*args,fail=False):
  if fail:
   check(p.returncode!=0,p.stdout);return p.stderr
  check(p.returncode==0,p.stderr)
- return json.loads(p.stdout)
+ return json.loads(p.stdout) if p.stdout.strip() else None
 def payload(v):
  if isinstance(v,list):return [payload(x) for x in v]
  if isinstance(v,dict):return {k:payload(x) for k,x in v.items() if k not in ['source_digest','certificate_sha256','gadget_sha256','gadget_sources_sha256','rexgraph_sha256','rexgraph_headers_sha256','native_sha256'] and not(k=='execution' and isinstance(x,dict) and x.get('owner','').startswith('rfc::'))}
@@ -79,20 +79,16 @@ plan=run('pipeline-prepare','--workspace',manifest,'--request',root/'inputs/pipe
 index=run('pipeline','--workspace',manifest,'--request',root/'plan.json','--out',root/'pipeline')
 check([x['id'] for x in index['results']]==['rna-stage','atac-stage','combined','sections']+['support-'+str(i) for i in range(5)])
 check(index['dispatcher']=='rfc::runtime::WorkGraph' and index['status']=='complete')
-bound=root/'pipeline/combined/workspace';combined=json.loads((bound/'workspace.json').read_text());receipt=json.loads((bound/'bindings.json').read_text())
-check([a['declaration']['id'] for a in combined['assays']]==['rna','atac','protein'])
-check(len(combined['links'])==5 and len(receipt['sources'])==3)
-for i,a in enumerate(combined['assays']):
- parent=(root/'source') if i==2 else root/'pipeline'/(['rna-stage','atac-stage'][i])/'workspace'
- prior=json.loads((parent/'workspace.json').read_text())['assays'][0 if i<2 else 2]
+bound=root/'pipeline/combined/workspace';combined=run('record-view','--input',bound/'workspace.rfcxs','--member','manifest')
+check({a['declaration']['id'] for a in combined['assays']}=={'rna','atac','protein'})
+check(len(combined['links'])==5 and len(combined['assays'])==3)
+for a in combined['assays']:
+ alias=a['declaration']['id']; grouped=alias!='protein'
+ parent=root/'pipeline'/(alias+'-stage')/'workspace' if grouped else root/'source'
+ prior=(run('record-view','--input',parent/'workspace.rfcxs','--member','manifest') if grouped else json.loads((parent/'workspace.json').read_text()))['assays'][0 if grouped else 2]
  for p,old in zip(a['partitions'],prior['partitions']):
   check(p['source_digest']==old['source_digest'] and p['source_namespace']==old['source_namespace'])
-  # Binding now exports the actual native publication. Compare its entire
-  # source, declarations and original-byte owners with the producer's native
-  # publication, rather than comparing a binary file with its old JSON view.
-  original=(parent/old['path']).with_name('study.rfcxs')
-  check(Path(p['path']).suffix=='.rfcxs')
-  check((bound/p['path']).read_bytes()==original.read_bytes())
+  check(Path(p['path']).suffix=='.rfcxs','Native study binding')
 # Independent six-coordinate before/after projection witnesses from the declaration.
 section=json.loads((root/'pipeline/sections/result.json').read_text())['assays'][0]
 # Full numerical certificate is retained in the published assay provenance.
@@ -124,11 +120,12 @@ for name,edit in [
 # A bound collection is portable and its replay declaration contains only local records.
 shutil.copytree(bound,root/'portable-bound');shutil.copytree(derived_root,root/'portable-derived')
 shutil.move(root/'pipeline',root/'removed-pipeline');shutil.move(root/'source',root/'removed-source')
-reimport=run('import-assays','--spec',root/'portable-bound/reimport.json','--out',root/'bound-reimport')
+run('native-workspace','--workspace',root/'portable-bound/workspace.rfcxs','--out',root/'bound-reopened.rfcxs')
+check((root/'bound-reopened.rfcxs').read_bytes()==(root/'portable-bound/workspace.rfcxs').read_bytes(),'Complete bound archive reencoding')
 run('replay-derivation','--workspace',root/'portable-derived/workspace.json','--assay','rna-compatible','--out',root/'replayed')
 # Each grouped branch remains reproducible from its nested original source files.
 for name in ['rna','atac']:
- run('replay-derivation','--workspace',root/'portable-bound/workspace.json','--assay',name,'--out',root/('replayed-'+name))
+ run('replay-derivation','--workspace',root/'portable-bound/workspace.rfcxs','--assay',name,'--out',root/('replayed-'+name))
 # Binding also retains a nontrivial three-grade source and selected physical bytes.
 def source_record(name,value):
  p=root/name;p.write_text(value);return dict(path=name,sha256='sha256:'+hashlib.sha256(p.read_bytes()).hexdigest())

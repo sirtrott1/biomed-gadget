@@ -1,5 +1,6 @@
 #include "genomic_detail.hpp"
 #include <algorithm>
+#include <gadget/record_view.hpp>
 #include <iterator>
 
 namespace gadget::assay_detail {
@@ -170,7 +171,8 @@ CompiledDesign compile_design(const Axis &axis, const Json &design, const std::s
 
 Json design_aggregation(const Matrix &matrix, const Json &declaration, const Json &request,
                         const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
-                        const std::vector<NativeAssayPartition> &partitions) {
+                        const std::vector<NativeAssayPartition> &partitions,
+                        std::optional<AssayFieldsSource> *retained) {
     members(request,
             {"schema", "operation", "assay", "feature_design", "observation_design", "map_method",
              "map_evidence", "support_policy"},
@@ -189,12 +191,19 @@ Json design_aggregation(const Matrix &matrix, const Json &declaration, const Jso
     auto out = partitions.empty()
                    ? aggregate_analysis(matrix, declaration, compiled, reservation)
                    : native_aggregate_analysis(matrix.features, matrix.observations, partitions,
-                                               declaration, compiled, reservation);
+                                               declaration, compiled, reservation, retained);
     auto design = Json::object();
     design.set("features", features.certificate);
     design.set("observations", observations.certificate);
     design.set("compiled_request", compiled);
     out.set("design", design);
+    if (retained) {
+        require(retained->has_value(), "design aggregation fields missing");
+        auto &value = std::get<NativeRecordValue::Object>(retained->value().declaration.data);
+        for (auto &[name, summary] : value.members)
+            if (name == "summary")
+                summary = import_record_view(out);
+    }
     return out;
 }
 } // namespace gadget::assay_detail

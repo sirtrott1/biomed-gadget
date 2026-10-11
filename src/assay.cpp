@@ -18,6 +18,42 @@ using namespace assay_detail;
 using namespace rfc::storage;
 using rfc::numeric::SparseRationalEntry;
 using rfc::numeric::SparseRationalTensor;
+void admit_native_links(
+    const std::map<std::string, std::vector<std::shared_ptr<const ScientificStudy>>> &sources,
+    const Json &links) {
+    std::set<std::string> ids;
+    std::map<std::string, std::map<std::string, std::set<std::uint64_t>>> observations;
+    for (std::size_t i = 0; i < links.size(); ++i) {
+        const auto link = links.at(i);
+        members(link, {"id", "left_assay", "left_observation", "right_assay", "right_observation",
+                       "relation", "evidence"});
+        require(ids.insert(text(link.at("id"), source_byte_limit())).second,
+                "duplicate binding link");
+        for (const auto *side : {"left", "right"}) {
+            const auto assay = link.at(std::string(side) + "_assay").text();
+            const auto observation = link.at(std::string(side) + "_observation").text();
+            require(sources.contains(assay) && sources.at(assay).size() == 1,
+                    "binding link requires an owning assay");
+            if (!observations.contains(assay)) {
+                const auto owner = sources.at(assay).front();
+                const auto endpoint = owner->endpoint();
+                const auto fields = owner->declaration().at("fields");
+                std::set<std::uint64_t> declared;
+                for (std::size_t f = 0; f < fields.size(); ++f)
+                    declared.insert(key(fields.at(f).at("key")));
+                auto &names = observations[assay];
+                for (const auto &tensor : endpoint->tensors)
+                    if (declared.contains(tensor.key) && tensor.role == TemporalTensorRole::Field)
+                        names[tensor.interpretation].insert(tensor.key);
+            }
+            const auto &names = observations.at(assay);
+            require(names.contains(observation) && names.at(observation).size() == 1,
+                    "binding link observation is absent or ambiguous");
+        }
+        (void)text(link.at("relation"), source_byte_limit());
+        (void)text(link.at("evidence"), source_byte_limit());
+    }
+}
 void admit_matrix_spec(const Json &spec) {
     members(spec,
             {"id", "kind", "format", "source", "features", "observations", "source_namespace",
@@ -935,7 +971,6 @@ struct AssayWorkspace::State {
         if(compact) {
             native_members(manifest.native(),{"schema","id","design","assays","resources","links","gadget_sha256","rexgraph_sha256"});
             require(publication && publication->at("schema").text()=="gadget.assay.workspace.native.v2","native collection publication required");
-            require(manifest.at("resources").size()==0 && manifest.at("links").size()==0,"native study collection requires separately admitted resource/link bindings");
         } else {
         native_members(manifest.native(),
                 {"schema", "id", "design", "import_spec", "reimport", "assays", "resources",
@@ -1010,6 +1045,7 @@ struct AssayWorkspace::State {
         }
         for (std::size_t i = 0; i < manifest.at("resources").size(); ++i) {
             const auto item = manifest.at("resources").at(i);
+            if (compact) admit_resource(static_cast<Json>(item.at("declaration")));
             const auto id = text(item.at("declaration").at("id"), source_byte_limit());
             require(physical.emplace(id, this->manifest.member("resources").element(i)).second, "duplicate workspace resource");
             verify_artifact(item.at("original").native());
@@ -1019,6 +1055,7 @@ struct AssayWorkspace::State {
                 for (std::size_t p = 0; p < item.at("provenance").size(); ++p)
                     verify_artifact(item.at("provenance").at(p).native());
         }
+        if (compact) admit_native_links(sources, static_cast<Json>(manifest.at("links")));
         if(!publication) {
             publication=admit_native_workspace(root,static_cast<Json>(manifest),sources);this->manifest=publication->at("manifest");
             for(std::size_t i=0;i<manifest.at("assays").size();++i)assays.at(manifest.at("assays").at(i).at("declaration").at("id").text())=this->manifest.member("assays").element(i);
@@ -1326,19 +1363,86 @@ std::shared_ptr<const AssayWorkspace> AssayWorkspace::bind_workspaces(
         native_selection=native_selection || declaration.has("schema");
     }
     if(native_selection) {
-        require(request.at("resources").size()==0 && request.at("links").size()==0,"native study bindings require separately admitted resource and link declarations");
         std::map<std::string,std::shared_ptr<const ScientificStudy>> selected;
+        AdmittedSources retained;
         for(std::size_t a=0;a<request.at("assays").size();++a) {
             const auto selector=request.at("assays").at(a);const auto source=source_for(selector);
             require(source->state_->sources.at(selector.at("assay").text()).size()==1,"native collection binding requires an indivisible admitted study");
             require(selected.emplace(text(selector.at("id")),source->study(selector.at("assay").text())).second,"duplicate native assay alias");
         }
-        const auto publication=publish_studies(native_request,request.at("id").text(),selected);
+        for (const auto &[id, source] : selected) retained.emplace(id, std::vector{source});
+        admit_native_links(retained, request.at("links"));
+        auto publication=publish_studies(native_request,request.at("id").text(),selected);
+        if (request.at("resources").size() || request.at("links").size()) {
+            using N = NativeRecordValue;
+            auto value = publication.unbound_value();
+            auto &root = std::get<N::Object>(value.data).members;
+            const auto member = [](auto &items, const std::string &name) -> N & {
+                const auto found = std::find_if(items.begin(), items.end(),
+                    [&](const auto &item) { return item.first == name; });
+                require(found != items.end(), "native binding declaration member absent");
+                return found->second;
+            };
+            auto &manifest = std::get<N::Object>(member(root, "manifest").data).members;
+            auto &originals = std::get<N::Array>(member(root, "originals").data).elements;
+            std::vector<RawByteSource> raw;
+            std::uint64_t next = 1;
+            for (const auto &source : publication.raw_sources()) {
+                require(source.key() < std::numeric_limits<std::uint64_t>::max(),
+                        "binding byte identity space exhausted");
+                next = std::max(next, source.key() + 1);
+            }
+            N::Array resources;
+            std::set<std::string> aliases;
+            for (std::size_t r = 0; r < request.at("resources").size(); ++r) {
+                const auto selector = request.at("resources").at(r);
+                members(selector, {"input", "resource", "id"});
+                const auto source = source_for(selector);
+                const auto id = text(selector.at("id"), source_byte_limit());
+                require(aliases.insert(id).second &&
+                        source->state_->physical.contains(selector.at("resource").text()),
+                        "duplicate alias or unknown selected resource");
+                auto item = Json::parse(source->state_->physical.at(selector.at("resource").text()).dump());
+                auto declaration = Json::parse(item.at("declaration").dump());
+                declaration.set("id", Json::string(id));
+                const auto capture = [&](const Json &artifact, const std::string &suffix) {
+                    const auto *owner = source->state_->retained_artifact(artifact);
+                    require(owner && next < std::numeric_limits<std::uint64_t>::max(),
+                            "binding original byte owner absent or identity exhausted");
+                    const auto existing = std::find_if(raw.begin(), raw.end(),
+                        [&](const auto &source) { return source.shares_owner(*owner); });
+                    const auto key = existing == raw.end() ? next++ : existing->key();
+                    if (existing == raw.end()) raw.push_back(owner->rekey(key));
+                    const auto path = "resources/" + std::to_string(r) + "/" + suffix;
+                    originals.emplace_back(N::Object{{{"path", N(path)},
+                        {"bytes", N(N::ByteSpan{key, 0, owner->bytes().size(), false})}}});
+                    auto record = Json::parse(artifact.dump());
+                    record.set("path", Json::string(path));
+                    return record;
+                };
+                item.set("original", capture(item.at("original"), "source"));
+                declaration.set("source", item.at("original"));
+                if (item.has("reference_original")) {
+                    item.set("reference_original", capture(item.at("reference_original"), "reference"));
+                    declaration.set("reference_source", item.at("reference_original"));
+                }
+                if (item.has("provenance")) {
+                    auto records = Json::array();
+                    for (std::size_t p = 0; p < item.at("provenance").size(); ++p)
+                        records.push(capture(item.at("provenance").at(p), "provenance-" + std::to_string(p)));
+                    item.set("provenance", records);
+                    declaration.set("provenance", records);
+                }
+                item.set("declaration", declaration);
+                resources.elements.push_back(import_record_view(item));
+            }
+            member(manifest, "resources") = N(std::move(resources));
+            member(manifest, "links") = import_record_view(request.at("links"));
+            publication = publication.derive(std::move(value), std::move(raw));
+        }
         fs::create_directories(fs::absolute(destination).parent_path());
         const auto stage=private_directory(fs::absolute(destination).parent_path(),".gadget-native-bind-");
         struct Cleanup {fs::path path;~Cleanup(){std::error_code ec;fs::remove_all(path,ec);}} cleanup{stage};
-        AdmittedSources retained;
-        for (const auto &[id, source] : selected) retained.emplace(id, std::vector{source});
         auto workspace = std::shared_ptr<const AssayWorkspace>(new AssayWorkspace(
             destination / "workspace.rfcxs", std::move(retained), publication));
         publication.write(stage/"workspace.rfcxs");
@@ -1643,6 +1747,8 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
     if (operation == "feature_counts" ||
         (operation == "expression_allocations" && !request.has("coupling")))
         return render_record_view(execute_assignment(admit_record_view(request), resources).at("result"));
+    if (operation == "aggregate_assay" || operation == "design_aggregation")
+        return render_record_view(execute_aggregation(admit_record_view(request), resources, {}, false).at("result"));
     auto result = Json::object();
     if (operation == "query_batch") {
         result = query_batch(*this, request, resources);
@@ -1720,48 +1826,6 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
                 "persistence requires an indivisible source carrier");
         auto reservation = resources->reserve(1);
         result = relational_persistence(*study(id), request);
-    } else if (operation == "aggregate_assay" || operation == "design_aggregation") {
-        require(state_->assays.contains(text(request.at("assay"))), "unknown aggregate assay");
-        const auto source = state_->assays.at(request.at("assay").text());
-        auto declaration = Json::parse(source.at("declaration").dump());
-        const auto originals = source.at("originals");
-        declaration.set("source", originals.at("matrix"));
-        for (const auto *name : {"features", "observations", "missing"})
-            if (originals.has(name))
-                declaration.set(name, originals.at(name));
-        const auto workers = request.has("workers")
-                                 ? count(request.at("workers"), resources->coordinator().capacity(),
-                                         "aggregation workers")
-                                 : 1;
-        require(workers > 0, "aggregation workers must be positive");
-        auto reservation = resources->reserve(workers);
-        Matrix axes;
-        axes.features = read_axis(state_->artifact( originals.at("features")));
-        axes.observations = read_axis(state_->artifact( originals.at("observations")));
-        const auto &axis = declaration.at("carrier").text() == "features" ? axes.features
-                                                                         : axes.observations;
-        std::vector<NativeAssayPartition> partitions;
-        const auto packets = source.at("partitions");
-        require(packets.size() > 0, "native aggregation requires stored packets");
-        for (std::size_t p = 0; p < packets.size(); ++p) {
-            const auto packet = packets.at(p);
-            const auto begin = count(packet.at("begin"), axis.ids.size(), "native packet begin");
-            const auto end = count(packet.at("end"), axis.ids.size(), "native packet end");
-            require(end > begin, "native packet range");
-            const auto ids = packet.at("carrier_ids");
-            require(ids.size() == end - begin, "native packet identity count");
-            for (std::size_t i = 0; i < ids.size(); ++i)
-                require(ids.at(i).text() == axis.ids[begin + i], "native packet axis identity/order");
-            const auto owner = study(request.at("assay").text(), p);
-            require(owner->native_history()->source_namespace() == key(packet.at("source_namespace")) &&
-                        owner->digest() == packet.at("source_digest").text(),
-                    "native packet publication witness");
-            partitions.push_back({begin, end, owner});
-        }
-        result = operation == "design_aggregation"
-                     ? design_aggregation(axes, declaration, request, reservation, partitions)
-                     : native_aggregate_analysis(axes.features, axes.observations, partitions,
-                                                 declaration, request, reservation);
     } else if (operation == "spatial_relations") {
         require(state_->assays.contains(text(request.at("assay"))), "unknown spatial assay");
         auto reservation = resources->reserve(1);
@@ -1989,13 +2053,17 @@ Json AssayWorkspace::materialize(const Json &request, const fs::path &destinatio
     } cleanup{stage};
     auto provenance = Json::array();
     std::size_t retained_inputs = 0;
-    std::set<std::string> retained_hashes;
+    std::map<std::string, Json> retained_artifacts;
     const auto retain = [&](const std::string &bytes) {
-        if (!retained_hashes.insert(sha256(bytes)).second)
-            return;
+        const auto digest = sha256(bytes);
+        if (retained_artifacts.contains(digest))
+            return retained_artifacts.at(digest);
         const auto path = "input-" + std::to_string(retained_inputs++);
         write_text(stage / path, bytes);
-        provenance.push(file_record(path, bytes));
+        const auto record = file_record(path, bytes);
+        provenance.push(record);
+        retained_artifacts.emplace(digest, record);
+        return record;
     };
     const auto lineage = certificate.dump() + "\n";
     retain(lineage);
@@ -2042,6 +2110,12 @@ Json AssayWorkspace::materialize(const Json &request, const fs::path &destinatio
     {
         std::string quantity, units;
         if (op == "assay_sections") {
+            const bool native_source = state_->manifest.at("schema").text() == "gadget.assays.workspace.v2";
+            if (native_source) {
+                const auto bytes = native_publication().encode();
+                descriptor.set("native_workspace", retain(std::string(
+                    reinterpret_cast<const char *>(bytes.data()), bytes.size())));
+            }
             const auto view_id = request.at("view").text(),
                        component = request.at("component").text();
             require(component == "input" || component == "compatible" || component == "residual",
@@ -2055,7 +2129,7 @@ Json AssayWorkspace::materialize(const Json &request, const fs::path &destinatio
                 if (view.at("id").text() == view_id)
                     selected = v;
                 const auto source = state_->assays.at(view.at("assay").text());
-                if (seen.insert(view.at("assay").text()).second) {
+                if (!native_source && seen.insert(view.at("assay").text()).second) {
                     originals.push(source.at("declaration"));
                     const auto files = source.at("originals");
                     for (const auto &name : files.native().names()) {
@@ -2424,7 +2498,10 @@ Json AssayWorkspace::replay_derivation(const std::string &assay_id, const fs::pa
     import.set("resources", images);
     import.set("links", Json::array());
     Json catalog;
-    if (assays.size() == 0 && images.size() == 0) {
+    if (lineage.has("native_workspace")) {
+        const auto path = stage / restore(lineage.at("native_workspace")).at("path").text();
+        catalog = AssayWorkspace(path).materialize(request, destination, resources);
+    } else if (assays.size() == 0 && images.size() == 0) {
         require(request.at("recipe").at("operation").text() == "constrained_allocations",
                 "resource-free replay requires a fully declared constraint system");
         // Every generating input is in the retained request. A new empty source
@@ -2628,6 +2705,138 @@ AssayWorkspace::execute_assignment(const NativeRecord &request,
                             source_namespace.value_or(new_native_record_namespace()),
                             std::move(fields.sources), request, std::move(certificate));
 }
+NativeRecord
+AssayWorkspace::execute_aggregation(const NativeRecord &request,
+                                    std::shared_ptr<CpuResources> resources,
+                                    std::optional<std::uint64_t> source_namespace,
+                                    bool retain_source) const {
+    const auto query = render_record_view(request);
+    using N = NativeRecordValue;
+    require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
+    if (!resources) resources = CpuResources::local();
+    const auto operation = query.at("operation").text();
+    require(state_->assays.contains(text(query.at("assay"))), "unknown aggregate assay");
+    const auto source = state_->assays.at(query.at("assay").text());
+    auto declaration = Json::parse(source.at("declaration").dump());
+    const auto originals = source.at("originals");
+    if (originals.has("matrix")) declaration.set("source", originals.at("matrix"));
+    for (const auto *name : {"features", "observations", "missing"})
+        if (originals.has(name))
+            declaration.set(name, originals.at(name));
+    const auto workers = query.has("workers")
+                             ? count(query.at("workers"), resources->coordinator().capacity(),
+                                     "aggregation workers")
+                             : 1;
+    require(workers > 0, "aggregation workers must be positive");
+    auto reservation = resources->reserve(workers);
+    Matrix axes;
+    const bool derived = declaration.has("schema");
+    if (derived) {
+        const auto owner = study(query.at("assay").text());
+        const auto fields = owner->producer_publication().at("result").at("result");
+        require(fields.at("schema").text() == "gadget.aggregation.fields.v1",
+                "native aggregation requires declared aggregate axes");
+        const auto protocol = owner->producer_publication().at("request_publication").bytes();
+        const auto axis = [&](const NativeRecord &ids) {
+            Axis result;
+            result.bytes.assign(reinterpret_cast<const char *>(protocol.data()), protocol.size());
+            for (std::size_t i = 0; i < ids.size(); ++i) {
+                result.ids.push_back(ids.at(i).text());
+                auto row = Json::object();
+                row.set("id", Json::string(result.ids.back()));
+                result.records.push(row);
+                result.spans.emplace_back(0, protocol.size());
+            }
+            return result;
+        };
+        axes.features = axis(fields.at("feature_ids"));
+        axes.observations = axis(fields.at("observation_ids"));
+        const auto meaning = owner->declaration().at("fields").at(0);
+        for (const auto *name : {"quantity", "units", "channel", "method"})
+            declaration.set(name, meaning.at(name));
+        declaration.set("carrier", Json::string("features"));
+    } else {
+        axes.features = read_axis(state_->artifact(originals.at("features")));
+        axes.observations = read_axis(state_->artifact(originals.at("observations")));
+    }
+    const auto &axis = declaration.at("carrier").text() == "features" ? axes.features
+                                                                     : axes.observations;
+    std::vector<NativeAssayPartition> partitions;
+    const auto packets = source.at("partitions");
+    require(packets.size() > 0, "native aggregation requires stored packets");
+    for (std::size_t p = 0; p < packets.size(); ++p) {
+        const auto packet = packets.at(p);
+        require(!derived || packets.size() == 1, "derived aggregation requires one owning carrier");
+        const auto begin = derived ? 0 : count(packet.at("begin"), axis.ids.size(), "native packet begin");
+        const auto end = derived ? axis.ids.size() : count(packet.at("end"), axis.ids.size(), "native packet end");
+        require(end > begin, "native packet range");
+        if (!derived) {
+            const auto ids = packet.at("carrier_ids");
+            require(ids.size() == end - begin, "native packet identity count");
+            for (std::size_t i = 0; i < ids.size(); ++i)
+                require(ids.at(i).text() == axis.ids[begin + i], "native packet axis identity/order");
+        }
+        const auto owner = study(query.at("assay").text(), p);
+        require(owner->native_history()->source_namespace() == key(packet.at("source_namespace")) &&
+                    owner->digest() == packet.at("source_digest").text(),
+                "native packet publication witness");
+        partitions.push_back({begin, end, owner});
+    }
+    std::optional<AssayFieldsSource> retained;
+    if (operation == "design_aggregation")
+        design_aggregation(axes, declaration, query, reservation, partitions, &retained);
+    else {
+        require(operation == "aggregate_assay", "aggregation operation");
+        native_aggregate_analysis(axes.features, axes.observations, partitions,
+                                  declaration, query, reservation, &retained);
+    }
+    require(retained.has_value(), "aggregation fields missing");
+    auto fields = std::move(*retained);
+    // An optional display reads the same action fields without compiling a
+    // portable source archive. Persisted results retain that source below.
+    if (!retain_source) {
+        N certificate(N::Object{{{"schema", N(std::string("gadget.assay.result.native.v1"))},
+            {"query", import_record_view(query)}, {"source_digest", N(digest())},
+            {"result", std::move(fields.declaration)},
+            {"arithmetic", N(std::string("rational"))},
+            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+        return retain_operation(std::move(fields.endpoint),
+            new_native_record_namespace(), {}, request, std::move(certificate));
+    }
+    N::Array documents;
+    for (const auto &name : originals.native().names()) {
+        if (name != "features" && name != "observations") continue;
+        const auto *owner = state_->retained_artifact(originals.at(name));
+        require(owner, "aggregation original byte owner missing");
+        documents.elements.emplace_back(N::Object{{{"id", N(name)},
+            {"bytes", N(N::ByteSpan{owner->key(), 0, owner->bytes().size(), false})}}});
+        if (std::none_of(fields.sources.begin(), fields.sources.end(),
+                         [&](const auto &source) { return source.key() == owner->key(); }))
+            fields.sources.push_back(*owner);
+    }
+    auto &members = std::get<N::Object>(fields.declaration.data).members;
+    members.emplace_back("original_documents", N(std::move(documents)));
+    std::uint64_t key = 1;
+    for (const auto &source : fields.sources) {
+        require(source.key() < std::numeric_limits<std::uint64_t>::max(),
+                "raw source identity space exhausted");
+        key = std::max(key, source.key() + 1);
+    }
+    auto owner = native_publication().archive_source(key);
+    const auto bytes = owner.bytes().size();
+    fields.sources.push_back(std::move(owner));
+    N certificate(N::Object{{{"schema", N(std::string("gadget.assay.result.native.v1"))},
+        {"query", import_record_view(query)}, {"source_digest", N(digest())},
+        {"result", std::move(fields.declaration)},
+        {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
+        {"arithmetic", N(std::string("rational"))},
+        {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+        {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+    return retain_operation(std::move(fields.endpoint),
+        source_namespace.value_or(new_native_record_namespace()),
+        std::move(fields.sources), request, std::move(certificate));
+}
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
     const auto query = render_record_view(request);
@@ -2639,6 +2848,9 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                    query.at("operation").text() == "feature_counts" ||
                                    (query.at("operation").text() == "expression_allocations" && !query.has("coupling"))))
         return execute_assignment(request, std::move(resources));
+    if (query.has("operation") && (query.at("operation").text() == "aggregate_assay" ||
+                                   query.at("operation").text() == "design_aggregation"))
+        return execute_aggregation(request, std::move(resources));
     if (query.has("operation") && query.at("operation").text() == "read_quality") {
         using N = NativeRecordValue;
         require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");

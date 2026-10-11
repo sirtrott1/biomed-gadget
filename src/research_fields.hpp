@@ -61,17 +61,8 @@ struct Inputs {
         require(fields.size() == requested.size(), "unknown research field");
         const auto n = endpoint->source.grade(grade).cell_count();
         require(n > 0 && (!finite_topology_profile || n <= 4096), "research population budget");
-        std::map<std::uint64_t, std::string> ids;
-        const auto cells = declaration.at("cells");
-        for (std::size_t i = 0; i < cells.size(); ++i) {
-            auto c = cells.at(i);
-            if (c.at("grade").integer() == grade.value)
-                ids.emplace(key(c.at("key")), c.at("id").text());
-        }
         for (std::size_t i = 0; i < n; ++i)
-            entities.push_back(ids.at(
-                storage::stable_cell_key(endpoint->source, {grade, static_cast<std::uint32_t>(i)})
-                    .key));
+            entities.push_back(study.cell_identifier(grade, i));
         for (const auto &[id, t] : fields) {
             (void)id;
             require(t->tensor.domain().logical_size() == n, "research field size");

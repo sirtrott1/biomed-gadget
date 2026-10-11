@@ -36,6 +36,7 @@ Json allocation_analysis(const Json &request, std::shared_ptr<CpuResources> reso
 Json alignment_fields_view(const NativeRecord &record);
 Json feature_count_fields_view(const NativeRecord &record);
 Json expression_fields_view(const NativeRecord &record);
+Json aggregation_fields_view(const NativeRecord &record);
 Json allocation_fields_summary_view(const NativeRecord &allocation_fields);
 Json genotype_analysis(const ResourceImage &resource, const Json &request);
 Json genomic_analysis(const ResourceImages &resources, const Json &request,
@@ -63,10 +64,12 @@ struct NativeAssayPartition {
 Json native_aggregate_analysis(
     const Axis &features, const Axis &observations,
     const std::vector<NativeAssayPartition> &partitions, const Json &declaration,
-    const Json &request, const rfc::runtime::CpuResourceCoordinator::Reservation &reservation);
+    const Json &request, const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
+    std::optional<AssayFieldsSource> *retained = nullptr);
 Json design_aggregation(const Matrix &matrix, const Json &declaration, const Json &request,
                         const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
-                        const std::vector<NativeAssayPartition> &partitions = {});
+                        const std::vector<NativeAssayPartition> &partitions = {},
+                        std::optional<AssayFieldsSource> *retained = nullptr);
 Json alignment_analysis(const ResourceImages &images, const Json &request);
 struct SequenceRecord {
     std::string id, bases;

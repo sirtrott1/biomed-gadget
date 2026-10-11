@@ -211,11 +211,12 @@ NativeRecord coverage_study(const NativeRecord &producer, const NativeRecord &re
                        {"field_sets", N(N::Array{})}}});
     return ScientificStudy::publish_annotations(producer, std::move(study), N(std::move(raw_docs)));
 }
-NativeRecord assignment_study(const NativeRecord &producer, const NativeRecord &request) {
+NativeRecord quantitative_study(const NativeRecord &producer, const NativeRecord &request) {
     const auto source = producer.at("result").at("result");
     const bool expression = source.at("schema").text() == "gadget.expression.fields.v1";
-    require(expression || source.at("schema").text() == "gadget.feature.count.fields.v1",
-            "unsupported assignment producer");
+    const bool aggregation = source.at("schema").text() == "gadget.aggregation.fields.v1";
+    require(expression || aggregation || source.at("schema").text() == "gadget.feature.count.fields.v1",
+            "unsupported native quantitative producer");
     N::Array docs, raw_docs, evidence, document_names;
     const auto document = [&](std::string id, const NativeRecord &original) {
         const auto bytes = original.bytes();
@@ -233,7 +234,12 @@ NativeRecord assignment_study(const NativeRecord &producer, const NativeRecord &
             document_names.elements.emplace_back(id);
         }
     };
-    if (expression) {
+    if (aggregation) {
+        const auto originals = source.at("original_documents");
+        for (std::size_t i = 0; i < originals.size(); ++i)
+            document(originals.at(i).at("id").text(), originals.at(i).at("bytes"));
+        document("source_workspace", producer.at("result").at("workspace_publication"));
+    } else if (expression) {
         const auto resources = source.at("resources");
         for (std::size_t i = 0; i < resources.size(); ++i) {
             const auto resource = resources.at(i);
@@ -246,19 +252,27 @@ NativeRecord assignment_study(const NativeRecord &producer, const NativeRecord &
         if (source.has("original_reference"))
             document("reference", source.at("original_reference"));
     }
-    document("assignment_protocol", producer.at("request_publication"));
+    document(aggregation ? "aggregation_protocol" : "assignment_protocol",
+             producer.at("request_publication"));
     N::Array bindings, metrics, contexts, fields;
     for (std::size_t k = 0; k < producer.endpoint()->source.grade_count(); ++k) {
         bindings.elements.emplace_back(N::Object{
             {{"grade", N(rfc::numeric::Integer(std::to_string(k)))},
-             {"id_prefix", N(k == 0 ? std::string("candidate_or_target:")
+             {"id_prefix", N(k == 0 ? (aggregation ? std::string("feature:")
+                                                  : std::string("candidate_or_target:"))
                                     : std::string("assignment_relation:"))},
              {"label_prefix", N(k == 0 ? std::string("Candidate or declared target ")
                                        : std::string("Assignment relation "))},
-             {"kind", N(k == 0 ? std::string("assignment_coordinate")
+             {"kind", N(k == 0 ? (aggregation ? std::string("aggregate_feature")
+                                              : std::string("assignment_coordinate"))
                                : std::string("declared_assignment_relation"))},
              {"evidence",
               N(N::Object{{{"kind", string("documents")}, {"documents", N(document_names)}}})}}});
+        if (aggregation) {
+            auto &binding = std::get<N::Object>(bindings.elements.back().data);
+            binding.members.emplace_back("ids", source.at("feature_ids").unbound_value());
+            binding.members.emplace_back("labels", source.at("feature_ids").unbound_value());
+        }
         metrics.elements.emplace_back(N::Object{{{"kind", string("identity")}}});
     }
     contexts.elements.emplace_back(N::Object{{{"id", string("all")},
@@ -267,28 +281,31 @@ NativeRecord assignment_study(const NativeRecord &producer, const NativeRecord &
                                               {"time", N{}}}});
     const auto channel = request.at("channel").text();
     require(channel == "G" || channel == "E" || channel == "T" || channel == "observation",
-            "assignment field channel");
+            "derived field channel");
     for (const auto &tensor : producer.endpoint()->tensors) {
         if (tensor.role != TemporalTensorRole::Field)
             continue;
         auto id = tensor.interpretation;
-        if (!expression && id.starts_with("sample:0."))
+        if (!expression && !aggregation && id.starts_with("sample:0."))
             id = source.at("request").at("resource").text() + id.substr(8);
         fields.elements.emplace_back(
             N::Object{{{"id", N("all." + id)},
                        {"key", N(std::to_string(tensor.key))},
                        {"context", string("all")},
                        {"channel", N(channel)},
-                       {"quantity", N(tensor.interpretation.ends_with("class_count")
+                       {"quantity", N(aggregation ? source.at("summary").at("quantity").text()
+                                         : tensor.interpretation.ends_with("class_count")
                                           ? std::string("observed_class_count")
                                           : std::string("assignment_count_bound"))},
-                       {"units", N(source.at("allocation_fields").at("units").text())},
-                       {"method", string("Declared class incidence action")},
+                       {"units", N(aggregation ? source.at("summary").at("units").text()
+                                               : source.at("allocation_fields").at("units").text())},
+                       {"method", string(aggregation ? "Declared feature and observation maps"
+                                                     : "Declared class incidence action")},
                        {"value_type", string("quantitative")},
                        {"evidence", N(evidence)}}});
     }
     auto design = request.at("design").unbound_value(retained_request_sources(producer, request));
-    require(!request.at("design").has("covariates"), "assignment design uses study field bindings");
+    require(!request.at("design").has("covariates"), "derived design uses study field bindings");
     std::get<N::Object>(design.data).members.emplace_back("covariates", N(N::Array{}));
     N study(N::Object{{{"schema", string("gadget.scientific.study.v3")},
                        {"id", N(request.at("id").text())},
@@ -468,7 +485,8 @@ Json AssayWorkspace::materialize_record(const NativeRecord &request, const fs::p
 }
 bool AssayWorkspace::supports_native_materialization(std::string_view operation) {
     return operation == "controlled_coverage" || operation == "spatial_relations" ||
-           operation == "feature_counts" || operation == "expression_allocations";
+           operation == "feature_counts" || operation == "expression_allocations" ||
+           operation == "aggregate_assay" || operation == "design_aggregation";
 }
 bool AssayWorkspace::supports_native_materialization(const NativeRecord &recipe) {
     const auto operation = recipe.at("operation").text();
@@ -495,14 +513,18 @@ AssayWorkspace::materialize_native_fields(const NativeRecord &request, const fs:
             "derived source must have its own namespace");
     const bool spatial = request.at("recipe").at("operation").text() == "spatial_relations";
     const bool coverage = request.at("recipe").at("operation").text() == "controlled_coverage";
+    const auto name = request.at("recipe").at("operation").text();
+    const bool aggregation = name == "aggregate_assay" || name == "design_aggregation";
     const auto operation = spatial ? execute_spatial(request.at("recipe"), std::move(resources), ns)
                            : coverage
                                ? execute_coverage(request.at("recipe"), std::move(resources), ns)
+                           : aggregation
+                               ? execute_aggregation(request.at("recipe"), std::move(resources), ns)
                                : execute_assignment(request.at("recipe"), std::move(resources), ns);
     auto admitted =
         std::make_shared<const ScientificStudy>(spatial    ? spatial_study(operation, request)
                                                 : coverage ? coverage_study(operation, request)
-                                                           : assignment_study(operation, request));
+                                                           : quantitative_study(operation, request));
     const auto collection =
         publish_studies(request, request.at("id").text(), {{request.at("id").text(), admitted}});
     fs::create_directories(fs::absolute(destination).parent_path());
@@ -574,7 +596,8 @@ Json AssayWorkspace::derivation_certificate(const std::string &id) const {
     const auto generated = producer.at("result"), coverage = generated.at("result");
     const bool spatial = coverage.at("schema").text() == "gadget.spatial.fields.v1";
     const bool assignment = coverage.at("schema").text() == "gadget.feature.count.fields.v1" ||
-                            coverage.at("schema").text() == "gadget.expression.fields.v1";
+                            coverage.at("schema").text() == "gadget.expression.fields.v1" ||
+                            coverage.at("schema").text() == "gadget.aggregation.fields.v1";
     require(spatial || assignment || coverage.at("schema").text() == "gadget.coverage.fields.v1",
             "unsupported native generating result");
     auto result = assignment ? render_record_view(coverage) : Json::object();

@@ -327,7 +327,8 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
             "allocation factor coordinate shape");
     result.set("constraint_rank", cardinality(constraint_rank));
     result.set("allocation_nullity", cardinality(kernel_offset));
-    result.set("target_ambiguity_rank", cardinality(target_image.rank()));
+    const auto target_ambiguity_rank = target_image.rank();
+    result.set("target_ambiguity_rank", cardinality(target_ambiguity_rank));
     result.set("kernel_residual_zero", Json::boolean(true));
     if (retain_factors && !retained) {
         auto certificate = Json::object();
@@ -427,7 +428,7 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
              {"constraint_rank", N(rfc::numeric::Integer(std::to_string(constraint_rank)))},
              {"allocation_nullity", N(rfc::numeric::Integer(std::to_string(kernel_offset)))},
              {"target_ambiguity_rank",
-              N(rfc::numeric::Integer(std::to_string(target_image.rank())))},
+              N(rfc::numeric::Integer(std::to_string(target_ambiguity_rank)))},
              {"summary", import_record_view([&] {
                   auto summary = Json::object();
                   for (const auto *name : {"bound_scope", "native_complex_sha256"})

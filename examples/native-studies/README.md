@@ -20,9 +20,14 @@ values from the producer's original raw sources. Admission compares every byte
 against that source. Evidence columns select spans within these documents.
 
 `cell_bindings` follows the complete native grade order. Each binding declares
-`grade`, `id_prefix`, `label_prefix`, `kind` and an evidence rule. Cell ids append
-their actual stable key to the prefix. Prefixes must not overlap and end with a colon. Pages resolve
-these labels from the source; the publication does not store a label per cell.
+`grade`, `id_prefix`, `label_prefix`, `kind` and an evidence rule. By default,
+cell ids append their actual stable key to the prefix. Prefixes must not overlap
+and end with a colon. Optional `ids` and `labels` arrays name every cell in the
+grade's native coordinate order. Explicit ids must be unique across the study
+and must not duplicate another grade's generated id. These names bind existing
+source identities; they do not change the complex or its fields.
+`ScientificStudy::cell_identifier(grade, coordinate)` reads these names from the
+admitted source; `cell_identity(grade, id)` resolves the corresponding stable key.
 
 | Evidence rule | Required binding |
 |---|---|

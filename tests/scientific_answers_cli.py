@@ -127,6 +127,11 @@ def verify_receipts(directory, answer):
                 data=(directory/ref['path']).read_bytes()
                 check(ref['sha256']=='sha256:'+hashlib.sha256(data).hexdigest())
                 certificate=run('record-view','--input',directory/ref['path'])
+                if certificate.get('schema')=='gadget.assay.workspace.native.v2':
+                    assays=certificate['manifest']['assays']
+                    check(len(assays)==1)
+                    certificate=run('record-view','--input',directory/ref['path'],
+                                    '--assay',assays[0]['declaration']['id'])
                 if certificate.get('schema')=='gadget.operation.native.v1':certificate=certificate['result']
                 check(certificate['source_digest']==ref['source_digest'])
                 check(certificate['query']==ref['query'] and ref['pointer']=='/result')

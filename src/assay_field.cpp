@@ -8,17 +8,12 @@ std::vector<AssayField> load_assay_fields(std::shared_ptr<const ScientificStudy>
     const auto endpoint = owner->endpoint();
     std::map<std::string, Json> meanings;
     std::map<std::uint64_t, std::size_t> tensors, carriers;
-    std::map<std::uint16_t, std::map<std::uint64_t, std::string>> labels;
     for (std::size_t i = 0; i < fields.size(); ++i)
         meanings.emplace(fields.at(i).at("id").text(), fields.at(i));
     for (std::size_t i = 0; i < endpoint->tensors.size(); ++i)
         tensors.emplace(endpoint->tensors[i].key, i);
     for (std::size_t i = 0; i < endpoint->carriers.size(); ++i)
         carriers.emplace(endpoint->carriers[i].key, i);
-    const auto cells = declaration.at("cells");
-    for (std::size_t i = 0; i < cells.size(); ++i)
-        labels[static_cast<std::uint16_t>(cells.at(i).at("grade").integer())].emplace(
-            key(cells.at(i).at("key")), cells.at(i).at("id").text());
     std::map<std::uint16_t, std::pair<Json, Json>> coordinates;
     std::vector<AssayField> result;
     for (const auto &field : selected) {
@@ -46,9 +41,7 @@ std::vector<AssayField> load_assay_fields(std::shared_ptr<const ScientificStudy>
             for (std::size_t i = 0; i < arena.cell_count(); ++i) {
                 const auto native_key = input.grade == 0 ? arena.identities.at(i)
                                                          : arena.relation_identities.at(i).value;
-                require(labels[input.grade].contains(native_key),
-                        "assay field native identity label");
-                ids.push(Json::string(labels[input.grade].at(native_key)));
+                ids.push(Json::string(owner->cell_identifier(carrier.grade, i)));
                 keys.push(Json::string(std::to_string(native_key)));
             }
             coordinates.emplace(input.grade, std::make_pair(std::move(ids), std::move(keys)));

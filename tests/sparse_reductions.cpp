@@ -1,6 +1,7 @@
 #include "../src/genomic_detail.hpp"
 #include <atomic>
 #include <gadget/assay.hpp>
+#include <gadget/record_view.hpp>
 #include <gadget/resources.hpp>
 #include <iostream>
 
@@ -263,7 +264,7 @@ int main(int argc, char **argv) {
                     const auto execution = answer.at("execution");
                     if (execution.has("sparse_map_owner")) {
                         check(execution.at("sparse_map_owner").text() ==
-                                  "rfc::numeric::PreparedSparseExactMap" &&
+                                      "rfc::numeric::PreparedSparseExactMap" &&
                                   execution.at("intermediate_coordinates").integer() == 0,
                               "sparse native map execution retained a dense intermediate");
                     } else {
@@ -315,6 +316,140 @@ int main(int argc, char **argv) {
                       answer.at("design").dump() == expected_design.at("design").dump() &&
                       !answer.at("execution").at("raw_matrix_reparsed").boolean(),
                   "native dictionary design parity");
+        }
+        std::size_t derived_index = 0;
+        for (const auto *source : {&workspace, &reverse, &partitioned, &partitioned_reverse}) {
+            for (const auto &query : {gene, design, zero}) {
+                const auto retained = source->execute_record(admit_record_view(query));
+                const auto fields = retained.at("result").at("result");
+                check(fields.at("schema").text() == "gadget.aggregation.fields.v1" &&
+                          !fields.has("rows") &&
+                          fields.at("feature_map").kind() == NativeRecordKind::Integer &&
+                          fields.at("observation_map").kind() == NativeRecordKind::Integer,
+                      "aggregation retained a numerical display instead of native fields and maps");
+                const auto map = [&](const char *name) -> const rfc::storage::TemporalTensor & {
+                    const auto key = std::stoull(fields.at(name).integer().get_str());
+                    const auto endpoint = retained.endpoint();
+                    const auto found = std::find_if(endpoint->tensors.begin(), endpoint->tensors.end(),
+                        [&](const auto &tensor) { return tensor.key == key; });
+                    check(found != endpoint->tensors.end() &&
+                          found->role == rfc::storage::TemporalTensorRole::Observation &&
+                          found->tensor.support().storage() ==
+                              rfc::numeric::StructuralSupport::Storage::Full,
+                          "aggregation map carrier or full support differs");
+                    return *found;
+                };
+                const auto &feature_map = map("feature_map");
+                const auto &observation_map = map("observation_map");
+                check(feature_map.input == 2 && feature_map.output == 1 &&
+                      observation_map.input == 3 && observation_map.output == 4,
+                      "aggregation maps lost their declared source axes");
+                const auto compiled = query.at("operation").text() == "design_aggregation"
+                    ? expected_design.at("design").at("compiled_request") : query;
+                const auto check_map = [&](const auto &tensor, const auto &groups, const auto &ids) {
+                    std::map<std::size_t, Rational> expected;
+                    for (std::size_t i = 0; i < groups.size(); ++i) {
+                        const auto members = groups.at(i).at("members");
+                        for (std::size_t j = 0; j < members.size(); ++j) {
+                            const auto member = members.at(j);
+                            const auto position = std::find(ids.begin(), ids.end(), member.at("id").text());
+                            check(position != ids.end(), "oracle group member missing");
+                            const Rational value(member.at("coefficient").text());
+                            if (value != 0)
+                                expected.emplace(i * ids.size() + (position - ids.begin()), value);
+                        }
+                    }
+                    check(tensor.domain().extents() == std::vector<std::size_t>{groups.size(), ids.size()} &&
+                          tensor.stored_nonzeros() == expected.size(), "native group map shape differs");
+                    for (const auto &entry : tensor.values().entries())
+                        check(expected.at(entry.index) == entry.value, "native group coefficient differs");
+                };
+                check_map(feature_map.tensor, compiled.at("feature_groups"), reference.features.ids);
+                check_map(observation_map.tensor, compiled.at("observation_groups"), reference.observations.ids);
+                const auto encoded = retained.encoded_tensor(feature_map.key);
+                check(encoded && encoded->tensor().support().storage() ==
+                      rfc::numeric::StructuralSupport::Storage::Full,
+                      "native map encoding expanded structural support");
+                const auto image = render_record_view(retained.at("result")).at("result");
+                check(image.at("rows").dump() ==
+                          source->execute(query).at("result").at("rows").dump(),
+                      "aggregation field view differs");
+                if (query.at("operation").text() == "aggregate_assay" &&
+                    query.at("feature_groups").size() == 1)
+                    check(fields.at("feature_groups")
+                                      .at(0)
+                                      .at("members")
+                                      .at(0)
+                                      .at("coefficient")
+                                      .text() == "0" &&
+                              feature_map.tensor.stored_nonzeros() == 0,
+                          "declared zero map membership was lost");
+            }
+            auto publication = Json::object();
+            publication.set("schema", Json::string("gadget.assays.materialize.v1"));
+            publication.set("id", Json::string("summed"));
+            publication.set("source_namespace",
+                            Json::string(std::to_string(50000 + derived_index)));
+            publication.set("design", spec.at("design"));
+            publication.set("recipe", gene);
+            publication.set("channel", Json::string("observation"));
+            const auto destination = root / ("native-sum-" + std::to_string(derived_index++));
+            const auto admitted =
+                source->materialize_workspace(admit_record_view(publication), destination);
+            const auto owner = admitted->study("summed");
+            check(owner->field_accession("all.library").tensor()->state(0) == Rational{2} &&
+                      !owner->field_accession("all.library").tensor()->state(1) &&
+                      owner->field_accession("all.library").tensor()->state(2) == Rational{3},
+                  "count sum support or original feature order differs");
+            check(owner->declaration().at("fields").at(0).at("quantity").text() == "read_count" &&
+                      owner->declaration().at("fields").at(0).at("units").text() == "counts",
+                  "count sum meaning differs");
+            check(owner->cell_identifier({0}, 0) == "g0" && owner->cell_identifier({0}, 2) == "g299" &&
+                      owner->cell_identity({0}, "g299") == rfc::storage::StableCellKey{{0}, 3},
+                  "native feature names differ");
+            auto annotation = owner->native_publication().at("study").unbound_value();
+            auto &annotation_members = std::get<NativeRecordValue::Object>(annotation.data).members;
+            for (auto &[name, value] : annotation_members) {
+                if (name == "native") value = NativeRecordValue{};
+                if (name != "cell_bindings") continue;
+                auto &binding = std::get<NativeRecordValue::Object>(
+                    std::get<NativeRecordValue::Array>(value.data).elements[0].data);
+                for (auto &[field, ids] : binding.members)
+                    if (field == "ids")
+                        std::get<NativeRecordValue::Array>(ids.data).elements[1] =
+                            NativeRecordValue(std::string("g0"));
+            }
+            std::erase_if(annotation_members, [](const auto &entry) { return entry.first == "native"; });
+            refuse([&] {
+                ScientificStudy invalid(ScientificStudy::publish_annotations(owner->producer_publication(),
+                    annotation, owner->native_publication().at("documents").unbound_value()));
+            });
+            check(!fs::exists(destination / "matrix.tsv") &&
+                      !fs::exists(destination / "features.tsv"),
+                  "native sum used a generated matrix input");
+            const auto binary = owner->producer_publication().encode();
+            check(NativeRecord::decode(binary).encode() == binary,
+                  "aggregation canonical bytes differ");
+            auto chained = Json::parse(gene.dump());
+            chained.set("assay", Json::string("summed"));
+            auto observations = Json::array(), members = Json::array();
+            members.push(member("library", "1"));
+            observations.push(group("again", members));
+            chained.set("observation_groups", observations);
+            check(admitted->execute(chained).at("result").at("rows").dump() ==
+                      Json::parse(R"([["2"],["NA"],["3"]])").dump(),
+                  "chained native sum reparsed or changed a field");
+            const auto relocated = root / ("relocated-sum-" + std::to_string(derived_index));
+            fs::rename(destination, relocated);
+            AssayWorkspace reopened(relocated / "workspace.rfcxs");
+            check(reopened.study("summed")->field_accession("all.library").tensor()->state(2) ==
+                      Rational{3},
+                  "relocated aggregation lost its field owner");
+            check(reopened.replay_derivation("summed",
+                                             root / ("sum-replay-" + std::to_string(derived_index)))
+                          .at("status")
+                          .text() == "PASS",
+                  "aggregation replay differs");
         }
         std::vector<assay_detail::NativeAssayPartition> packets{
             {0, 127, partitioned.study("x", 0)},

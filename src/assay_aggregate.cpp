@@ -1,4 +1,7 @@
 #include "genomic_detail.hpp"
+#include "source_grade_fields.hpp"
+#include <gadget/record_view.hpp>
+#include <rfc/core/builder.hpp>
 #include <rfc/database/native_tensor_window.hpp>
 #include <rfc/machine/checked_size.hpp>
 #include <rfc/numeric/exact_matrix.hpp>
@@ -9,7 +12,8 @@ namespace gadget::assay_detail {
 namespace {
 Json aggregate_impl(const Matrix &matrix, const Json &declaration, const Json &request,
                     const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
-                    const std::vector<NativeAssayPartition> &publications = {}) {
+                    const std::vector<NativeAssayPartition> &publications = {},
+                    std::optional<AssayFieldsSource> *retained = nullptr) {
     const bool native = !publications.empty();
     members(request,
             {"schema", "operation", "assay", "feature_groups", "observation_groups", "map_method",
@@ -172,16 +176,34 @@ Json aggregate_impl(const Matrix &matrix, const Json &declaration, const Json &r
             const auto meaning = packet.owner->declaration();
             const auto extent = packet.end - packet.begin;
             std::map<std::uint64_t, std::string> labels;
-            for (std::size_t i = 0; i < meaning.at("cells").size(); ++i) {
-                const auto cell = meaning.at("cells").at(i);
-                if (cell.at("grade").integer() == 0)
-                    labels.emplace(key(cell.at("key")), cell.at("id").text());
-            }
+            if (meaning.has("cells"))
+                for (std::size_t i = 0; i < meaning.at("cells").size(); ++i) {
+                    const auto cell = meaning.at("cells").at(i);
+                    if (cell.at("grade").integer() == 0)
+                        labels.emplace(key(cell.at("key")), cell.at("id").text());
+                }
             const auto &arena = endpoint->source.grade(rfc::core::Grade{0});
             require(arena.cell_count() == extent, "native reduction carrier size");
-            for (std::size_t i = 0; i < extent; ++i)
-                require(labels.at(arena.identities.at(i)) == axis.ids[packet.begin + i],
-                        "native reduction source identity/order");
+            const auto producer = meaning.has("cell_bindings")
+                                      ? packet.owner->producer_publication()
+                                      : packet.owner->native_publication();
+            const bool aggregate_source = producer.has("result") &&
+                                          producer.at("result").has("result") &&
+                                          producer.at("result").at("result").has("schema") &&
+                                          producer.at("result").at("result").at("schema").text() ==
+                                              "gadget.aggregation.fields.v1";
+            for (std::size_t i = 0; i < extent; ++i) {
+                if (aggregate_source) {
+                    const auto ids = producer.at("result").at("result").at("feature_ids");
+                    require(native_features && ids.size() == extent &&
+                                arena.identities.at(i) == i + 1 &&
+                                ids.at(i).text() == axis.ids[packet.begin + i],
+                            "native aggregate source identity/order");
+                } else
+                    require(labels.contains(arena.identities.at(i)) &&
+                                labels.at(arena.identities.at(i)) == axis.ids[packet.begin + i],
+                            "native reduction source identity/order");
+            }
             auto binding = Json::object();
             binding.set("partition", cardinality(p));
             binding.set("begin", cardinality(packet.begin));
@@ -265,7 +287,34 @@ Json aggregate_impl(const Matrix &matrix, const Json &declaration, const Json &r
         features.push(feature_groups.at(i).at("id"));
     for (std::size_t i = 0; i < observation_groups.size(); ++i)
         observations.push(observation_groups.at(i).at("id"));
-    std::vector<Json> output_slices(first.action.rows());
+    using Tensor = rfc::numeric::SparseRationalTensor;
+    std::vector<Tensor> output_fields;
+    std::vector<std::optional<Tensor>> output_slices(first.action.rows());
+    // Convert only the requested output storage orientation. This preserves
+    // supported zeros and absence without applying another numerical map.
+    const auto transpose_fields = [&](const auto &fields, std::size_t size) {
+        std::vector<std::optional<Tensor>> columns(size);
+        rfc::runtime::CpuTileExecutor executor({workers, workers, size});
+        const auto report = executor.run_tiles(
+            size, [&](std::size_t i, std::size_t, const rfc::runtime::CpuTileStop &stop) {
+                std::vector<std::size_t> active;
+                for (std::size_t j = 0; j < fields.size(); ++j) {
+                    stop.check();
+                    if (fields[j].support().contains(i))
+                        active.push_back(j);
+                }
+                columns[i] = SourceGradeFields::tensor(
+                    fields.size(), [&](auto j) { return fields[j].state(i).value(); },
+                    active.size() == fields.size()
+                        ? rfc::numeric::StructuralSupport::full(fields.size())
+                        : rfc::numeric::StructuralSupport::packed(fields.size(), active));
+            });
+        std::vector<Tensor> result;
+        result.reserve(size);
+        for (auto &column : columns)
+            result.push_back(std::move(column.value()));
+        return std::pair{std::move(result), report};
+    };
     rfc::runtime::CpuTileRunReport first_report, second_report;
     if (fused_sparse_maps) {
         // The declared carrier map acts on actual sparse field owners. The
@@ -321,18 +370,13 @@ Json aggregate_impl(const Matrix &matrix, const Json &declaration, const Json &r
         fields.reserve(second.action.rows());
         for (std::size_t column = 0; column < second.action.rows(); ++column)
             fields.push_back(total.finish_column(column));
-        rfc::runtime::CpuTileExecutor output_executor({workers, workers, first.action.rows()});
-        second_report = output_executor.run_tiles(
-            first.action.rows(),
-            [&](std::size_t row, std::size_t, const rfc::runtime::CpuTileStop &stop) {
-                auto slice = Json::array();
-                for (const auto &field : fields) {
-                    stop.check();
-                    const auto value = field.state(row);
-                    slice.push(Json::string(value ? value->get_str() : "NA"));
-                }
-                output_slices[row] = std::move(slice);
-            });
+        if (features_first)
+            output_fields = std::move(fields);
+        else {
+            auto transposed = transpose_fields(fields, observation_groups.size());
+            output_fields = std::move(transposed.first);
+            second_report = transposed.second;
+        }
     } else {
         std::vector<Vector> transformed(second.inputs.size());
         std::vector<std::vector<unsigned char>> observed(second.inputs.size());
@@ -411,29 +455,42 @@ Json aggregate_impl(const Matrix &matrix, const Json &declaration, const Json &r
                     for (auto input : second.dependencies[s])
                         if (!observed[input][f])
                             complete[s] = false;
-                auto slice = Json::array();
+                std::vector<std::size_t> active;
                 for (std::size_t s = 0; s < output.size(); ++s)
-                    slice.push(Json::string(complete[s] ? output[s].get_str() : "NA"));
-                output_slices[f] = std::move(slice);
+                    if (complete[s])
+                        active.push_back(s);
+                output_slices[f] = SourceGradeFields::tensor(
+                    output.size(), [&](auto s) { return output[s]; },
+                    active.size() == output.size()
+                        ? rfc::numeric::StructuralSupport::full(output.size())
+                        : rfc::numeric::StructuralSupport::packed(output.size(), active));
                 stop.check();
             });
-    }
-    for (std::size_t f = 0; f < feature_groups.size(); ++f) {
+        std::vector<Tensor> slices;
+        slices.reserve(output_slices.size());
+        for (auto &slice : output_slices)
+            slices.push_back(std::move(slice.value()));
         if (features_first)
-            rows.push(output_slices[f]);
-        else {
+            output_fields = transpose_fields(slices, observation_groups.size()).first;
+        else
+            output_fields = std::move(slices);
+    }
+    if (!retained) {
+        for (std::size_t f = 0; f < feature_groups.size(); ++f) {
             auto row = Json::array();
-            for (std::size_t s = 0; s < observation_groups.size(); ++s)
-                row.push(output_slices[s].at(f));
+            for (const auto &field : output_fields) {
+                const auto value = field.state(f);
+                row.push(Json::string(value ? value->get_str() : "NA"));
+            }
             rows.push(row);
         }
+        out.set("feature_ids", features);
+        out.set("observation_ids", observations);
+        out.set("rows", rows);
     }
     const auto &feature_report = fused_sparse_maps || features_first ? first_report : second_report;
     const auto &observation_report =
         fused_sparse_maps || !features_first ? first_report : second_report;
-    out.set("feature_ids", features);
-    out.set("observation_ids", observations);
-    out.set("rows", rows);
     out.set("quantity", Json::string(count_sum ? declaration.at("quantity").text()
                                                : "declared_linear_aggregate_of_" +
                                                      declaration.at("quantity").text()));
@@ -497,9 +554,76 @@ Json aggregate_impl(const Matrix &matrix, const Json &declaration, const Json &r
     }
     out.set("execution", execution);
     out.set("scope",
-            Json::string("Exact declared linear feature and observation maps; unsupported nonzero "
-                         "input dependencies propagate absence. No learned grouping, implicit "
-                         "averaging, imputation or transfer of topology is performed."));
+            Json::string("Declared linear feature and observation maps. An output is supported "
+                         "when every input with a nonzero coefficient is supported."));
+    if (retained) {
+        using N = NativeRecordValue;
+        rfc::core::RelationalComplexBuilder builder(rfc::core::RelationSignature{});
+        builder.declare_grade({0});
+        for (std::size_t i = 0; i < feature_groups.size(); ++i)
+            builder.declare_witness_identity(i + 1);
+        rfc::storage::TemporalEndpoint endpoint(builder.freeze());
+        endpoint.carriers.push_back({1,
+                                     rfc::storage::TemporalCarrierKind::SourceGrade,
+                                     {0},
+                                     {},
+                                     0,
+                                     rfc::numeric::IndexDomain::linear(feature_groups.size())});
+        N::Array fields, original_features, original_observations;
+        for (const auto &id : matrix.features.ids)
+            original_features.elements.emplace_back(id);
+        for (const auto &id : matrix.observations.ids)
+            original_observations.elements.emplace_back(id);
+        for (std::size_t i = 0; i < output_fields.size(); ++i) {
+            const auto key = rfc::machine::checked_size_add(i, 1);
+            const auto id = observation_groups.at(i).at("id").text();
+            rfc::storage::TemporalTensor field;
+            field.key = key;
+            field.role = rfc::storage::TemporalTensorRole::Field;
+            field.output = 1;
+            field.interpretation = id;
+            field.tensor = std::move(output_fields[i]);
+            endpoint.tensors.push_back(std::move(field));
+            fields.elements.emplace_back(
+                N::Object{{{"id", N(id)}, {"key", N(rfc::numeric::Integer(std::to_string(key)))}}});
+        }
+        // Group maps retain full support through the native tensor codec.
+        // Their explicit source axes are bound by the retained dictionaries.
+        endpoint.carriers.push_back({2, rfc::storage::TemporalCarrierKind::Explicit, {}, {}, 1,
+                                     rfc::numeric::IndexDomain::linear(matrix.features.ids.size())});
+        endpoint.carriers.push_back({3, rfc::storage::TemporalCarrierKind::Explicit, {}, {}, 2,
+                                     rfc::numeric::IndexDomain::linear(matrix.observations.ids.size())});
+        endpoint.carriers.push_back({4, rfc::storage::TemporalCarrierKind::Explicit, {}, {}, 3,
+                                     rfc::numeric::IndexDomain::linear(observation_groups.size())});
+        const auto map = [&](const auto &action, std::uint64_t input, std::uint64_t output,
+                             std::string interpretation) {
+            rfc::storage::TemporalTensor tensor;
+            tensor.key = rfc::machine::checked_size_add(endpoint.tensors.size(), 1);
+            tensor.role = rfc::storage::TemporalTensorRole::Observation;
+            tensor.input = input;
+            tensor.output = output;
+            tensor.interpretation = std::move(interpretation);
+            tensor.tensor = rfc::storage::temporal_matrix_tensor(action);
+            const auto key = tensor.key;
+            endpoint.tensors.push_back(std::move(tensor));
+            return N(rfc::numeric::Integer(std::to_string(key)));
+        };
+        auto feature_map_key = map(feature_map, 2, 1, "feature_group_map");
+        auto observation_map_key = map(observation_map, 3, 4, "observation_group_map");
+        N declaration_value(
+            N::Object{{{"schema", N(std::string("gadget.aggregation.fields.v1"))},
+                       {"feature_ids", import_record_view(features)},
+                       {"observation_ids", import_record_view(observations)},
+                       {"source_feature_ids", N(std::move(original_features))},
+                       {"source_observation_ids", N(std::move(original_observations))},
+                       {"feature_groups", import_record_view(feature_groups)},
+                       {"observation_groups", import_record_view(observation_groups)},
+                       {"feature_map", std::move(feature_map_key)},
+                       {"observation_map", std::move(observation_map_key)},
+                       {"fields", N(std::move(fields))},
+                       {"summary", import_record_view(out)}}});
+        retained->emplace(AssayFieldsSource{std::move(endpoint), std::move(declaration_value), {}});
+    }
     return out;
 }
 } // namespace
@@ -507,14 +631,37 @@ Json aggregate_analysis(const Matrix &matrix, const Json &declaration, const Jso
                         const rfc::runtime::CpuResourceCoordinator::Reservation &reservation) {
     return aggregate_impl(matrix, declaration, request, reservation);
 }
-Json native_aggregate_analysis(
-    const Axis &features, const Axis &observations,
-    const std::vector<NativeAssayPartition> &partitions, const Json &declaration,
-    const Json &request, const rfc::runtime::CpuResourceCoordinator::Reservation &reservation) {
+Json native_aggregate_analysis(const Axis &features, const Axis &observations,
+                               const std::vector<NativeAssayPartition> &partitions,
+                               const Json &declaration, const Json &request,
+                               const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
+                               std::optional<AssayFieldsSource> *retained) {
     require(!partitions.empty(), "native aggregation requires admitted source owners");
     Matrix axes;
     axes.features = features;
     axes.observations = observations;
-    return aggregate_impl(axes, declaration, request, reservation, partitions);
+    return aggregate_impl(axes, declaration, request, reservation, partitions, retained);
+}
+Json aggregation_fields_view(const NativeRecord &record) {
+    auto out = render_record_view(record.at("summary"));
+    out.set("feature_ids", render_record_view(record.at("feature_ids")));
+    out.set("observation_ids", render_record_view(record.at("observation_ids")));
+    std::map<std::uint64_t, const rfc::numeric::SparseRationalTensor *> tensors;
+    for (const auto &field : record.endpoint()->tensors)
+        tensors.emplace(field.key, &field.tensor);
+    const auto fields = record.at("fields");
+    auto rows = Json::array();
+    for (std::size_t f = 0; f < record.at("feature_ids").size(); ++f) {
+        auto row = Json::array();
+        for (std::size_t i = 0; i < fields.size(); ++i) {
+            const auto key = std::stoull(fields.at(i).at("key").integer().get_str());
+            require(tensors.contains(key), "aggregation field owner missing");
+            const auto value = tensors.at(key)->state(f);
+            row.push(Json::string(value ? value->get_str() : "NA"));
+        }
+        rows.push(row);
+    }
+    out.set("rows", rows);
+    return out;
 }
 } // namespace gadget::assay_detail

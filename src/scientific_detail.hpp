@@ -103,6 +103,7 @@ struct ScientificStudy::State {
     CoordinateRange coordinate_keys(std::size_t grade) const;
     std::vector<CoordinateRange> coordinate_grades() const;
     Json compact_evidence(std::size_t grade, std::size_t coordinate) const;
+    std::string coordinate_id(std::size_t grade, std::size_t coordinate) const;
     rfc::numeric::Rational metric_value(const RetainedRecord &metric, std::size_t coordinate) const;
     mutable std::mutex evidence_reference_mutex;
     mutable std::map<std::tuple<std::string, std::size_t, std::size_t>, std::string>

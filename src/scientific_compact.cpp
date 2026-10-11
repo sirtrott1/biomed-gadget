@@ -46,11 +46,13 @@ Json reference(const std::string &document, std::size_t start, std::size_t end) 
     return out;
 }
 N packed_collection(N value) {
-    if (!std::holds_alternative<N::Array>(value.data)) return value;
+    if (!std::holds_alternative<N::Array>(value.data))
+        return value;
     auto array = std::make_shared<N::Array>(std::get<N::Array>(std::move(value.data)));
     return N(N::PackedArray{array->elements.size(), [array](const auto &emit) {
-        for (auto &element : array->elements) emit(std::move(element));
-    }});
+                                for (auto &element : array->elements)
+                                    emit(std::move(element));
+                            }});
 }
 } // namespace
 NativeRecord ScientificStudy::publish_annotations(const NativeRecord &producer,
@@ -87,7 +89,7 @@ NativeRecord ScientificStudy::producer_publication() const {
     return state_->native_publication->historical_publication(state_->history->cutoff());
 }
 void ScientificStudy::State::admit_compact(NativeRecord publication,
-                                             const ScientificAdmissionObserver &observer) {
+                                           const ScientificAdmissionObserver &observer) {
     compact = true;
     native_publication = std::move(publication);
     const auto &owner = *native_publication;
@@ -101,7 +103,8 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
     require(view.at("schema").text() == "gadget.scientific.study.v3",
             "unsupported compact study schema");
     (void)text(view.at("id"));
-    if (observer) observer("study_declaration");
+    if (observer)
+        observer("study_declaration");
     const auto binding = owner.at("history");
     require(binding.at("kind").text() == "publication_prefix",
             "compact study needs an actual prefix");
@@ -127,7 +130,8 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
                     update.finite_systems.empty() && !update.codes && !update.source_migration,
                 "study annotation changed its generating mathematical source");
     }
-    if (observer) observer("study_prefix");
+    if (observer)
+        observer("study_prefix");
     native_digest = "sha256:" + sha256_chunks([&](const auto &sink) {
                         stream_native_series(history->history(), sink);
                     });
@@ -140,11 +144,13 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
     declaration_digest = native_declaration_digest(declaration);
     digest = "sha256:" +
              sha256("gadget.scientific.study.v3\n" + declaration_digest + "\n" + native_digest);
-    if (observer) observer("study_integrity");
+    if (observer)
+        observer("study_integrity");
     directory = std::make_shared<const NativeAccessionDirectory>(
         tail, std::vector<RelationalCodeObservationQuery>{},
         [](auto value) { return rfcx_detail::fnv1a64(value); }, native_accession_limits());
-    if (observer) observer("study_accessions");
+    if (observer)
+        observer("study_accessions");
     const auto design = view.at("design");
     members(design, {"question", "population", "selection", "covariates", "limitations"});
     for (const auto *name : {"question", "population", "selection"})
@@ -182,7 +188,8 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
         require(documents.emplace(id, Document{declaration.at("documents").at(i), span}).second,
                 "duplicate document");
     }
-    if (observer) observer("study_documents");
+    if (observer)
+        observer("study_documents");
     source_array(design.at("covariates"), "covariates");
     std::set<std::string> covariates;
     for (std::size_t i = 0; i < design.at("covariates").size(); ++i) {
@@ -201,7 +208,8 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
     std::set<std::string> prefixes;
     for (std::size_t k = 0; k < bindings.size(); ++k) {
         const auto item = bindings.at(k);
-        members(item, {"grade", "id_prefix", "label_prefix", "kind", "evidence"});
+        members(item, {"grade", "id_prefix", "label_prefix", "kind", "evidence"},
+                {"ids", "labels"});
         require(count(item.at("grade"), bindings.size() - 1, "binding grade") == k,
                 "cell bindings must follow native grade order");
         const auto prefix = text(item.at("id_prefix"));
@@ -213,6 +221,49 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
         (void)text(item.at("label_prefix"));
         (void)text(item.at("kind"));
         cell_bindings.push_back(declaration.at("cell_bindings").at(k));
+    }
+    for (std::size_t k = 0; k < bindings.size(); ++k) {
+        const auto item = bindings.at(k);
+        const auto &arena = endpoint->source.grade({static_cast<std::uint16_t>(k)});
+        for (const auto *name : {"ids", "labels"}) {
+            if (!item.has(name))
+                continue;
+            source_array(item.at(name), "native cell names");
+            require(item.at(name).size() == arena.cell_count(),
+                    "native cell names must cover the grade");
+            for (std::size_t i = 0; i < arena.cell_count(); ++i) {
+                const auto value = text(item.at(name).at(i));
+                if (std::string_view(name) != "ids")
+                    continue;
+                require(cell_ids
+                            .emplace(value, StableCellKey{{static_cast<std::uint16_t>(k)},
+                                                          arena.identities.at(i)})
+                            .second,
+                        "duplicate explicit native cell id");
+            }
+        }
+    }
+    for (const auto &[id, cell] : cell_ids) {
+        (void)cell;
+        for (std::size_t k = 0; k < bindings.size(); ++k) {
+            const auto item = bindings.at(k);
+            if (item.has("ids"))
+                continue;
+            const auto prefix = item.at("id_prefix").text();
+            if (!id.starts_with(prefix))
+                continue;
+            const auto number = std::string_view(id).substr(prefix.size());
+            std::uint64_t key{};
+            const auto [end, error] =
+                std::from_chars(number.data(), number.data() + number.size(), key);
+            if (error != std::errc{} || end != number.data() + number.size() ||
+                number != std::to_string(key))
+                continue;
+            const auto &arena = endpoint->source.grade({static_cast<std::uint16_t>(k)});
+            require(std::find(arena.identities.begin(), arena.identities.end(), key) ==
+                        arena.identities.end(),
+                    "explicit cell id duplicates a native prefix identity");
+        }
     }
     for (std::size_t k = 0; k < bindings.size(); ++k) {
         const auto rule = bindings.at(k).at("evidence");
@@ -260,7 +311,8 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
             }
         }
     }
-    if (observer) observer("study_cells");
+    if (observer)
+        observer("study_cells");
     const auto declared_contexts = view.at("contexts");
     source_array(declared_contexts, "contexts");
     require(declared_contexts.size() > 0, "study needs a context");
@@ -307,7 +359,8 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
         require(contexts.emplace(text(item.at("id")), std::move(context)).second,
                 "duplicate context");
     }
-    if (observer) observer("study_contexts");
+    if (observer)
+        observer("study_contexts");
     const auto fields = view.at("fields");
     source_array(fields, "fields");
     for (std::size_t i = 0; i < fields.size(); ++i) {
@@ -344,7 +397,8 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
                     .second,
                 "duplicate field id");
     }
-    if (observer) observer("study_fields");
+    if (observer)
+        observer("study_fields");
     for (std::size_t i = 0; i < design.at("covariates").size(); ++i) {
         const auto field = design.at("covariates").at(i).at("field");
         if (field.raw())
@@ -355,7 +409,8 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
     }
     admit_scoped_actions(view.has("operators") ? view.at("operators") : Json{},
                          view.at("field_sets"));
-    if (observer) observer("study_actions");
+    if (observer)
+        observer("study_actions");
     for (std::size_t k = 0; k < bindings.size(); ++k)
         grade_pins.push_back(directory->pin(
             NativeAccessionRequest::sparse_chain({static_cast<std::uint16_t>(k)}, {}, {})));
@@ -437,12 +492,17 @@ StableOccurrenceKey ScientificStudy::State::occurrence_key_at(std::size_t index)
     throw std::out_of_range("native occurrence page coordinate");
 }
 StableCellKey ScientificStudy::State::resolve_cell(const std::string &id) const {
+    const auto explicit_id = cell_ids.find(id);
+    if (compact && explicit_id != cell_ids.end())
+        return explicit_id->second;
     if (!compact) {
         const auto found = cell_ids.find(id);
         require(found != cell_ids.end(), "unknown cell identity");
         return found->second;
     }
     for (std::size_t k = 0; k < cell_bindings.size(); ++k) {
+        if (cell_bindings[k].has("ids"))
+            continue;
         const auto prefix = cell_bindings[k].at("id_prefix").text();
         if (!id.starts_with(prefix))
             continue;
@@ -475,12 +535,10 @@ Json ScientificStudy::State::compact_evidence(std::size_t grade, std::size_t coo
     auto out = Json::array();
     const auto endpoint = directory->pin_snapshot();
     if (kind == "spans") {
-        const auto &ids = column(
-            *endpoint, std::stoull(rule.at("document_index_field").text()), grade);
-        const auto &starts =
-            column(*endpoint, std::stoull(rule.at("start_field").text()), grade);
-        const auto &ends =
-            column(*endpoint, std::stoull(rule.at("end_field").text()), grade);
+        const auto &ids =
+            column(*endpoint, std::stoull(rule.at("document_index_field").text()), grade);
+        const auto &starts = column(*endpoint, std::stoull(rule.at("start_field").text()), grade);
+        const auto &ends = column(*endpoint, std::stoull(rule.at("end_field").text()), grade);
         out.push(reference(rule.at("documents").at(address(ids.state(coordinate_).value())).text(),
                            address(starts.state(coordinate_).value()),
                            address(ends.state(coordinate_).value())));
@@ -507,6 +565,16 @@ Json ScientificStudy::State::compact_evidence(std::size_t grade, std::size_t coo
     }
     return out;
 }
+std::string ScientificStudy::State::coordinate_id(std::size_t grade, std::size_t position) const {
+    const auto cell = coordinate(grade, position);
+    if (!compact) return cells.at(cell).at("id").text();
+    const auto binding = cell_bindings.at(grade);
+    return binding.has("ids") ? binding.at("ids").at(position).text()
+        : binding.at("id_prefix").text() + std::to_string(cell.key);
+}
+std::string ScientificStudy::cell_identifier(rfc::core::Grade grade, std::size_t position) const {
+    return state_->coordinate_id(grade.value, position);
+}
 Json ScientificStudy::State::cell_record(StableCellKey cell) const {
     if (!compact)
         return cells.at(cell);
@@ -516,7 +584,6 @@ Json ScientificStudy::State::cell_record(StableCellKey cell) const {
     auto out = Json::object();
     out.set("grade", Json::integer(grade));
     out.set("key", Json::string(std::to_string(cell.key)));
-    out.set("id", Json::string(binding.at("id_prefix").text() + std::to_string(cell.key)));
     out.set("kind", Json::string(binding.at("kind").text()));
     out.set("label", Json::string(binding.at("label_prefix").text() + std::to_string(cell.key)));
     (void)native;
@@ -529,6 +596,9 @@ Json ScientificStudy::State::cell_record(StableCellKey cell) const {
             ++position;
     }
     require(position < arena.cell_count(), "native cell lacks a source coordinate");
+    out.set("id", Json::string(coordinate_id(grade, position)));
+    if (binding.has("labels"))
+        out.set("label", Json::string(binding.at("labels").at(position).text()));
     out.set("evidence", compact_evidence(grade, position));
     return out;
 }

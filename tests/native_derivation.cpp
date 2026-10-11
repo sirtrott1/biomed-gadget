@@ -45,7 +45,7 @@ NativeRecordValue without_native(const ScientificStudy &study) {
     std::erase_if(members, [](const auto &member) { return member.first == "native"; });
     return value;
 }
-void check_artifact_owners(const NativeRecord &workspace) {
+void check_artifact_owners(const NativeRecord &workspace, std::size_t expected_aliases = 3) {
     const auto artifacts = workspace.at("originals");
     std::set<std::string> paths;
     std::map<std::string, RawByteSource> owners;
@@ -69,7 +69,7 @@ void check_artifact_owners(const NativeRecord &workspace) {
                 check(!source.shares_owner(owner) && source.key() != owner.key(),
                       "different original artifacts share a byte identity");
     }
-    check(aliases == 3, "shared reference and provenance paths were lost");
+    check(aliases == expected_aliases, "shared reference and provenance paths were lost");
 }
 } // namespace
 int main(int argc, char **argv) {
@@ -117,6 +117,7 @@ int main(int argc, char **argv) {
     write_text(root / "import.json", spec.dump());
     import_assays(root / "import.json", root / "input");
     AssayWorkspace original(root / "input/workspace.rfcxs");
+    const auto resource_owner = std::make_shared<const AssayWorkspace>(root / "input/workspace.rfcxs");
     check_artifact_owners(original.native_publication());
     check_artifact_owners(NativeRecord::decode(original.native_publication().encode()));
     const auto recipe = Json::parse(
@@ -133,7 +134,9 @@ int main(int argc, char **argv) {
     auto adopted = original.materialize_workspace(generating_request, root / "derived");
     check(AssayWorkspace::supports_native_materialization("controlled_coverage") &&
               AssayWorkspace::supports_native_materialization("spatial_relations") &&
-              !AssayWorkspace::supports_native_materialization("aggregate_assay"),
+              AssayWorkspace::supports_native_materialization("aggregate_assay") &&
+              AssayWorkspace::supports_native_materialization("design_aggregation") &&
+              !AssayWorkspace::supports_native_materialization("sequence_assembly_graph"),
           "native producer availability changed");
     check(!fs::exists(root / "derived/workspace.json"),
           "native derivation generated a JSON authority");
@@ -163,7 +166,7 @@ int main(int argc, char **argv) {
         .write(root / "wrong-namespace.rfcxs");
     refuse([&] { AssayWorkspace invalid_namespace(root / "wrong-namespace.rfcxs"); });
     auto unsupported = Json::parse(request.dump());
-    unsupported.at("recipe").set("operation", Json::string("aggregate_assay"));
+    unsupported.at("recipe").set("operation", Json::string("sequence_assembly_graph"));
     refuse([&] {
         original.materialize_workspace(admit_record_view(unsupported), root / "unsupported");
     });
@@ -346,9 +349,25 @@ int main(int argc, char **argv) {
     auto bind = Json::parse(
         R"({"schema":"gadget.assays.bindings.v1","id":"bound","assays":[{"input":"derived","assay":"coverage","id":"alias"}],"resources":[],"links":[],"method":"Preserve actual study owner","evidence":"Fixture"})");
     bind.set("design", design);
+    bind.set("resources", Json::parse(
+        R"([{"input":"resources","resource":"control","id":"selected-control"},{"input":"resources","resource":"treated","id":"selected-treated"}])"));
+    bind.set("links", Json::parse(
+        R"([{"id":"sample-link","left_assay":"alias","left_observation":"sample:0","right_assay":"alias","right_observation":"sample:1","relation":"Declared sample comparison","evidence":"Fixture source fields"}])"));
     const std::weak_ptr<const AssayWorkspace> producer_owner = adopted;
     auto bound_owner = AssayWorkspace::bind_workspaces(
-        {{"derived", adopted}}, admit_record_view(bind), root / "bound");
+        {{"derived", adopted}, {"resources", resource_owner}}, admit_record_view(bind), root / "bound");
+    check(bound_owner->catalog().at("resources").size() == 2 &&
+          bound_owner->catalog().at("links").size() == 1,
+          "native binding lost physical bytes or declared links");
+    check(bound_owner->native_publication().at("originals").size() == 8,
+          "selected resource, reference or provenance bytes were lost");
+    check_artifact_owners(bound_owner->native_publication());
+    auto invalid_link = Json::parse(bind.dump());
+    invalid_link.at("links").at(0).set("right_observation", Json::string("absent"));
+    refuse([&] { (void)AssayWorkspace::bind_workspaces(
+        {{"derived", adopted}, {"resources", resource_owner}}, admit_record_view(invalid_link),
+        root / "invalid-linked"); });
+    check(!fs::exists(root / "invalid-linked"), "invalid native link was published");
     check(bound_owner->study("alias") == study &&
               bound_owner->study("alias")->native_history() == study->native_history(),
           "binding reconstructed or relabeled the original study owner");
@@ -367,6 +386,10 @@ int main(int argc, char **argv) {
     second_binding.set("id", Json::string("rebound"));
     second_binding.at("assays").at(0).set("input", Json::string("bound"));
     second_binding.at("assays").at(0).set("assay", Json::string("alias"));
+    second_binding.at("resources").at(0).set("input", Json::string("bound"));
+    second_binding.at("resources").at(0).set("resource", Json::string("selected-control"));
+    second_binding.at("resources").at(1).set("input", Json::string("bound"));
+    second_binding.at("resources").at(1).set("resource", Json::string("selected-treated"));
     auto rebound = AssayWorkspace::bind_workspaces(
         {{"bound", bound_owner}}, admit_record_view(second_binding), root / "rebound");
     check(rebound->study("alias") == study &&
@@ -447,6 +470,9 @@ int main(int argc, char **argv) {
     auto assignment_binding = Json::parse(bind.dump());
     assignment_binding.at("assays").at(0).set("input", Json::string("source"));
     assignment_binding.at("assays").at(0).set("assay", Json::string("assignments"));
+    assignment_binding.set("resources", Json::array());
+    assignment_binding.at("links").at(0).set("left_observation", Json::string("sample:0.lower"));
+    assignment_binding.at("links").at(0).set("right_observation", Json::string("sample:1.lower"));
     auto assignment_bound = AssayWorkspace::bind_workspaces({{"source", allocations}},
                                                             admit_record_view(assignment_binding),
                                                             root / "allocation-bound");

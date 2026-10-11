@@ -85,6 +85,9 @@ def qualify(binary, root):
 
     def generating_result(name, step):
         catalog=json.loads((root/name/step/'result.json').read_text())
+        if catalog['schema']=='gadget.assays.workspace.v2':
+            return run('record-view','--input',root/name/step/'workspace/workspace.rfcxs',
+                       '--assay',catalog['assays'][0]['declaration']['id'])['result']
         record=catalog['assays'][0]['originals']['provenance-0']
         path=root/name/step/'workspace'/record['path']
         check(record['sha256']=='sha256:'+hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -163,7 +166,7 @@ def qualify(binary, root):
             '--out',root/'undersized-allocation',fail=True)
         check(not (root/'undersized-allocation').exists(),'Insufficient assigned budget has no published result')
     check(leaf('aggregation-pipeline','support')['missing']==2,'Derived source retains unknown coordinates')
-    replay=run('replay-derivation','--workspace',root/'aggregation-pipeline/mapped/workspace/workspace.json','--assay','mapped','--out',root/'aggregation-replay')
+    replay=run('replay-derivation','--workspace',root/'aggregation-pipeline/mapped/workspace/workspace.rfcxs','--assay','mapped','--out',root/'aggregation-replay')
     check(replay['status']=='PASS','Parallel aggregation replays from retained source files')
 
     # More than the former 4096 output groups, complete source ordering and
@@ -187,8 +190,15 @@ def qualify(binary, root):
     check(result['execution']['required_source_observations']==3 and result['execution']['intermediate_coordinates']==0 and result['execution']['sparse_map_owner']=='rfc::numeric::PreparedSparseExactMap','Required native count fields use sparse contraction')
     check(len(index['results'])==2,'Unrequested comparison not run')
     support_index=json.loads((root/'large-pseudobulk/support/result.json').read_text())
-    check([identity for packet in support_index['results'] for identity in packet['carrier_ids']]==features,
-          'Published support index covers every output feature in source order')
+    source_index=support_index['results'][0]['source_index']
+    read=dict(schema='gadget.assays.source.read.v1',source_digest=support_index['source_digest'],
+              assay='pseudobulk',partition=0,read=dict(schema='gadget.scientific.source.read.v1',
+              source_digest=source_index['source_digest'],source_sequence=source_index['source_sequence'],
+              publication='self',stream=dict(kind='catalog',section='cells'),offset=0,limit=len(features)))
+    page=run('assay-source-read','--workspace',root/'large-pseudobulk/pseudobulk/workspace/workspace.rfcxs',
+             '--request',save('derived-source-cells.json',read))['page']
+    check([cell['id'] for cell in page['records']]==features and page['complete'],
+          'Native source page covers every output feature in source order')
     check(sum(run('record-view','--input',root/'large-pseudobulk/support/results'/packet['path'],'--member','result')['result']['missing']
               for packet in support_index['results'])==1,'Missing count retained across all actual output storage partitions')
 

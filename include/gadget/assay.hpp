@@ -41,6 +41,8 @@ class AssayWorkspace {
         std::optional<std::uint64_t> source_namespace = {}) const;
     NativeRecord execute_assignment(const NativeRecord &, std::shared_ptr<CpuResources>,
         std::optional<std::uint64_t> source_namespace = {}) const;
+    NativeRecord execute_aggregation(const NativeRecord &, std::shared_ptr<CpuResources>,
+        std::optional<std::uint64_t> source_namespace = {}, bool retain_source = true) const;
     std::shared_ptr<const AssayWorkspace> materialize_native_fields(
         const NativeRecord &, const fs::path &, std::shared_ptr<CpuResources>) const;
     Json replay_native_derivation(const std::string &, const fs::path &,

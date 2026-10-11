@@ -63,6 +63,8 @@ class ScientificStudy {
     // Compatibility labels resolve to the already admitted primary identity;
     // gluing never reconstructs its source from presentation catalogues.
     rfc::storage::StableCellKey cell_identity(rfc::core::Grade grade, const std::string &id) const;
+    // Read the declared name at an actual native grade coordinate.
+    std::string cell_identifier(rfc::core::Grade grade, std::size_t coordinate) const;
     Json field_declaration(const std::string &id) const;
     Json source_binding() const;
     // Owns only the actual base and frames through the admitted cutoff.

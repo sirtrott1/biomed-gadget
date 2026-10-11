@@ -8,7 +8,7 @@ out.mkdir(parents=True)
 def run(*args):
  p=subprocess.run([str(binary),*map(str,args)],text=True,capture_output=True)
  if p.returncode:raise RuntimeError(p.stderr)
- return json.loads(p.stdout)
+ return json.loads(p.stdout) if p.stdout.strip() else None
 run('import-assays','--spec',here/'import.json','--out',out/'source')
 plan=run('pipeline-prepare','--workspace',out/'source/workspace.json','--request',here/'pipeline.json')
 (out/'plan.json').write_text(json.dumps(plan,indent=2)+'\n')
@@ -23,10 +23,11 @@ if selected['status']!='admitted' or selected['pipeline']['steps']!=plan['steps'
 shutil.copytree(out/'pipeline/combined/workspace',out/'bound-assays')
 shutil.copytree(out/'pipeline/sections/workspace',out/'compatible-rna')
 shutil.move(out/'source',out/'generating-source');shutil.move(out/'pipeline',out/'generating-pipeline')
-run('import-assays','--spec',out/'bound-assays/reimport.json','--out',out/'reimported-bound-assays')
+run('native-workspace','--workspace',out/'bound-assays/workspace.rfcxs','--out',out/'reopened-bound-assays.rfcxs')
+if (out/'reopened-bound-assays.rfcxs').read_bytes()!=(out/'bound-assays/workspace.rfcxs').read_bytes():raise RuntimeError('Bound archive bytes differ after reopening')
 replays={}
 for assay in ['rna','atac']:
- replays[assay]=run('replay-derivation','--workspace',out/'bound-assays/workspace.json','--assay',assay,'--out',out/('replayed-'+assay))['status']
+ replays[assay]=run('replay-derivation','--workspace',out/'bound-assays/workspace.rfcxs','--assay',assay,'--out',out/('replayed-'+assay))['status']
 replays['compatible_rna']=run('replay-derivation','--workspace',out/'compatible-rna/workspace.json','--assay','rna-compatible','--out',out/'replayed-compatible-rna')['status']
 workspace=json.loads((out/'compatible-rna/workspace.json').read_text());record=workspace['assays'][0]['originals']['provenance-0'];result=json.loads((out/'compatible-rna'/record['path']).read_text())['result']
 answers=json.loads((out/'generating-pipeline/answers.json').read_text())
