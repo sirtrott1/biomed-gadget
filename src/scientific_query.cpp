@@ -753,7 +753,7 @@ struct ScientificSession::State {
             declarations.set("cause_fields", meanings);
             declarations.set("evidence_profile", Json::string("document-bound-byte-spans-v1"));
         }
-        return {old, current, new_source.operator_pins.at(metric_id), std::move(causes),
+        return {*old_source.native_publication, *new_source.native_publication, old, current, new_source.operator_pins.at(metric_id), std::move(causes),
                 declarations};
     }
     scientific_detail::NativeHodgeBinding hodge_binding(const Json &query) {
@@ -799,6 +799,7 @@ struct ScientificSession::State {
     scientific_detail::DeclaredResponseBinding response_binding(const Json &query) {
         auto declarations = Json::object();
         struct EndpointPins {
+            NativeRecord source;
             rfc::storage::PinnedNativeAccession L, I, u;
             std::optional<rfc::storage::PinnedNativeAccession> A;
         };
@@ -834,13 +835,6 @@ struct ScientificSession::State {
                 A = s.operator_pins.at(accession);
                 record.set("accession", s.operators.at(accession));
             }
-            auto input_values = Vector(u.tensor()->domain().logical_size());
-            for (const auto &e : u.tensor()->values().entries())
-                input_values[e.index] = e.value;
-            auto values = Json::array();
-            for (const auto &v : input_values)
-                values.push(Json::string(v.get_str()));
-            record.set("input_values", values);
             auto carriers = Json::array();
             for (const auto &c : u.endpoint()->carriers) {
                 auto item = Json::object(), coordinates = Json::array();
@@ -850,8 +844,7 @@ struct ScientificSession::State {
                 if (c.kind == TemporalCarrierKind::SourceGrade) {
                     item.set("grade", Json::integer(c.grade.value));
                     for (std::size_t i = 0; i < c.domain.logical_size(); ++i) {
-                        auto cell = stable_cell_key(u.endpoint()->source,
-                                                    {c.grade, static_cast<std::uint32_t>(i)});
+                        const auto cell = s.coordinate(c.grade.value, i);
                         coordinates.push(s.cell_record(cell));
                     }
                 } else {
@@ -863,11 +856,11 @@ struct ScientificSession::State {
             }
             record.set("carriers", carriers);
             declarations.set(name, record);
-            return {L, I, u, A};
+            return {*s.native_publication, L, I, u, A};
         };
         const auto old = bind("old"), current = bind("new");
         scientific_detail::DeclaredResponseBinding b{
-            old.L, current.L, old.I, current.I, old.u, current.u, old.A, current.A, {}, Json{}};
+            old.source, current.source, old.L, current.L, old.I, current.I, old.u, current.u, old.A, current.A, {}, Json{}};
         for (const auto *name : {"quantity", "units", "channel", "value_type"})
             require(declarations.at("old").at("field").at(name).text() ==
                         declarations.at("new").at("field").at(name).text(),
@@ -1826,7 +1819,8 @@ struct ScientificSession::State {
         using N = NativeRecordValue;
         const auto operation = admitted.at("operation").text();
         if (operation != "linear_model_comparison" && operation != "finite_reference_calibration" &&
-            operation != "hodge_frame_decomposition" && operation != "linear_response_observation")
+            operation != "hodge_frame_decomposition" && operation != "linear_response_observation" &&
+            operation != "declared_response_transition" && operation != "metric_relative_novelty")
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
             if (operation == "linear_model_comparison")
@@ -1836,6 +1830,14 @@ struct ScientificSession::State {
             if (operation == "hodge_frame_decomposition")
                 return native_hodge.execute_fields(admitted, hodge_binding(admitted),
                     source_execution_lease("gadget-native-hodge-machine-addressable-v1"), cpu());
+            if (operation == "metric_relative_novelty")
+                return native_novelty.execute_fields(admitted, novelty_binding(admitted, true),
+                    source_execution_lease("gadget-native-novelty-machine-addressable-v1"), cpu());
+            if (operation == "declared_response_transition") {
+                auto reservation = cpu().reserve(1);
+                return declared_responses.execute_fields(admitted, response_binding(admitted),
+                    scientific_detail::declared_response_lease());
+            }
             return native_observations.execute_fields(admitted, observation_binding(admitted),
                 source_execution_lease("gadget-native-observation-machine-addressable-v1"), cpu());
         }();

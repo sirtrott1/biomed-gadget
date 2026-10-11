@@ -1,5 +1,6 @@
 #include "scientific_native_response.hpp"
 #include "scientific_detail.hpp"
+#include "scientific_result_fields.hpp"
 #include <algorithm>
 #include <charconv>
 #include <rfc/numeric/checked_exact_actions.hpp>
@@ -10,26 +11,6 @@ using namespace rfc;
 using Pin = storage::PinnedNativeAccession;
 using Matrix = numeric::ExactMatrix;
 using Correspondence = inference::NativeGreenCorrespondence;
-Json vec(const Vector &v) {
-    auto out = Json::array();
-    for (const auto &q : v)
-        out.push(Json::string(q.get_str()));
-    return out;
-}
-Json mat(const Matrix &m) {
-    auto out = Json::object(), entries = Json::array();
-    out.set("rows", cardinality(m.rows()));
-    out.set("columns", cardinality(m.cols()));
-    for (const auto &[p, q] : m.entries()) {
-        auto e = Json::object();
-        e.set("row", cardinality(p.first));
-        e.set("column", cardinality(p.second));
-        e.set("value", Json::string(q.get_str()));
-        entries.push(e);
-    }
-    out.set("entries", entries);
-    return out;
-}
 std::uint64_t sequence(const Json &v) {
     const auto s = v.text();
     std::uint64_t n{};
@@ -237,7 +218,7 @@ Matrix stored_map(const Pin &pin, numeric::ExactActionGuard &guard) {
     guard.matrix(out);
     return out;
 }
-Json metric_pairing(const Pin &metric, const std::vector<Vector> &causes,
+ResultValue metric_pairing(ResultFields &stored, const Pin &metric, const std::vector<Vector> &causes,
                     const runtime::ExecutionLease &lease, std::size_t dimension) {
     const auto &host = lease.policy().limits;
     numeric::ExactActionGuard guard({std::max(dimension, causes.size()),
@@ -259,10 +240,11 @@ Json metric_pairing(const Pin &metric, const std::vector<Vector> &causes,
         (void)p;
         total = guard.add(total, q);
     }
-    auto out = Json::object();
-    out.set("metric_key", Json::string(std::to_string(metric.tensor_declaration()->key)));
-    out.set("gram", mat(gram));
-    out.set("aggregate_quadrance", Json::string(total.get_str()));
+    const auto axis = stored.axis(causes.size());
+    auto out = ResultValue::object();
+    out.set("metric_key", ResultValue::string(std::to_string(metric.tensor_declaration()->key)));
+    out.set("gram", stored.matrix(gram, axis, axis));
+    out.set("aggregate_quadrance", stored.scalar(total));
     out.set("execution_steps", cardinality(guard.steps()));
     return out;
 }
@@ -280,7 +262,7 @@ runtime::ExecutionLease source_execution_lease(const std::string &name) {
 void DeclaredResponsePlans::validate(const Json &q, const DeclaredResponseBinding &b) {
     (void)request(q, b);
 }
-Json DeclaredResponsePlans::execute(const Json &q, const DeclaredResponseBinding &b,
+NativeRecord DeclaredResponsePlans::execute_fields(const Json &q, const DeclaredResponseBinding &b,
                                     runtime::ExecutionLease lease) {
     lease.check_cancelled();
     const auto r = request(q, b);
@@ -298,11 +280,18 @@ Json DeclaredResponsePlans::execute(const Json &q, const DeclaredResponseBinding
         green_.emplace(base_key, inference::PreparedNativeGreenResponseDelta::prepare(
                                      r.green, r.availability, lease));
     const auto &green = green_.at(base_key);
-    auto out = Json::object(), causes = Json::object(), names = Json::array();
+    ResultFields stored(b.new_source), previous(b.old_source);
+    auto out = ResultValue::object(), causes = ResultValue::object(), names = ResultValue::array();
+    auto old_view = ResultValue::object(), old_maps = ResultValue::object(), maps = ResultValue::object();
+    const auto old_ambient = b.old_operator.carrier()->key, new_ambient = b.new_operator.carrier()->key;
+    const auto old_source = b.old_field.carrier()->key, new_source = b.new_field.carrier()->key;
+    const auto target = r.output ? b.new_accession->carrier()->key : new_ambient;
+    const auto old_ambient_axis = stored.axis(b.old_operator.carrier()->domain.logical_size());
+    const auto old_source_axis = stored.axis(b.old_field.carrier()->domain.logical_size());
     std::vector<Vector> vectors;
     auto add = [&](const std::string &name, const Vector &v) {
-        names.push(Json::string(name));
-        causes.set(name, vec(v));
+        names.push(ResultValue::string(name));
+        causes.set(name, stored.vector(v, target));
         vectors.push_back(v);
     };
     if (r.output) {
@@ -319,8 +308,8 @@ Json DeclaredResponsePlans::execute(const Json &q, const DeclaredResponseBinding
         add("realization_change", v.realization_term);
         add("source_innovation", v.innovation_term);
         add("operator_change", v.operator_term);
-        out.set("accession_defect", mat(v.accession_defect));
-        out.set("aggregate", vec(v.aggregate));
+        out.set("accession_defect", stored.matrix(v.accession_defect, old_ambient_axis, target));
+        out.set("aggregate", stored.vector(v.aggregate, target));
         out.set("native_execution", provenance(result.provenance()));
     } else {
         const auto result = green.execute(b.old_field, b.new_field, r.availability, lease);
@@ -328,39 +317,83 @@ Json DeclaredResponsePlans::execute(const Json &q, const DeclaredResponseBinding
         add("realization_change", v.realization_term);
         add("source_innovation", v.innovation_term);
         add("operator_change", v.operator_term);
-        out.set("old_response", vec(v.old_response));
-        out.set("new_response", vec(v.new_response));
-        out.set("coordinate_innovation", vec(v.coordinate_innovation));
-        out.set("aggregate", vec(v.aggregate));
+        old_view.set("old_response", previous.vector(v.old_response, old_ambient));
+        out.set("new_response", stored.vector(v.new_response, new_ambient));
+        out.set("coordinate_innovation", stored.vector(v.coordinate_innovation, new_source));
+        out.set("aggregate", stored.vector(v.aggregate, target));
         out.set("native_execution", provenance(result.provenance()));
     }
-    out.set("realization_defect", mat(green.numeric_plan().injection_defect()));
-    out.set("operator_defect", mat(green.numeric_plan().operator_defect()));
+    out.set("realization_defect", stored.matrix(green.numeric_plan().injection_defect(), old_source_axis, new_ambient));
+    out.set("operator_defect", stored.matrix(green.numeric_plan().operator_defect(), old_ambient_axis, new_ambient));
     out.set("cause_order", names);
     out.set("causes", causes);
-    out.set("publications", b.publications);
-    auto maps = Json::object();
-    for (const auto &[name, p] :
-         std::vector<std::pair<std::string, Pin>>{{"old_resolving", b.old_operator},
-                                                  {"new_resolving", b.new_operator},
-                                                  {"old_realization", b.old_realization},
-                                                  {"new_realization", b.new_realization}})
-        maps.set(name, mat(storage::temporal_tensor_matrix(*p.tensor_declaration())));
+    old_view.set("input_values", previous.stored(b.old_field.tensor_declaration()->key, "vector"));
+    old_maps.set("old_resolving", previous.stored(b.old_operator.tensor_declaration()->key, "sparse_matrix"));
+    old_maps.set("old_realization", previous.stored(b.old_realization.tensor_declaration()->key, "sparse_matrix"));
+    maps.set("new_resolving", stored.stored(b.new_operator.tensor_declaration()->key, "sparse_matrix"));
+    maps.set("new_realization", stored.stored(b.new_realization.tensor_declaration()->key, "sparse_matrix"));
     if (b.old_accession) {
-        maps.set("old_accession",
-                 mat(storage::temporal_tensor_matrix(*b.old_accession->tensor_declaration())));
-        maps.set("new_accession",
-                 mat(storage::temporal_tensor_matrix(*b.new_accession->tensor_declaration())));
+        old_maps.set("old_accession", previous.stored(b.old_accession->tensor_declaration()->key, "sparse_matrix"));
+        maps.set("new_accession", stored.stored(b.new_accession->tensor_declaration()->key, "sparse_matrix"));
     }
-    if (b.metric)
-        maps.set("metric", mat(storage::temporal_tensor_matrix(*b.metric->tensor_declaration())));
+    if (b.metric) maps.set("metric", stored.stored(b.metric->tensor_declaration()->key, "sparse_matrix"));
+    old_view.set("declared_maps", old_maps);
+    auto old_binding = ResultValue::object();
+    old_binding.set("source_namespace", ResultValue::string(std::to_string(b.old_operator.source_namespace())));
+    old_binding.set("source_sequence", ResultValue::string(std::to_string(b.old_operator.sequence())));
+    old_binding.set("ambient_carrier", ResultValue::string(std::to_string(old_ambient)));
+    old_binding.set("source_carrier", ResultValue::string(std::to_string(old_source)));
+    previous.bind(old_binding);
+    const auto old_publication = stored.publication(previous.finish(old_view));
+    if (!r.output) out.set("old_response", ResultFields::member(old_publication, {"view", "old_response"}));
+    for (const auto *name : {"old_resolving", "old_realization"})
+        maps.set(name, ResultFields::member(old_publication, {"view", "declared_maps", name}));
+    if (b.old_accession)
+        maps.set("old_accession", ResultFields::member(old_publication, {"view", "declared_maps", "old_accession"}));
     out.set("declared_maps", maps);
+    auto publications = ResultValue(b.publications);
+    auto old_decl = publications.at("old"), new_decl = publications.at("new");
+    old_decl.set("input_values", ResultFields::member(old_publication, {"view", "input_values"}));
+    new_decl.set("input_values", stored.stored(b.new_field.tensor_declaration()->key, "vector"));
+    publications.set("old", old_decl);
+    publications.set("new", new_decl);
+    out.set("publications", publications);
+    auto binding = ResultValue::object();
+    binding.set("source_namespace", ResultValue::string(std::to_string(b.new_operator.source_namespace())));
+    binding.set("source_sequence", ResultValue::string(std::to_string(b.new_operator.sequence())));
+    binding.set("old_publication", old_publication);
+    binding.set("old_ambient_axis", ResultValue::string(std::to_string(old_ambient_axis)));
+    binding.set("old_source_axis", ResultValue::string(std::to_string(old_source_axis)));
+    binding.set("old_ambient_carrier", ResultValue::string(std::to_string(old_ambient)));
+    binding.set("old_source_carrier", ResultValue::string(std::to_string(old_source)));
+    binding.set("new_ambient_carrier", ResultValue::string(std::to_string(new_ambient)));
+    binding.set("new_source_carrier", ResultValue::string(std::to_string(new_source)));
+    binding.set("ambient_comparison", stored.matrix(green.numeric_plan().ambient_correspondence(), old_ambient_axis, new_ambient));
+    storage::TemporalTensor source_comparison;
+    source_comparison.tensor = r.green.source.map;
+    binding.set("source_comparison", stored.matrix(storage::temporal_tensor_matrix(source_comparison), old_source_axis, new_source));
+    if (r.output) {
+        const auto old_output = b.old_accession->carrier()->key;
+        const auto old_output_axis = stored.axis(b.old_accession->carrier()->domain.logical_size());
+        storage::TemporalTensor output_comparison;
+        output_comparison.tensor = r.output->map;
+        binding.set("old_output_axis", ResultValue::string(std::to_string(old_output_axis)));
+        binding.set("old_output_carrier", ResultValue::string(std::to_string(old_output)));
+        binding.set("new_output_carrier", ResultValue::string(std::to_string(target)));
+        binding.set("output_comparison", stored.matrix(storage::temporal_tensor_matrix(output_comparison), old_output_axis, target));
+    }
+    stored.bind(binding);
     out.set("identity_verified", Json::boolean(true));
     if (b.metric)
-        out.set("pairing", metric_pairing(*b.metric, vectors, lease, r.green.dimension_limit));
+        out.set("pairing", metric_pairing(stored, *b.metric, vectors, lease, r.green.dimension_limit));
+    auto publication = stored.finish(out);
     lease.check_cancelled();
     applications_ = machine::checked_size_add(applications_, 1);
-    return out;
+    return publication;
+}
+Json DeclaredResponsePlans::execute(const Json &query, const DeclaredResponseBinding &binding,
+                                  runtime::ExecutionLease lease) {
+    return render_record_view(execute_fields(query, binding, std::move(lease)));
 }
 Json DeclaredResponsePlans::statistics() const {
     auto out = Json::object();

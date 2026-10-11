@@ -30,3 +30,26 @@ x=copy.deepcopy(q);x['old']['field']='zero';x['new']['field']='zero';out=run(x)[
 p=subprocess.run([str(session),str(root/'square')],capture_output=True,text=True);assert p.returncode==0,p.stderr
 replay.save(root/'session.json',json.loads(p.stdout));replay.save(root/'contracts.json',dict(status='PASS',independent=checks,refusals=refusals,parameter_cases=variants))
 print(json.dumps(dict(status='PASS',refusals=refusals,parameter_cases=variants)))
+
+# Native publications replay after both source workspaces are removed.
+native_checks = []
+for case in sorted(root.iterdir()):
+    if not case.is_dir() or not (case/'study.json').exists() or not (case/'p0/study.json').exists():
+        continue
+    if not (case/'response-query.json').exists():
+        continue
+    if not (case/'response.json').exists():
+        continue
+    checked = subprocess.run([str(session), str(case), 'native'], capture_output=True, text=True)
+    assert checked.returncode == 0, (case.name, checked.stdout, checked.stderr)
+    native_checks.append(dict(case=case.name, **json.loads(checked.stdout)))
+    for result in sorted((case/'native').glob('*/result.rfcxs')):
+        replayed = result.with_name('replayed.rfcxs')
+        subprocess.run([str(binary), 'replay-scientific', '--record', str(result), '--out-record', str(replayed)], check=True, capture_output=True, text=True)
+        forged = result.with_name('changed-field.rfcxs')
+        if forged.exists():
+            target = result.with_name('refused.rfcxs')
+            refusal = subprocess.run([str(binary), 'replay-scientific', '--record', str(forged), '--out-record', str(target)], capture_output=True, text=True)
+            assert refusal.returncode and not target.exists(), refusal.stdout
+replay.save(root/'native-contracts.json', dict(status='PASS', cases=native_checks))
+print(json.dumps(dict(status='PASS', native_cases=len(native_checks), checks=sum(v['checks'] for v in native_checks))))

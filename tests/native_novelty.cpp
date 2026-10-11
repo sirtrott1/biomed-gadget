@@ -1,3 +1,4 @@
+#include "native_transition_fields.hpp"
 #include <atomic>
 #include <chrono>
 #include <gadget/assay.hpp>
@@ -11,6 +12,9 @@ int main(int argc, char **argv) {
         if (argc < 2 || argc > 4)
             throw std::invalid_argument("expected novelty case, optional repetitions and mode");
         const fs::path root = argv[1];
+        if (argc == 3 && std::string(argv[2]) == "native") {
+            native_transition_test::run(root, true); return 0;
+        }
         auto source = std::make_shared<const ScientificStudy>(root / "study.json");
         ScientificSession session(source);
         auto query = Json::parse(read_text(root / "query.json"));

@@ -1,32 +1,12 @@
 #include "scientific_native_novelty.hpp"
 #include "scientific_detail.hpp"
+#include "scientific_result_fields.hpp"
 
 namespace gadget::scientific_detail {
 namespace {
 using namespace rfc;
 using Pin = storage::PinnedNativeAccession;
 using Plan = inference::PreparedNativeMetricNovelty;
-Json vector(const numeric::RationalVector &values) {
-    auto out = Json::array();
-    for (const auto &value : values)
-        out.push(Json::string(value.get_str()));
-    return out;
-}
-Json matrix(const numeric::ExactMatrix &value) {
-    auto out = Json::object(), entries = Json::array();
-    out.set("rows", cardinality(value.rows()));
-    out.set("columns", cardinality(value.cols()));
-    out.set("complete_support", Json::boolean(true));
-    for (const auto &[position, coefficient] : value.entries()) {
-        auto item = Json::object();
-        item.set("row", cardinality(position.first));
-        item.set("column", cardinality(position.second));
-        item.set("value", Json::string(coefficient.get_str()));
-        entries.push(item);
-    }
-    out.set("entries", entries);
-    return out;
-}
 Json requirements(const runtime::ExecutionRequirements &value) {
     auto out = Json::object();
     out.set("records", Json::string(std::to_string(value.records)));
@@ -179,7 +159,7 @@ Json available(const inference::NativeMetricAvailability &a) {
 void NativeNoveltyPlans::validate(const Json &query, const NativeNoveltyBinding &binding) {
     (void)request(query, binding);
 }
-Json NativeNoveltyPlans::execute(const Json &query, const NativeNoveltyBinding &b,
+NativeRecord NativeNoveltyPlans::execute_fields(const Json &query, const NativeNoveltyBinding &b,
                                  runtime::ExecutionLease lease, CpuResources &cpu) {
     lease.check_cancelled();
     auto reservation = cpu.reserve(1);
@@ -197,47 +177,79 @@ Json NativeNoveltyPlans::execute(const Json &query, const NativeNoveltyBinding &
                       ? plan.execute_causes(b.old_field, b.new_field, b.causes, a, lease)
                       : plan.execute(b.old_field, b.new_field, a, lease);
     const auto &v = result.values();
-    auto out = Json::object(), split = Json::object(), work = Json::object();
-    auto publications = Json::object();
+    ResultFields stored(b.new_source), previous(b.old_source);
+    const auto old_carrier = b.old_field.carrier()->key, new_carrier = b.new_field.carrier()->key;
+    auto old_view = ResultValue::object(), old_binding = ResultValue::object();
+    old_view.set("input", previous.stored(b.old_field.tensor_declaration()->key, "vector"));
+    old_view.set("persistent_coordinates", previous.vector(v.persistent_coordinates, old_carrier));
+    old_view.set("pulled_back_metric", previous.matrix(plan.numeric_plan().pulled_back_metric(), old_carrier, old_carrier));
+    old_binding.set("source_namespace", ResultValue::string(std::to_string(b.old_field.source_namespace())));
+    old_binding.set("source_sequence", ResultValue::string(std::to_string(b.old_field.sequence())));
+    old_binding.set("carrier", ResultValue::string(std::to_string(old_carrier)));
+    previous.bind(old_binding);
+    const auto old_publication = stored.publication(previous.finish(old_view));
+    const auto old_axis = stored.axis(b.old_field.carrier()->domain.logical_size());
+    auto binding = ResultValue::object();
+    binding.set("source_namespace", ResultValue::string(std::to_string(b.new_field.source_namespace())));
+    binding.set("source_sequence", ResultValue::string(std::to_string(b.new_field.sequence())));
+    binding.set("old_publication", old_publication);
+    binding.set("old_axis", ResultValue::string(std::to_string(old_axis)));
+    binding.set("old_carrier", ResultValue::string(std::to_string(old_carrier)));
+    binding.set("new_carrier", ResultValue::string(std::to_string(new_carrier)));
+    binding.set("comparison", stored.matrix(plan.numeric_plan().correspondence(), old_axis, new_carrier));
+    binding.set("metric", stored.stored(b.metric.tensor_declaration()->key, "declared_map"));
+    binding.set("new_input", stored.stored(b.new_field.tensor_declaration()->key, "vector"));
+    auto out = ResultValue::object(), split = ResultValue::object();
+    auto work = Json::object(), publications = Json::object();
     for (const auto *name : {"old", "new", "evidence_profile"})
         publications.set(name, b.declarations.at(name));
     out.set("publications", publications);
-    split.set("transported_old", vector(v.transported_old));
-    split.set("innovation", vector(v.innovation));
-    split.set("persistent_coordinates", vector(v.persistent_coordinates));
-    split.set("persistent", vector(v.persistent));
-    split.set("complement", vector(v.complement));
-    split.set("reconstructed", vector(v.reconstructed));
-    split.set("pairings", matrix(v.pairings));
-    split.set("quadrance", Json::string(v.quadrance.get_str()));
+    split.set("transported_old", stored.vector(v.transported_old, new_carrier));
+    split.set("innovation", stored.vector(v.innovation, new_carrier));
+    split.set("persistent_coordinates", ResultFields::member(old_publication, {"view", "persistent_coordinates"}));
+    split.set("persistent", stored.vector(v.persistent, new_carrier));
+    split.set("complement", stored.vector(v.complement, new_carrier));
+    split.set("reconstructed", stored.vector(v.reconstructed, new_carrier));
+    const auto split_axis = stored.axis(2);
+    auto pairings = stored.matrix(v.pairings, split_axis, split_axis);
+    pairings.set("display", ResultValue::string("declared_map"));
+    split.set("pairings", pairings);
+    split.set("quadrance", stored.scalar(v.quadrance));
     out.set("split", split);
     if (result.cause_pairings()) {
         const auto &c = *result.cause_pairings();
-        auto causes = Json::object(), dictionary = Json::array(), word = Json::array();
+        auto causes = ResultValue::object(), dictionary = ResultValue::array(), word = ResultValue::array();
         std::map<std::uint64_t, std::size_t> seen;
+        std::vector<std::size_t> slots;
         for (std::size_t i = 0; i < b.causes.size(); ++i) {
             const auto key = b.causes[i].tensor_declaration()->key;
             auto found = seen.find(key);
             if (found == seen.end()) {
-                auto item = Json::object();
-                item.set("field_key", Json::string(std::to_string(key)));
-                item.set("values", vector(c.channels[i]));
-                found = seen.emplace(key, dictionary.size()).first;
+                auto item = ResultValue::object();
+                item.set("field_key", ResultValue::string(std::to_string(key)));
+                item.set("values", stored.stored(key, "vector"));
+                found = seen.emplace(key, seen.size()).first;
                 dictionary.push(item);
             }
-            auto slot = Json::object();
+            auto slot = ResultValue::object();
             slot.set("field", query.at("causes").at(i));
-            slot.set("dictionary_index", cardinality(found->second));
+            slot.set("dictionary_index", ResultValue::count(found->second));
             word.push(slot);
+            slots.push_back(found->second);
         }
+        const auto cause_axis = stored.axis(b.causes.size());
+        binding.set("cause_word", stored.indices(slots, cause_axis));
         causes.set("fields", dictionary);
         causes.set("meanings", b.declarations.at("cause_fields"));
         causes.set("word", word);
-        causes.set("aggregate", vector(c.aggregate));
-        causes.set("pairings", matrix(c.pairings));
-        causes.set("quadrance", Json::string(c.quadrance.get_str()));
+        causes.set("aggregate", stored.vector(c.aggregate, new_carrier));
+        auto gram = stored.matrix(c.pairings, cause_axis, cause_axis);
+        gram.set("display", ResultValue::string("declared_map"));
+        causes.set("pairings", gram);
+        causes.set("quadrance", stored.scalar(c.quadrance));
         out.set("causes", causes);
     }
+    stored.bind(binding);
     const auto &p = result.provenance();
     work.set("profile", Json::string(p.profile));
     work.set("old", witness(p.old_endpoint));
@@ -272,7 +284,7 @@ Json NativeNoveltyPlans::execute(const Json &query, const NativeNoveltyBinding &
     storage.set("counts_scope",
                 Json::string("native named containers; excludes allocator and GMP/RSS"));
     out.set("native_storage", storage);
-    auto detached = Json::parse(out.dump());
+    auto publication = stored.finish(out);
     lease.check_cancelled();
     const auto next = machine::checked_size_add(applications_, 1);
     const auto preparations = machine::checked_size_add(preparations_, reuse ? 0 : 1);
@@ -280,7 +292,11 @@ Json NativeNoveltyPlans::execute(const Json &query, const NativeNoveltyBinding &
         plans_.insert_or_assign(id, plan);
     applications_ = next;
     preparations_ = preparations;
-    return detached;
+    return publication;
+}
+Json NativeNoveltyPlans::execute(const Json &query, const NativeNoveltyBinding &binding,
+                                runtime::ExecutionLease lease, CpuResources &cpu) {
+    return render_record_view(execute_fields(query, binding, std::move(lease), cpu));
 }
 Json NativeNoveltyPlans::statistics() const {
     auto out = Json::object();

@@ -77,3 +77,26 @@ replay.save(base/'proposal.json',proposal)
 p=subprocess.run([str(session),str(base),'workspace',str(original/'workspace.json')],check=True,capture_output=True,text=True)
 replay.save(root/'contracts.json',dict(status='PASS',independent=records,refusals=refusals,session=session_receipt,workspace=json.loads(p.stdout),answer_checks=answer_checks))
 print(json.dumps(dict(status='PASS',cases=len(records),refusals=len(refusals),answer_checks=answer_checks)))
+
+# Native publications replay after both source workspaces are removed.
+native_checks = []
+for case in sorted(root.iterdir()):
+    if not case.is_dir() or not (case/'study.json').exists() or not (case/'p0/study.json').exists():
+        continue
+    if not (case/'query.json').exists():
+        continue
+    if not (case/'result.json').exists():
+        continue
+    checked = subprocess.run([str(session), str(case), 'native'], capture_output=True, text=True)
+    assert checked.returncode == 0, (case.name, checked.stdout, checked.stderr)
+    native_checks.append(dict(case=case.name, **json.loads(checked.stdout)))
+    for result in sorted((case/'native').glob('*/result.rfcxs')):
+        replayed = result.with_name('replayed.rfcxs')
+        subprocess.run([str(binary), 'replay-scientific', '--record', str(result), '--out-record', str(replayed)], check=True, capture_output=True, text=True)
+        forged = result.with_name('changed-field.rfcxs')
+        if forged.exists():
+            target = result.with_name('refused.rfcxs')
+            refusal = subprocess.run([str(binary), 'replay-scientific', '--record', str(forged), '--out-record', str(target)], capture_output=True, text=True)
+            assert refusal.returncode and not target.exists(), refusal.stdout
+replay.save(root/'native-contracts.json', dict(status='PASS', cases=native_checks))
+print(json.dumps(dict(status='PASS', native_cases=len(native_checks), checks=sum(v['checks'] for v in native_checks))))

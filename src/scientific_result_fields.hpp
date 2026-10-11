@@ -39,6 +39,7 @@ class ResultFields {
     std::size_t original_fields_, original_carriers_;
     assay_detail::SourceGradeFields fields_;
     std::uint64_t scalar_;
+    std::vector<RawByteSource> publications_;
     ResultValue bindings_{ResultValue::array()};
     ResultValue reference(NativeRecordValue key, std::string display,
                           std::optional<NativeRecordValue> coordinates = {}) {
@@ -55,6 +56,27 @@ class ResultFields {
           original_fields_(endpoint_.tensors.size()), original_carriers_(endpoint_.carriers.size()),
           fields_(endpoint_), scalar_(fields_.explicit_carrier(1)) {}
     std::uint64_t axis(std::size_t size) {return fields_.explicit_carrier(size);}
+    ResultValue publication(const NativeRecord &owner) {
+        std::uint64_t key = 1;
+        for (const auto &bytes : source_.raw_sources())
+            key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+        for (const auto &bytes : publications_)
+            key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+        auto bytes = owner.archive_source(key);
+        auto out = ResultValue::object();
+        out.set("schema", ResultValue::string("gadget.scientific.publication.view.v1"));
+        out.set("publication", ResultValue(NativeRecordValue(
+            NativeRecordValue::ByteSpan{key, 0, bytes.bytes().size(), false})));
+        out.set("path", ResultValue::array());
+        publications_.push_back(std::move(bytes));
+        return out;
+    }
+    static ResultValue member(ResultValue publication, std::initializer_list<std::string> names) {
+        auto path = publication.at("path");
+        for (const auto &name : names) path.push(ResultValue::string(name));
+        publication.set("path", std::move(path));
+        return publication;
+    }
     ResultValue stored(std::uint64_t key, std::string display) {
         if (std::none_of(endpoint_.tensors.begin(), endpoint_.tensors.end(),
                          [&](const auto &tensor) {return tensor.key == key;}))
@@ -121,6 +143,11 @@ class ResultFields {
         root.set("schema", ResultValue::string("gadget.scientific.fields.v1"));
         root.set("view", std::move(view));
         root.set("bindings", std::move(bindings_));
+        auto original_bytes = ResultValue::array();
+        for (const auto &bytes : source_.raw_sources())
+            original_bytes.push(ResultValue(NativeRecordValue(
+                NativeRecordValue::ByteSpan{bytes.key(), 0, bytes.bytes().size(), false})));
+        root.set("source_bytes", std::move(original_bytes));
         std::vector<rfc::storage::TemporalTensor> fields;
         for (auto i = original_fields_; i < endpoint_.tensors.size(); ++i)
             fields.push_back(std::move(endpoint_.tensors[i]));
@@ -128,10 +155,11 @@ class ResultFields {
         for (auto i = original_carriers_; i < endpoint_.carriers.size(); ++i)
             carriers.push_back(std::move(endpoint_.carriers[i]));
         return NativeRecord::publish_fields(source_, new_native_record_namespace(), std::move(fields),
-            std::move(root).release(), {}, std::move(carriers));
+            std::move(root).release(), std::move(publications_), std::move(carriers));
     }
 };
 Json result_tensor_view(const NativeRecord &record);
+Json result_fields_view(const NativeRecord &record);
 NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeRecord &plan,
     const std::string &source_digest, const std::vector<std::pair<std::string, NativeRecord>> &steps);
 } // namespace gadget::scientific_detail

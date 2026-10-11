@@ -1,9 +1,11 @@
 #pragma once
 #include <gadget/io.hpp>
+#include <gadget/native_record.hpp>
 #include <rfc/inference/native_green_response.hpp>
 
 namespace gadget::scientific_detail {
 struct DeclaredResponseBinding {
+    NativeRecord old_source, new_source;
     rfc::storage::PinnedNativeAccession old_operator, new_operator, old_realization,
         new_realization, old_field, new_field;
     std::optional<rfc::storage::PinnedNativeAccession> old_accession, new_accession, metric;
@@ -18,6 +20,8 @@ class DeclaredResponsePlans {
 
   public:
     static void validate(const Json &query, const DeclaredResponseBinding &binding);
+    NativeRecord execute_fields(const Json &query, const DeclaredResponseBinding &binding,
+                 rfc::runtime::ExecutionLease lease);
     Json execute(const Json &query, const DeclaredResponseBinding &binding,
                  rfc::runtime::ExecutionLease lease);
     Json statistics() const;

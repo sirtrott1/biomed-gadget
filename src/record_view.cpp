@@ -201,7 +201,7 @@ Json render_record_view(const NativeRecord &record) {
                 return scientific_detail::seal(out, "certificate_sha256");
             }
             if (schema == "gadget.scientific.fields.v1")
-                return render_record_view(record.at("view"));
+                return scientific_detail::result_fields_view(record);
             if (schema == "gadget.scientific.tensor.view.v1")
                 return scientific_detail::result_tensor_view(record);
             if (schema == "gadget.sequence.alignment.fields.v1")

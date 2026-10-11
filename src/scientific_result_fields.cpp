@@ -3,6 +3,40 @@
 #include <rfc/storage/rfcx.hpp>
 
 namespace gadget::scientific_detail {
+Json result_fields_view(const NativeRecord &record) {
+    std::map<std::pair<const void *, std::uint64_t>, NativeRecord> owners;
+    const auto render = [&](const auto &self, const NativeRecord &value) -> Json {
+        if (value.kind() == NativeRecordKind::Object) {
+            if (value.has("schema") && value.at("schema").kind() == NativeRecordKind::Text) {
+                const auto schema = value.at("schema").text();
+                if (schema == "gadget.scientific.tensor.view.v1") return result_tensor_view(value);
+                if (schema == "gadget.scientific.fields.v1") return self(self, value.at("view"));
+                if (schema == "gadget.scientific.publication.view.v1") {
+                    const auto bytes = value.at("publication");
+                    const auto id = std::pair<const void *, std::uint64_t>{
+                        bytes.endpoint().get(), bytes.byte_source().key()};
+                    auto owner = owners.find(id);
+                    if (owner == owners.end())
+                        owner = owners.emplace(id, NativeRecord::decode(bytes.bytes())).first;
+                    auto selected = owner->second;
+                    for (std::size_t i = 0; i < value.at("path").size(); ++i)
+                        selected = selected.at(value.at("path").at(i).text());
+                    return self(self, selected);
+                }
+            }
+            auto out = Json::object();
+            for (const auto &name : value.names()) out.set(name, self(self, value.at(name)));
+            return out;
+        }
+        if (value.kind() == NativeRecordKind::Array) {
+            auto out = Json::array();
+            for (std::size_t i = 0; i < value.size(); ++i) out.push(self(self, value.at(i)));
+            return out;
+        }
+        return render_record_view(value);
+    };
+    return render(render, record.at("view"));
+}
 Json result_tensor_view(const NativeRecord &record) {
     const auto &tensor = assay_detail::retained_tensor(record, record.at("tensor")).tensor;
     const auto display = record.at("display").text();
@@ -89,6 +123,7 @@ NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeReco
 
 namespace gadget {
 namespace {
+void same_result_fields(const NativeRecord &a, const NativeRecord &b);
 void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_execution = false,
                        bool execution_receipt = false) {
     scientific_detail::require(a.kind() == b.kind(), "replayed scientific value type differs");
@@ -115,11 +150,21 @@ void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_e
         return;
     case NativeRecordKind::Object:
         scientific_detail::require(a.names() == b.names(), "replayed scientific object differs");
+        if (a.has("schema") && a.at("schema").kind() == NativeRecordKind::Text &&
+            a.at("schema").text() == "gadget.scientific.publication.view.v1") {
+            same_result_value(a.at("schema"), b.at("schema"));
+            same_result_value(a.at("path"), b.at("path"));
+            same_result_fields(NativeRecord::decode(a.at("publication").bytes()),
+                               NativeRecord::decode(b.at("publication").bytes()));
+            return;
+        }
         for (const auto &name : a.names()) {
             if (omit_execution && (name == "execution" || name == "native_work")) continue;
             if (execution_receipt && (name == "action_limits" || name == "requirements" ||
                 name == "retained_requirements" || name == "steps" || name == "execution_steps" ||
-                name == "preparation_steps" || name.ends_with("policy") || name == "fallback")) continue;
+                name == "preparation_steps" || name == "green_preparation_steps" ||
+                name == "selected_requirements" || name.ends_with("policy") ||
+                name == "fallback" || name == "cpu_fallback")) continue;
             same_result_value(a.at(name), b.at(name), omit_execution,
                 omit_execution && (name == "native_execution" || name == "native_preparation"));
         }
@@ -151,6 +196,16 @@ NativeRecord retained_request(const NativeRecord &publication) {
     return *request;
 }
 void same_result_fields(const NativeRecord &a, const NativeRecord &b) {
+    const auto original = a.raw_sources();
+    const auto bytes = b.at("source_bytes");
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        const auto source = bytes.at(i);
+        const auto found = std::find_if(original.begin(), original.end(),
+            [&](const auto &value) {return value.key() == source.byte_source().key();});
+        scientific_detail::require(found != original.end() &&
+            std::ranges::equal(source.bytes(), found->bytes()), "replayed scientific original bytes differ");
+    }
+    if (a.has("source_bytes")) same_result_value(a.at("source_bytes"), bytes);
     const auto x = a.endpoint(), y = b.endpoint();
     scientific_detail::require(rfc::storage::encode_rfcx(x->source).bytes ==
         rfc::storage::encode_rfcx(y->source).bytes, "replayed scientific complex differs");
