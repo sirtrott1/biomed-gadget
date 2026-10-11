@@ -123,7 +123,7 @@ int main() {
         check(render_record_view(resumed).dump() == legacy_view.dump(),
               "native assignment view changed the complete result");
         const auto legacy = legacy_view.at("allocation_certificate").at("result");
-        check(resumed.at("allocation_summary").at("target_ambiguity_rank").integer() ==
+        check(resumed.at("allocation_fields").at("target_ambiguity_rank").integer() ==
                   legacy.at("target_ambiguity_rank").integer(),
               "allocation rank changed");
         std::cout << "Alignment fields and complete source checks passed\n";

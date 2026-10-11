@@ -200,7 +200,9 @@ Json feature_count_fields_view(const NativeRecord &record) {
     auto result = Json::object();
     result.set("samples", analyses);
     result.set("contrasts", Json::array());
-    const auto summary = render_record_view(record.at("allocation_summary"));
+    const auto summary = record.has("allocation_fields")
+        ? allocation_fields_summary_view(record.at("allocation_fields"))
+        : render_record_view(record.at("allocation_summary"));
     json_object_object_foreach(summary.raw(), name, value) {
         (void)value;
         result.set(name, summary.at(name));

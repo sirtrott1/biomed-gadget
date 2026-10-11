@@ -162,7 +162,8 @@ Json alignment_evidence(const ResourceImage &r, const Json &request) {
                                               "multiple mappings remain separate records"));
     return out;
 }
-Json feature_evidence(const ResourceImages &images, const Json &request) {
+Json feature_evidence(const ResourceImages &images, const Json &request,
+                      Vector *native_counts = nullptr) {
     members(request,
             {"schema", "operation", "resource", "annotation", "feature_type", "group_attribute",
              "unit", "overlap", "strand_policy", "filter", "candidate_search"},
@@ -356,6 +357,10 @@ Json feature_evidence(const ResourceImages &images, const Json &request) {
          evidence = Json::array();
     for (auto n : counts)
         sample_counts.push(Json::string(std::to_string(n)));
+    if (native_counts) {
+        native_counts->clear();
+        for (auto n : counts) native_counts->emplace_back(std::to_string(n));
+    }
     sample.set("id", request.at("resource"));
     sample.set("counts", sample_counts);
     sample.set("scale", Json::string("1"));
@@ -551,8 +556,9 @@ Json chromatin_contrast(const ResourceImages &images, const Json &request) {
     return out;
 }
 } // namespace
-Json feature_allocation_evidence(const ResourceImages &images, const Json &request) {
-    return feature_evidence(images, request);
+Json feature_allocation_evidence(const ResourceImages &images, const Json &request,
+                                 Vector *native_counts) {
+    return feature_evidence(images, request, native_counts);
 }
 Json genomic_analysis(const ResourceImages &images, const Json &request,
                       std::shared_ptr<CpuResources> budget) {

@@ -1,6 +1,9 @@
 #include "genomic_detail.hpp"
+#include "source_grade_fields.hpp"
+#include <gadget/record_view.hpp>
 #include <gadget/resources.hpp>
 #include <limits>
+#include <numeric>
 #include <rfc/core/builder.hpp>
 #include <rfc/machine/checked_size.hpp>
 #include <rfc/numeric/exact_matrix.hpp>
@@ -8,9 +11,15 @@
 
 namespace gadget {
 Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuResources> resources,
-                                      std::optional<rfc::storage::TemporalEndpoint> *retained_source) {
+                                       std::optional<AssayFieldsSource> *retained,
+                                       const std::vector<Vector> *native_counts,
+                                       bool scale_samples) {
     using namespace assay_detail;
     using rfc::numeric::ExactMatrix;
+    using N = NativeRecordValue;
+    if (native_counts)
+        require(native_counts->size() == request.at("samples").size(),
+                "native allocation sample shape");
     if (!resources)
         resources = CpuResources::local();
     auto reservation = resources->reserve(1);
@@ -52,6 +61,14 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
     std::set<std::string> class_ids, target_ids;
     rfc::core::RelationSignature signature;
     const auto type = signature.add_type("reported.assignment.candidate.class");
+    const bool grouped_targets = retained && [&] {
+        for (std::size_t t = 0; t < targets.size(); ++t)
+            if (targets.at(t).at("candidates").size() > 1)
+                return true;
+        return false;
+    }();
+    const auto target_type =
+        grouped_targets ? signature.add_type("declared.assignment.target") : type;
     rfc::core::RelationalComplexBuilder builder(signature);
     for (std::size_t i = 0; i < candidates.size(); ++i)
         builder.declare_witness_identity(i + 1);
@@ -78,23 +95,60 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
         builder.add_grade_one(rfc::core::RelationKey{rfc::machine::checked_size_add(1000000, i)},
                               type, occurrences);
     }
-    const auto complex = builder.freeze();
     ExactMatrix lower(targets.size(), classes.size()), upper(targets.size(), classes.size());
     std::vector<std::vector<std::size_t>> candidate_targets(candidates.size());
+    std::vector<std::size_t> target_coordinates;
+    std::size_t source_cells = candidates.size(), diagram_slots = slots;
     for (std::size_t t = 0; t < targets.size(); ++t) {
         const auto target = targets.at(t);
         members(target, {"id", "candidates"});
         require(target_ids.insert(text(target.at("id"), source_byte_limit())).second,
                 "duplicate allocation target");
         std::set<std::size_t> set;
+        std::vector<std::size_t> ordered_members;
         require(target.at("candidates").size() > 0, "empty allocation target");
         for (std::size_t j = 0; j < target.at("candidates").size(); ++j) {
             const auto id = text(target.at("candidates").at(j), source_byte_limit());
             require(ids.contains(id) && set.insert(ids.at(id)).second, "target candidate identity");
+            ordered_members.push_back(ids.at(id));
         }
         for (auto p : set)
             candidate_targets[p].push_back(t);
+        if (retained) {
+            if (set.size() == 1)
+                target_coordinates.push_back(*set.begin());
+            else {
+                const auto coordinate = source_cells;
+                source_cells = rfc::machine::checked_size_add(source_cells, 1);
+                const auto identity = rfc::machine::checked_size_add(coordinate, 1);
+                builder.declare_witness_identity(identity);
+                std::vector<rfc::core::BoundaryOccurrenceInput> occurrences;
+                occurrences.push_back(
+                    {identity,
+                     true,
+                     true,
+                     Rational{1},
+                     {},
+                     rfc::core::OccurrenceKey{rfc::machine::checked_size_add(diagram_slots, 1)}});
+                diagram_slots = rfc::machine::checked_size_add(diagram_slots, 1);
+                for (auto p : ordered_members) {
+                    diagram_slots = rfc::machine::checked_size_add(diagram_slots, 1);
+                    occurrences.push_back({p + 1,
+                                           true,
+                                           false,
+                                           Rational{1},
+                                           {},
+                                           rfc::core::OccurrenceKey{diagram_slots}});
+                }
+                builder.add_grade_one(
+                    rfc::core::RelationKey{rfc::machine::checked_size_add(
+                        1000000, rfc::machine::checked_size_add(classes.size(), t))},
+                    target_type, occurrences);
+                target_coordinates.push_back(coordinate);
+            }
+        }
     }
+    auto complex = builder.freeze();
     // Construct incidence maps from set membership, then delegate every count
     // action to RFC. A class wholly inside a target contributes to both bounds;
     // a mixed class contributes only to its upper bound. These endpoints are
@@ -112,7 +166,10 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
         }
     }
     std::map<std::string, std::size_t> sample_ids;
-    std::vector<Vector> lows, highs;
+    std::vector<Vector> lows, highs, contrast_lows, contrast_highs;
+    Vector totals;
+    std::vector<Vector> exact_counts;
+    N::Array native_factors;
     std::vector<Rational> scales;
     auto analyses = Json::array();
     for (std::size_t s = 0; s < samples.size(); ++s) {
@@ -125,19 +182,26 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
         require(scale > 0, "allocation sample scale");
         scales.push_back(scale);
         require(sample.at("counts").size() == classes.size(), "class counts/coordinate shape");
+        if (native_counts)
+            require(native_counts->at(s).size() == classes.size(), "native allocation count shape");
         Vector counts;
         for (std::size_t c = 0; c < classes.size(); ++c) {
-            const auto q = exact_rational(sample.at("counts").at(c).text());
+            const auto q = native_counts ? native_counts->at(s).at(c)
+                                         : exact_rational(sample.at("counts").at(c).text());
             require(q >= 0 && q.get_den() == 1, "class count must be nonnegative integer");
             counts.push_back(q);
         }
+        if (retained)
+            exact_counts.push_back(counts);
+        totals.push_back(rfc::numeric::dot(Vector(counts.size(), 1), counts));
         const auto lo = lower.apply(counts), hi = upper.apply(counts);
         lows.push_back(lo);
         highs.push_back(hi);
+        if (retained)
+            continue;
         auto record = Json::object(), bounds = Json::array();
         record.set("id", sample.at("id"));
-        record.set("total",
-                   Json::string(rfc::numeric::dot(Vector(counts.size(), 1), counts).get_str()));
+        record.set("total", Json::string(totals.back().get_str()));
         for (std::size_t t = 0; t < targets.size(); ++t) {
             auto b = Json::object();
             b.set("id", targets.at(t).at("id"));
@@ -162,6 +226,11 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
                                           rfc::numeric::scale(scales[ri], highs[ri]));
         const auto hi = rfc::numeric::sub(rfc::numeric::scale(scales[li], highs[li]),
                                           rfc::numeric::scale(scales[ri], lows[ri]));
+        if (retained) {
+            contrast_lows.push_back(lo);
+            contrast_highs.push_back(hi);
+            continue;
+        }
         auto record = Json::object(), bounds = Json::array();
         record.set("id", c.at("id"));
         record.set("left", c.at("left"));
@@ -217,20 +286,27 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
     };
     for (std::size_t c = 0; c < classes.size(); ++c) {
         const auto &p = participants[c];
-        ExactMatrix retained(1, p.size()), aggregate(targets.size(), p.size());
+        ExactMatrix conservation(1, p.size()), aggregate(targets.size(), p.size());
         for (std::size_t j = 0; j < p.size(); ++j) {
-            retained.set(0, j, 1);
+            conservation.set(0, j, 1);
             for (auto t : candidate_targets[p[j]])
                 aggregate.set(t, j, 1);
         }
-        const auto kernel = retained.kernel_frame();
-        require(retained.multiply(kernel).nonzeros() == 0, "native allocation kernel residual");
+        const auto kernel = conservation.kernel_frame();
+        require(conservation.multiply(kernel).nonzeros() == 0, "native allocation kernel residual");
         const auto image = aggregate.multiply(kernel);
+        if (retained && retain_factors)
+            native_factors.elements.emplace_back(N::Object{
+                {{"class_id", N(classes.at(c).at("id").text())},
+                 {"occurrence_offset", N(rfc::numeric::Integer(std::to_string(slot_offset)))},
+                 {"kernel_offset", N(rfc::numeric::Integer(std::to_string(kernel_offset)))},
+                 {"kernel_frame", SourceGradeFields::matrix(kernel)},
+                 {"target_image", SourceGradeFields::matrix(image)}}});
         for (const auto &[coordinate, q] : image.entries())
             target_image.set(coordinate.first,
                              rfc::machine::checked_size_add(kernel_offset, coordinate.second), q);
-        constraint_rank = rfc::machine::checked_size_add(constraint_rank, retained.rank());
-        if (retain_factors) {
+        constraint_rank = rfc::machine::checked_size_add(constraint_rank, conservation.rank());
+        if (retain_factors && !retained) {
             auto factor = Json::object();
             factor.set("class_id", classes.at(c).at("id"));
             factor.set("native_relation_identity",
@@ -253,7 +329,7 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
     result.set("allocation_nullity", cardinality(kernel_offset));
     result.set("target_ambiguity_rank", cardinality(target_image.rank()));
     result.set("kernel_residual_zero", Json::boolean(true));
-    if (retain_factors) {
+    if (retain_factors && !retained) {
         auto certificate = Json::object();
         certificate.set("factors", factors);
         certificate.set("target_coordinate_order", targets);
@@ -277,7 +353,93 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
     output.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
     output.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
     auto certificate = seal(output, "certificate_sha256");
-    if (retained_source) *retained_source = std::move(endpoint);
+    if (retained) {
+        endpoint.carriers.push_back({1,
+                                     rfc::storage::TemporalCarrierKind::SourceGrade,
+                                     {0},
+                                     {},
+                                     0,
+                                     rfc::numeric::IndexDomain::linear(source_cells)});
+        endpoint.carriers.push_back(
+            {2,
+             rfc::storage::TemporalCarrierKind::SourceGrade,
+             {1},
+             {},
+             0,
+             rfc::numeric::IndexDomain::linear(endpoint.source.grade({1}).cell_count())});
+        SourceGradeFields fields{endpoint};
+        const auto bound_field = [&](const std::string &name, const Vector &values) {
+            std::set<std::size_t> active(target_coordinates.begin(), target_coordinates.end());
+            Vector mapped(source_cells);
+            for (std::size_t t = 0; t < values.size(); ++t)
+                mapped.at(target_coordinates[t]) = values[t];
+            return fields.column(
+                name, 0, source_cells, [&](auto i) { return mapped[i]; },
+                rfc::numeric::StructuralSupport::sparse(
+                    source_cells, std::vector<std::size_t>(active.begin(), active.end())));
+        };
+        N::Array native_samples, native_contrasts;
+        std::vector<std::size_t> class_coordinates(classes.size());
+        std::iota(class_coordinates.begin(), class_coordinates.end(), 0);
+        for (std::size_t s = 0; s < samples.size(); ++s) {
+            const auto prefix = "sample:" + std::to_string(s);
+            const auto scale = scale_samples ? scales[s] : Rational{1};
+            native_samples.elements.emplace_back(N::Object{
+                {{"id", N(samples.at(s).at("id").text())},
+                 {"scale", N(scales[s])},
+                 {"total", N(totals[s])},
+                 {"class_count",
+                  fields.column(
+                      prefix + ".class_count", 1, endpoint.source.grade({1}).cell_count(),
+                      [&](auto i) { return exact_counts[s].at(i); },
+                      rfc::numeric::StructuralSupport::sparse(
+                          endpoint.source.grade({1}).cell_count(), class_coordinates))},
+                 {"lower", bound_field(prefix + ".lower", rfc::numeric::scale(scale, lows[s]))},
+                 {"upper", bound_field(prefix + ".upper", rfc::numeric::scale(scale, highs[s]))}}});
+        }
+        for (std::size_t i = 0; i < request.at("contrasts").size(); ++i) {
+            const auto c = request.at("contrasts").at(i);
+            native_contrasts.elements.emplace_back(N::Object{
+                {{"id", N(c.at("id").text())},
+                 {"left", N(c.at("left").text())},
+                 {"right", N(c.at("right").text())},
+                 {"lower",
+                  bound_field("contrast:" + std::to_string(i) + ".lower", contrast_lows[i])},
+                 {"upper",
+                  bound_field("contrast:" + std::to_string(i) + ".upper", contrast_highs[i])}}});
+        }
+        N declaration(N::Object{
+            {{"schema", N(std::string("gadget.allocation.fields.v1"))},
+             {"candidates", import_record_view(candidates)},
+             {"classes", import_record_view(classes)},
+             {"targets", import_record_view(targets)},
+             {"target_coordinates",
+              N(SourceGradeFields::tensor(
+                  target_coordinates.size(),
+                  [&](auto i) { return Rational(std::to_string(target_coordinates[i])); },
+                  rfc::numeric::StructuralSupport::full(target_coordinates.size())))},
+             {"samples", N(std::move(native_samples))},
+             {"contrasts", N(std::move(native_contrasts))},
+             {"lower_map", SourceGradeFields::matrix(lower)},
+             {"upper_map", SourceGradeFields::matrix(upper)},
+             {"target_image", SourceGradeFields::matrix(target_image)},
+             {"kernel_factors", N(std::move(native_factors))},
+             {"constraint_rank", N(rfc::numeric::Integer(std::to_string(constraint_rank)))},
+             {"allocation_nullity", N(rfc::numeric::Integer(std::to_string(kernel_offset)))},
+             {"target_ambiguity_rank",
+              N(rfc::numeric::Integer(std::to_string(target_image.rank())))},
+             {"summary", import_record_view([&] {
+                  auto summary = Json::object();
+                  for (const auto *name : {"bound_scope", "native_complex_sha256"})
+                      summary.set(name, result.at(name));
+                  return summary;
+              }())},
+             {"native_relation_count",
+              N(rfc::numeric::Integer(std::to_string(complex.grade({1}).cell_count())))},
+             {"native_occurrence_count", N(rfc::numeric::Integer(std::to_string(diagram_slots)))},
+             {"units", N(request.at("units").text())}}});
+        retained->emplace(AssayFieldsSource{std::move(endpoint), std::move(declaration), {}});
+    }
     return certificate;
 }
 Json analyze_allocations(const Json &request, std::shared_ptr<CpuResources> resources) {

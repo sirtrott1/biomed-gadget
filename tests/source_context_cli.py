@@ -226,7 +226,9 @@ for answer in answers['answers']:
         for reference in artifact['results']:
             data = (root / 'relocated-pipeline' / reference['path']).read_bytes()
             check(demo.digest(data) == reference['sha256'])
-            certificate = command('record-view','--input',root/'relocated-pipeline'/reference['path'])
+            selection = reference.get('native_selection')
+            options = ['--assay', selection['assay']] if selection else []
+            certificate = command('record-view','--input',root/'relocated-pipeline'/reference['path'], *options)
             if certificate.get('schema')=='gadget.operation.native.v1':certificate=certificate['result']
             check(certificate['certificate_sha256'] == reference['certificate_sha256'])
 check(len(answers['source_context']['annotations']['mentions']) == 10)

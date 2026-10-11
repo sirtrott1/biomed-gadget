@@ -1640,6 +1640,9 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
         } else
             resources = CpuResources::local();
     }
+    if (operation == "feature_counts" ||
+        (operation == "expression_allocations" && !request.has("coupling")))
+        return render_record_view(execute_assignment(admit_record_view(request), resources).at("result"));
     auto result = Json::object();
     if (operation == "query_batch") {
         result = query_batch(*this, request, resources);
@@ -1971,7 +1974,7 @@ Json AssayWorkspace::materialize(const Json &request, const fs::path &destinatio
             "assay sections publication requires a view and component");
     if (!resources)
         resources = CpuResources::local();
-    if (supports_native_materialization(op))
+    if (supports_native_materialization(admit_record_view(recipe)))
         return materialize_record(admit_record_view(request), destination, std::move(resources));
     const auto certificate = execute(recipe, resources), result = certificate.at("result");
     fs::create_directories(fs::absolute(destination).parent_path());
@@ -2556,58 +2559,86 @@ NativeRecord AssayWorkspace::execute_spatial(const NativeRecord &request,
         {"result", std::move(fields.declaration)}, {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
         {"arithmetic", N(std::string("rational"))}, {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
         {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
-    return retain_operation(std::move(fields.endpoint), source_namespace.value_or(new_native_record_namespace()),
+    return retain_operation(std::move(fields.endpoint),
+                            source_namespace.value_or(new_native_record_namespace()),
+                            std::move(fields.sources), request, std::move(certificate));
+}
+NativeRecord
+AssayWorkspace::execute_assignment(const NativeRecord &request,
+                                   std::shared_ptr<CpuResources> resources,
+                                   std::optional<std::uint64_t> source_namespace) const {
+    const auto query = render_record_view(request);
+    using N = NativeRecordValue;
+    require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
+    if (!resources)
+        resources = CpuResources::local();
+    const bool expression = query.at("operation").text() == "expression_allocations";
+    const bool counting = query.at("operation").text() == "feature_counts";
+    ResourceImages images;
+    const auto load = [&](const std::string &id) {
+        require(state_->physical.contains(id), "unknown physical resource");
+        const auto item = state_->physical.at(id);
+        images.emplace(id,
+                       ResourceImage{item.at("declaration"), state_->artifact(item.at("original")),
+                                     item.has("reference_original")
+                                         ? state_->artifact(item.at("reference_original"))
+                                         : std::string{}});
+    };
+    if (expression) {
+        for (std::size_t s = 0; s < query.at("samples").size(); ++s)
+            load(query.at("samples").at(s).at("resource").text());
+        for (const auto *name : {"annotation", "reference_resource"})
+            if (query.at("evidence_source").has(name))
+                load(query.at("evidence_source").at(name).text());
+    } else {
+        load(query.at("resource").text());
+        if (counting)
+            load(query.at("annotation").text());
+    }
+    auto fields = [&] {
+        if (expression) {
+            std::optional<AssayFieldsSource> retained;
+            expression_allocations(images, query, resources, &retained);
+            require(retained.has_value(), "expression source missing");
+            return std::move(*retained);
+        }
+        if (counting)
+            return feature_count_fields_source(images, query, resources);
+        auto reservation = resources->reserve(1);
+        return alignment_fields_source(images.at(query.at("resource").text()), query);
+    }();
+    std::uint64_t key = 1;
+    for (const auto &source : fields.sources) {
+        require(source.key() != std::numeric_limits<std::uint64_t>::max(),
+                "raw source identity space exhausted");
+        key = std::max(key, source.key() + 1);
+    }
+    auto owner = native_publication().archive_source(key);
+    const auto bytes = owner.bytes().size();
+    fields.sources.push_back(std::move(owner));
+    N certificate(N::Object{{{"schema", N(std::string("gadget.assay.result.native.v1"))},
+                             {"query", import_record_view(query)},
+                             {"source_digest", N(digest())},
+                             {"result", std::move(fields.declaration)},
+                             {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
+                             {"arithmetic", N(std::string("rational"))},
+                             {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+                             {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+    return retain_operation(std::move(fields.endpoint),
+                            source_namespace.value_or(new_native_record_namespace()),
                             std::move(fields.sources), request, std::move(certificate));
 }
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
-    std::shared_ptr<CpuResources> resources) const {
+                                            std::shared_ptr<CpuResources> resources) const {
     const auto query = render_record_view(request);
     if (query.has("operation") && query.at("operation").text() == "controlled_coverage")
         return execute_coverage(request,std::move(resources));
     if (query.has("operation") && query.at("operation").text() == "spatial_relations")
         return execute_spatial(request, std::move(resources));
     if (query.has("operation") && (query.at("operation").text() == "alignment_evidence" ||
-                                   query.at("operation").text() == "feature_counts")) {
-        using N = NativeRecordValue;
-        require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
-        if (!resources) resources = CpuResources::local();
-        const bool counting = query.at("operation").text() == "feature_counts";
-        ResourceImages images;
-        const auto load = [&](const char *name) {
-            const auto id = text(query.at(name));
-            require(state_->physical.contains(id), "unknown physical resource");
-            const auto item = state_->physical.at(id);
-            images.emplace(id, ResourceImage{item.at("declaration"), state_->artifact(item.at("original")),
-                item.has("reference_original") ? state_->artifact(item.at("reference_original")) : std::string{}});
-        };
-        load("resource");
-        if (counting) load("annotation");
-        auto fields = [&] {
-            if (counting) return feature_count_fields_source(images, query, resources);
-            auto reservation = resources->reserve(1);
-            return alignment_fields_source(images.at(query.at("resource").text()), query);
-        }();
-        std::uint64_t key = 1;
-        for (const auto &source : fields.sources) {
-            require(source.key() != std::numeric_limits<std::uint64_t>::max(), "raw source identity space exhausted");
-            key = std::max(key, source.key()+1);
-        }
-        auto owner = native_publication().archive_source(key);
-        const auto bytes = owner.bytes().size();
-        fields.sources.push_back(std::move(owner));
-        N certificate(N::Object{{
-            {"schema", N(std::string("gadget.assay.result.native.v1"))},
-            {"query", import_record_view(query)},
-            {"source_digest", N(digest())},
-            {"result", std::move(fields.declaration)},
-            {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
-            {"arithmetic", N(std::string("rational"))},
-            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}
-        }});
-        return retain_operation(std::move(fields.endpoint), new_native_record_namespace(),
-                                std::move(fields.sources), request, std::move(certificate));
-    }
+                                   query.at("operation").text() == "feature_counts" ||
+                                   (query.at("operation").text() == "expression_allocations" && !query.has("coupling"))))
+        return execute_assignment(request, std::move(resources));
     if (query.has("operation") && query.at("operation").text() == "read_quality") {
         using N = NativeRecordValue;
         require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");

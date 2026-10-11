@@ -233,9 +233,9 @@ if run('bioinformatics')['htslib_enabled']:
 settings=dict(schema='gadget.pipeline.default.v1',profile='rna_seq',question='Which gene counts and changes are identified while isoforms remain ambiguous?',goals=[dict(method='expression_allocations',id='expression',parameters={k:v for k,v in request.items() if k not in ['schema','operation']},output=dict(id='expression',source_namespace='900821',channel='E',design=dict(question='Inspect sharp assignment endpoints',population='Authored paired samples',selection='Every supplied read',limitations=['Bounds retain candidate ambiguity'])))])
 plan=run('pipeline-prepare','--workspace',workspace,'--request',save('pipeline.json',settings));save('plan.json',plan)
 run('pipeline','--workspace',workspace,'--request',root/'plan.json','--out',root/'pipeline-results')
-lineage_workspace=root/'pipeline-results'/'expression'/'workspace.json'
+lineage_workspace=root/'pipeline-results'/'expression'/'workspace.rfcxs'
 # Read the emitted result index instead of assuming an internal directory layout.
-paths=list((root/'pipeline-results').rglob('workspace.json'))
+paths=list((root/'pipeline-results').rglob('workspace.rfcxs'))
 check(len(paths)==1,'Single materialized expression workspace')
 lineage_workspace=paths[0]
 run('assay-query','--workspace',lineage_workspace,'--request',save('derived-inspect.json',dict(schema='gadget.assays.query.v1',operation='native_query',assay='expression',query=dict(operation='inspect'))))

@@ -39,6 +39,8 @@ class AssayWorkspace {
         std::optional<std::uint64_t> source_namespace = {}) const;
     NativeRecord execute_spatial(const NativeRecord &, std::shared_ptr<CpuResources>,
         std::optional<std::uint64_t> source_namespace = {}) const;
+    NativeRecord execute_assignment(const NativeRecord &, std::shared_ptr<CpuResources>,
+        std::optional<std::uint64_t> source_namespace = {}) const;
     std::shared_ptr<const AssayWorkspace> materialize_native_fields(
         const NativeRecord &, const fs::path &, std::shared_ptr<CpuResources>) const;
     Json replay_native_derivation(const std::string &, const fs::path &,
@@ -50,6 +52,7 @@ class AssayWorkspace {
     static NativeRecord publish_studies(const NativeRecord &request, const std::string &id,
         const std::map<std::string, std::shared_ptr<const ScientificStudy>> &studies);
     static bool supports_native_materialization(std::string_view operation);
+    static bool supports_native_materialization(const NativeRecord &recipe);
     // Publish once and return the admitted workspace with its actual study,
     // source history, byte owners and field accessions available to consumers.
     // Unsupported native producers refuse before creating a destination.

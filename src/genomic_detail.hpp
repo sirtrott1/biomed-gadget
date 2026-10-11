@@ -21,30 +21,35 @@ struct Alignments {
 Alignments decode_alignments(const ResourceImage &resource, bool render_records = true);
 Json inspect_hts(const ResourceImage &resource, bool summary = false);
 std::string hts_codec_version();
-struct AlignmentFieldsSource {
+struct AssayFieldsSource {
     rfc::storage::TemporalEndpoint endpoint;
     NativeRecordValue declaration;
     std::vector<RawByteSource> sources;
 };
-AlignmentFieldsSource alignment_fields_source(const ResourceImage &resource, const Json &request);
-AlignmentFieldsSource feature_count_fields_source(const ResourceImages &images, const Json &request,
-                                                  std::shared_ptr<CpuResources> resources);
+AssayFieldsSource alignment_fields_source(const ResourceImage &resource, const Json &request);
+AssayFieldsSource feature_count_fields_source(const ResourceImages &images, const Json &request,
+                                              std::shared_ptr<CpuResources> resources);
 Json allocation_analysis(const Json &request, std::shared_ptr<CpuResources> resources,
-                         std::optional<rfc::storage::TemporalEndpoint> *retained_source = nullptr);
+                         std::optional<AssayFieldsSource> *retained = nullptr,
+                         const std::vector<Vector> *native_counts = nullptr,
+                         bool scale_samples = false);
 Json alignment_fields_view(const NativeRecord &record);
 Json feature_count_fields_view(const NativeRecord &record);
+Json expression_fields_view(const NativeRecord &record);
+Json allocation_fields_summary_view(const NativeRecord &allocation_fields);
 Json genotype_analysis(const ResourceImage &resource, const Json &request);
 Json genomic_analysis(const ResourceImages &resources, const Json &request,
                       std::shared_ptr<CpuResources> budget);
-Json feature_allocation_evidence(const ResourceImages &images, const Json &request);
+Json feature_allocation_evidence(const ResourceImages &images, const Json &request,
+                                 Vector *native_counts = nullptr);
 Json expression_allocations(const ResourceImages &images, const Json &request,
-                            std::shared_ptr<CpuResources> resources);
+                            std::shared_ptr<CpuResources> resources,
+                            std::optional<AssayFieldsSource> *retained = nullptr);
 Json controlled_coverage(const ResourceImages &images, const Json &request);
 using SpatialRelationSink = std::function<void(std::size_t, std::size_t, const Rational &)>;
-Json spatial_analysis(const Json &assay, const Json &request,
-                      const SpatialRelationSink &sink = {});
-AlignmentFieldsSource spatial_fields_source(const ScientificStudy &source, const Json &assay,
-                                            const Json &request);
+Json spatial_analysis(const Json &assay, const Json &request, const SpatialRelationSink &sink = {});
+AssayFieldsSource spatial_fields_source(const ScientificStudy &source, const Json &assay,
+                                        const Json &request);
 Json quality_analysis(const ResourceImage &resource, const Json &request);
 Json aggregate_analysis(const Matrix &matrix, const Json &declaration, const Json &request,
                         const rfc::runtime::CpuResourceCoordinator::Reservation &reservation);

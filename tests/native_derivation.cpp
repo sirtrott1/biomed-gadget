@@ -379,9 +379,93 @@ int main(int argc, char **argv) {
     rebound.reset();
     AssayWorkspace relocated(root / "relocated/workspace.rfcxs");
     check(relocated.study("alias")->digest() == study->digest() &&
-              relocated.replay_derivation("alias", root / "relocated-replay")
-                  .at("status").text() == "PASS",
+              relocated.replay_derivation("alias", root / "relocated-replay").at("status").text() ==
+                  "PASS",
           "adopted publication lost complete restart and relocation replay");
+    const std::string eq0 = "3\n3\na\nb\nc\n2 0 1 5\n1 0 0\n1 2 0\n",
+                      eq1 = "3\n3\nc\nb\na\n1 0 0\n2 2 1 6\n1 2 0\n";
+    auto allocation_spec = Json::parse(spec.dump());
+    auto eq_resources = Json::array();
+    for (const auto &[id, bytes] : std::map<std::string, std::string>{{"eq0", eq0}, {"eq1", eq1}}) {
+        write_text(root / (id + ".eq"), bytes);
+        auto resource = Json::object();
+        resource.set("id", Json::string(id));
+        resource.set("source", file(id + ".eq", bytes));
+        resource.set("format", Json::string("salmon_eq"));
+        resource.set("method", Json::string("Declared candidate counts"));
+        eq_resources.push(resource);
+    }
+    allocation_spec.set("resources", eq_resources);
+    write_text(root / "allocation-import.json", allocation_spec.dump());
+    auto allocation_input =
+        import_assay_workspace(root / "allocation-import.json", root / "allocation-input");
+    const auto allocation_recipe = Json::parse(
+        R"({"schema":"gadget.assays.query.v1","operation":"expression_allocations","samples":[{"id":"base","resource":"eq0","scale":"2","scale_provenance":"declared"},{"id":"next","resource":"eq1","scale":"3/2","scale_provenance":"declared"}],"evidence_source":{"mode":"equivalence_classes","candidate_search":{"method":"reported","completeness":"declared","reference_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}},"targets":[{"id":"a","candidates":["a"]},{"id":"ab","candidates":["b","a"]}],"contrasts":[{"id":"change","left":"next","right":"base"}],"map_evidence":"declared target groups","kernel_certificate":true})");
+    auto allocation_request = Json::parse(request.dump());
+    allocation_request.set("id", Json::string("assignments"));
+    allocation_request.set("source_namespace", Json::string("95100"));
+    allocation_request.set("recipe", allocation_recipe);
+    auto allocations = allocation_input->materialize_workspace(
+        admit_record_view(allocation_request), root / "allocations");
+    auto allocation_study = allocations->study("assignments");
+    const auto allocation_producer = allocation_study->producer_publication();
+    check(allocation_producer.at("result").at("result").at("schema").text() ==
+                  "gadget.expression.fields.v1" &&
+              !fs::exists(root / "allocations/workspace.json"),
+          "allocation materialization rebuilt a numerical table");
+    const auto native_fields =
+        allocation_producer.at("result").at("result").at("allocation_fields");
+    const auto coordinate = [&](std::size_t target) {
+        return std::stoull(
+            native_fields.at("target_coordinates").tensor().state(target)->get_str());
+    };
+    const auto pin = allocation_study->field_accession("all.sample:0.lower");
+    const auto lower = pin.tensor();
+    check(lower->state(coordinate(0)).has_value() && lower->state(coordinate(0)).value() == 0 &&
+              lower->state(coordinate(1)).value() == 10 && !lower->state(1).has_value() &&
+              !lower->state(2).has_value(),
+          "declared zero, target grouping or absent candidate support changed");
+    check(allocation_study->field_accession("all.contrast:0.lower")
+                      .tensor()
+                      ->state(coordinate(1))
+                      .value() == -1 &&
+              allocation_study->field_accession("all.contrast:0.upper")
+                      .tensor()
+                      ->state(coordinate(1))
+                      .value() == -1,
+          "scaled grouped contrast differs from conserved class counts");
+    const auto class_counts =
+        allocation_study->field_accession("all.sample:0.class_count").tensor();
+    check(class_counts->domain().logical_size() == 4 && class_counts->state(1).has_value() &&
+              class_counts->state(1).value() == 0 && !class_counts->state(3).has_value(),
+          "class count support includes a declared target relation or omits a measured zero");
+    const auto group = allocation_study->endpoint()->source.grade({1});
+    check(group.cell_count() == 4 && group.incidence_count() == 7 &&
+              native_fields.at("lower_map").tensor().domain().extents() ==
+                  std::vector<std::size_t>({2, 3}),
+          "multiway target diagram or exact incidence map was discarded");
+    auto assignment_binding = Json::parse(bind.dump());
+    assignment_binding.at("assays").at(0).set("input", Json::string("source"));
+    assignment_binding.at("assays").at(0).set("assay", Json::string("assignments"));
+    auto assignment_bound = AssayWorkspace::bind_workspaces({{"source", allocations}},
+                                                            admit_record_view(assignment_binding),
+                                                            root / "allocation-bound");
+    check(assignment_bound->study("alias") == allocation_study &&
+              assignment_bound->study("alias")->field_accession("all.sample:0.lower").endpoint() ==
+                  pin.endpoint(),
+          "assignment binding changed the original field owner");
+    auto coupled_recipe = admit_record_view(Json::parse(allocation_recipe.dump()));
+    auto coupled_view = Json::parse(allocation_recipe.dump());
+    coupled_view.set("coupling", Json::object());
+    check(AssayWorkspace::supports_native_materialization(coupled_recipe) &&
+              !AssayWorkspace::supports_native_materialization(admit_record_view(coupled_view)),
+          "native allocation capability omitted the coupled constraint boundary");
+    fs::rename(root / "allocation-input", root / "allocation-input-away");
+    allocation_input.reset();
+    check(allocations->replay_derivation("assignments", root / "allocation-replay")
+                  .at("status")
+                  .text() == "PASS",
+          "native allocation replay requires the original input directory");
     for (const auto &[format, bytes] : std::map<std::string, std::string>{
              {"bed", control},
              {"gtf", "chr\tfixture\texon\t1\t4\t.\t+\t.\tgene_id "

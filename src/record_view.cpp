@@ -179,6 +179,9 @@ Json render_record_view(const NativeRecord &record) {
            record.at("schema").text()=="gadget.feature.count.fields.v1")
             return assay_detail::feature_count_fields_view(record);
         if(record.has("schema") && record.at("schema").kind()==NativeRecordKind::Text &&
+           record.at("schema").text()=="gadget.expression.fields.v1")
+            return assay_detail::expression_fields_view(record);
+        if(record.has("schema") && record.at("schema").kind()==NativeRecordKind::Text &&
            record.at("schema").text()==assay_detail::coverage_fields_schema)
             return assay_detail::coverage_fields_view(record);
         if(record.has("schema") && record.at("schema").kind()==NativeRecordKind::Text &&

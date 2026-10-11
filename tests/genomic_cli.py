@@ -233,7 +233,7 @@ def main():
         save(name+'-derive.json',request)
         destination = root/('derived-'+name)
         admitted = run('derive-assays','--workspace',workspace,'--request',root/(name+'-derive.json'),'--out',destination)
-        if name != 'spatial':
+        if name not in ('spatial', 'counts-sam'):
             check(len(admitted['assays'][0]['declaration']['provenance']) >= 3,'derived source lineage')
         if name == 'spatial':
             check(admitted['schema'] == 'gadget.assays.workspace.v2','native spatial publication')
@@ -278,7 +278,7 @@ def main():
         moved = root/('relocated '+name)
         shutil.copytree(destination,moved)
         reimported = root/('reimported-'+name)
-        if name == 'spatial':
+        if name in ('spatial', 'counts-sam'):
             check((moved/'workspace.rfcxs').read_bytes() == (destination/'workspace.rfcxs').read_bytes(),
                   'complete portable native spatial publication')
         else:
@@ -287,7 +287,7 @@ def main():
         original_location = root/'workspace unavailable during generation replay'
         (root/'workspace').rename(original_location)
         try:
-            replay = run('replay-derivation','--workspace',moved/('workspace.rfcxs' if name == 'spatial' else 'workspace.json'),'--assay','derived-'+name,'--out',root/('regenerated-'+name))
+            replay = run('replay-derivation','--workspace',moved/('workspace.rfcxs' if name in ('spatial', 'counts-sam') else 'workspace.json'),'--assay','derived-'+name,'--out',root/('regenerated-'+name))
             check(replay['status'] == 'PASS','original generating method re-executed from relocated lineage alone')
             save(name+'-generation-replay.json',replay)
         finally:

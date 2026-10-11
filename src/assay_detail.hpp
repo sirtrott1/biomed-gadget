@@ -38,7 +38,7 @@ std::vector<SequenceSpan> read_sequence_spans(std::string_view bytes, const std:
 Json inspect_resource(const std::string &bytes, const Json &resource,
                       const std::string &reference_bytes = {}, bool summary = false);
 Json interval_analysis(const std::string &bytes, const Json &resource, const Json &request);
-Json salmon_classes(const std::string &bytes);
+Json salmon_classes(const std::string &bytes, Vector *native_counts = nullptr);
 Json motif_analysis(const std::string &bytes, const Json &resource, const Json &request);
 Json reference_record(const Json &value);
 Json span(const std::string &document, const std::string &bytes, std::size_t start,

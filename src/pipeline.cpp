@@ -985,7 +985,7 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                     direct_result = produced->native_publication();
                 } else if (node.at("type").text() == "derive") {
                     if (AssayWorkspace::supports_native_materialization(
-                            request.at("recipe").at("operation").text())) {
+                            admit_record_view(request.at("recipe")))) {
                         const auto native_request = admit_record_view(request);
                         native_request.write(job / "request.rfcxs");
                         produced = source->materialize_workspace(

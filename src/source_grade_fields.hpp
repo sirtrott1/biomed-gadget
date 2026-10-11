@@ -1,6 +1,7 @@
 #pragma once
 #include <gadget/native_record.hpp>
 #include <rfc/machine/checked_size.hpp>
+#include <rfc/numeric/exact_matrix.hpp>
 
 namespace gadget::assay_detail {
 struct SourceGradeFields {
@@ -40,6 +41,9 @@ struct SourceGradeFields {
     }
     NativeRecordValue field(std::string name, std::uint16_t grade, const Vector &values) {
         return column(std::move(name), grade, values.size(), [&](auto i) { return values[i]; });
+    }
+    static NativeRecordValue matrix(const rfc::numeric::ExactMatrix &value) {
+        return NativeRecordValue(rfc::storage::temporal_matrix_tensor(value));
     }
 };
 } // namespace gadget::assay_detail

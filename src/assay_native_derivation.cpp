@@ -211,7 +211,98 @@ NativeRecord coverage_study(const NativeRecord &producer, const NativeRecord &re
                        {"field_sets", N(N::Array{})}}});
     return ScientificStudy::publish_annotations(producer, std::move(study), N(std::move(raw_docs)));
 }
-void equal_record_content(const NativeRecord &expected, const NativeRecord &actual) {
+NativeRecord assignment_study(const NativeRecord &producer, const NativeRecord &request) {
+    const auto source = producer.at("result").at("result");
+    const bool expression = source.at("schema").text() == "gadget.expression.fields.v1";
+    require(expression || source.at("schema").text() == "gadget.feature.count.fields.v1",
+            "unsupported assignment producer");
+    N::Array docs, raw_docs, evidence, document_names;
+    const auto document = [&](std::string id, const NativeRecord &original) {
+        const auto bytes = original.bytes();
+        docs.elements.emplace_back(N::Object{
+            {{"id", N(id)},
+             {"path", N(id)},
+             {"sha256",
+              N("sha256:" + sha256(std::string_view(reinterpret_cast<const char *>(bytes.data()),
+                                                    bytes.size())))},
+             {"format", string("binary")}}});
+        raw_docs.elements.emplace_back(
+            N::Object{{{"id", N(id)}, {"bytes", original.materialize_value()}}});
+        if (!bytes.empty()) {
+            evidence.elements.push_back(span_reference(id, bytes.size()));
+            document_names.elements.emplace_back(id);
+        }
+    };
+    if (expression) {
+        const auto resources = source.at("resources");
+        for (std::size_t i = 0; i < resources.size(); ++i) {
+            const auto resource = resources.at(i);
+            const auto prefix = resource.at("role").text() == "reference" ? "reference:" : "resource:";
+            document(prefix + resource.at("id").text(), resource.at("bytes"));
+        }
+    } else {
+        document("alignments", source.at("original_alignments"));
+        document("annotation", source.at("original_annotation"));
+        if (source.has("original_reference"))
+            document("reference", source.at("original_reference"));
+    }
+    document("assignment_protocol", producer.at("request_publication"));
+    N::Array bindings, metrics, contexts, fields;
+    for (std::size_t k = 0; k < producer.endpoint()->source.grade_count(); ++k) {
+        bindings.elements.emplace_back(N::Object{
+            {{"grade", N(rfc::numeric::Integer(std::to_string(k)))},
+             {"id_prefix", N(k == 0 ? std::string("candidate_or_target:")
+                                    : std::string("assignment_relation:"))},
+             {"label_prefix", N(k == 0 ? std::string("Candidate or declared target ")
+                                       : std::string("Assignment relation "))},
+             {"kind", N(k == 0 ? std::string("assignment_coordinate")
+                               : std::string("declared_assignment_relation"))},
+             {"evidence",
+              N(N::Object{{{"kind", string("documents")}, {"documents", N(document_names)}}})}}});
+        metrics.elements.emplace_back(N::Object{{{"kind", string("identity")}}});
+    }
+    contexts.elements.emplace_back(N::Object{{{"id", string("all")},
+                                              {"block", N{}},
+                                              {"metrics", N(std::move(metrics))},
+                                              {"time", N{}}}});
+    const auto channel = request.at("channel").text();
+    require(channel == "G" || channel == "E" || channel == "T" || channel == "observation",
+            "assignment field channel");
+    for (const auto &tensor : producer.endpoint()->tensors) {
+        if (tensor.role != TemporalTensorRole::Field)
+            continue;
+        auto id = tensor.interpretation;
+        if (!expression && id.starts_with("sample:0."))
+            id = source.at("request").at("resource").text() + id.substr(8);
+        fields.elements.emplace_back(
+            N::Object{{{"id", N("all." + id)},
+                       {"key", N(std::to_string(tensor.key))},
+                       {"context", string("all")},
+                       {"channel", N(channel)},
+                       {"quantity", N(tensor.interpretation.ends_with("class_count")
+                                          ? std::string("observed_class_count")
+                                          : std::string("assignment_count_bound"))},
+                       {"units", N(source.at("allocation_fields").at("units").text())},
+                       {"method", string("Declared class incidence action")},
+                       {"value_type", string("quantitative")},
+                       {"evidence", N(evidence)}}});
+    }
+    auto design = request.at("design").unbound_value(retained_request_sources(producer, request));
+    require(!request.at("design").has("covariates"), "assignment design uses study field bindings");
+    std::get<N::Object>(design.data).members.emplace_back("covariates", N(N::Array{}));
+    N study(N::Object{{{"schema", string("gadget.scientific.study.v3")},
+                       {"id", N(request.at("id").text())},
+                       {"design", std::move(design)},
+                       {"documents", N(std::move(docs))},
+                       {"cell_bindings", N(std::move(bindings))},
+                       {"occurrence_evidence", string("parent_cell")},
+                       {"contexts", N(std::move(contexts))},
+                       {"fields", N(std::move(fields))},
+                       {"field_sets", N(N::Array{})}}});
+    return ScientificStudy::publish_annotations(producer, std::move(study), N(std::move(raw_docs)));
+}
+void equal_record_content(const NativeRecord &expected, const NativeRecord &actual,
+                          bool software_receipt = false) {
     require(expected.kind() == actual.kind(), "replayed declaration constructor differs");
     switch (expected.kind()) {
     case NativeRecordKind::Null: return;
@@ -234,7 +325,13 @@ void equal_record_content(const NativeRecord &expected, const NativeRecord &actu
     }
     case NativeRecordKind::Object:
         require(expected.names() == actual.names(), "replayed declaration members differ");
-        for (const auto &name : expected.names()) equal_record_content(expected.at(name), actual.at(name));
+        for (const auto &name : expected.names()) {
+            if (software_receipt && (name == "gadget_sha256" || name == "rexgraph_sha256"))
+                continue;
+            const bool identity = name == "allocation_identity" && expected.has("schema") &&
+                expected.at("schema").text() == "gadget.feature.count.fields.v1";
+            equal_record_content(expected.at(name), actual.at(name), identity);
+        }
         return;
     case NativeRecordKind::Array:
         require(expected.size() == actual.size(), "replayed declaration cardinality differs");
@@ -277,7 +374,7 @@ void equal_source(const NativeRecord &expected, const NativeRecord &actual) {
     const auto old = expected.at("result").at("result"), now = actual.at("result").at("result");
     require(old.at("schema").text() == now.at("schema").text(),
             "replayed declaration schema differs");
-    if (old.at("schema").text() == "gadget.spatial.fields.v1") {
+    if (old.at("schema").text() != "gadget.coverage.fields.v1") {
         equal_record_content(old, now);
         return;
     }
@@ -360,7 +457,7 @@ NativeRecord AssayWorkspace::publish_studies(
 }
 Json AssayWorkspace::materialize_record(const NativeRecord &request, const fs::path &destination,
                                         std::shared_ptr<CpuResources> resources) const {
-    if (supports_native_materialization(request.at("recipe").at("operation").text())) {
+    if (supports_native_materialization(request.at("recipe"))) {
         const auto workspace = materialize_workspace(request, destination, std::move(resources));
         auto result = render_record_view(workspace->native_publication().at("manifest"));
         result.set("manifest_sha256", Json::string(workspace->digest()));
@@ -370,18 +467,24 @@ Json AssayWorkspace::materialize_record(const NativeRecord &request, const fs::p
     return materialize(render_record_view(request), destination, std::move(resources));
 }
 bool AssayWorkspace::supports_native_materialization(std::string_view operation) {
-    return operation == "controlled_coverage" || operation == "spatial_relations";
+    return operation == "controlled_coverage" || operation == "spatial_relations" ||
+           operation == "feature_counts" || operation == "expression_allocations";
 }
-std::shared_ptr<const AssayWorkspace> AssayWorkspace::materialize_workspace(
-    const NativeRecord &request, const fs::path &destination,
-    std::shared_ptr<CpuResources> resources) const {
-    require(supports_native_materialization(request.at("recipe").at("operation").text()),
+bool AssayWorkspace::supports_native_materialization(const NativeRecord &recipe) {
+    const auto operation = recipe.at("operation").text();
+    return supports_native_materialization(operation) &&
+           !(operation == "expression_allocations" && recipe.has("coupling"));
+}
+std::shared_ptr<const AssayWorkspace>
+AssayWorkspace::materialize_workspace(const NativeRecord &request, const fs::path &destination,
+                                      std::shared_ptr<CpuResources> resources) const {
+    require(supports_native_materialization(request.at("recipe")),
             "operation has no native materialization producer");
     return materialize_native_fields(request, destination, std::move(resources));
 }
-std::shared_ptr<const AssayWorkspace> AssayWorkspace::materialize_native_fields(
-    const NativeRecord &request, const fs::path &destination,
-    std::shared_ptr<CpuResources> resources) const {
+std::shared_ptr<const AssayWorkspace>
+AssayWorkspace::materialize_native_fields(const NativeRecord &request, const fs::path &destination,
+                                          std::shared_ptr<CpuResources> resources) const {
     const auto view = render_record_view(request);
     members(view, {"schema", "id", "source_namespace", "design", "recipe", "channel"});
     require(request.at("schema").text() == "gadget.assays.materialize.v1",
@@ -391,10 +494,15 @@ std::shared_ptr<const AssayWorkspace> AssayWorkspace::materialize_native_fields(
     require(ns != native_publication().source_namespace() && ns != request.source_namespace(),
             "derived source must have its own namespace");
     const bool spatial = request.at("recipe").at("operation").text() == "spatial_relations";
+    const bool coverage = request.at("recipe").at("operation").text() == "controlled_coverage";
     const auto operation = spatial ? execute_spatial(request.at("recipe"), std::move(resources), ns)
-                                   : execute_coverage(request.at("recipe"), std::move(resources), ns);
-    auto admitted = std::make_shared<const ScientificStudy>(
-        spatial ? spatial_study(operation, request) : coverage_study(operation, request));
+                           : coverage
+                               ? execute_coverage(request.at("recipe"), std::move(resources), ns)
+                               : execute_assignment(request.at("recipe"), std::move(resources), ns);
+    auto admitted =
+        std::make_shared<const ScientificStudy>(spatial    ? spatial_study(operation, request)
+                                                : coverage ? coverage_study(operation, request)
+                                                           : assignment_study(operation, request));
     const auto collection =
         publish_studies(request, request.at("id").text(), {{request.at("id").text(), admitted}});
     fs::create_directories(fs::absolute(destination).parent_path());
@@ -407,9 +515,9 @@ std::shared_ptr<const AssayWorkspace> AssayWorkspace::materialize_native_fields(
             fs::remove_all(path, ec);
         }
     } cleanup{stage};
-    auto workspace = std::shared_ptr<const AssayWorkspace>(new AssayWorkspace(
-        destination / "workspace.rfcxs", {{request.at("id").text(), {std::move(admitted)}}},
-        collection));
+    auto workspace = std::shared_ptr<const AssayWorkspace>(
+        new AssayWorkspace(destination / "workspace.rfcxs",
+                           {{request.at("id").text(), {std::move(admitted)}}}, collection));
     collection.write(stage / "workspace.rfcxs");
     fs::rename(stage, destination);
     return workspace;
@@ -424,8 +532,7 @@ Json AssayWorkspace::replay_native_derivation(const std::string &id, const fs::p
     const auto request_bytes = producer.at("request_publication").bytes();
     const auto request = NativeRecord::decode(request_bytes);
     require(request.at("schema").text() == "gadget.assays.materialize.v1" &&
-                (request.at("recipe").at("operation").text() == "controlled_coverage" ||
-                 request.at("recipe").at("operation").text() == "spatial_relations"),
+                supports_native_materialization(request.at("recipe")),
             "generating request is not a native field materialization");
     fs::create_directories(fs::absolute(destination).parent_path());
     const auto stage =
@@ -466,20 +573,25 @@ Json AssayWorkspace::derivation_certificate(const std::string &id) const {
     const auto producer = source->producer_publication();
     const auto generated = producer.at("result"), coverage = generated.at("result");
     const bool spatial = coverage.at("schema").text() == "gadget.spatial.fields.v1";
-    require(spatial || coverage.at("schema").text() == "gadget.coverage.fields.v1",
+    const bool assignment = coverage.at("schema").text() == "gadget.feature.count.fields.v1" ||
+                            coverage.at("schema").text() == "gadget.expression.fields.v1";
+    require(spatial || assignment || coverage.at("schema").text() == "gadget.coverage.fields.v1",
             "unsupported native generating result");
-    auto result = Json::object();
-    result.set("schema", Json::string(spatial ? "gadget.spatial.fields.reference.v1"
-                                               : "gadget.coverage.fields.reference.v1"));
-    result.set("native", source->declaration().at("native"));
-    result.set("source_index", source->source_index());
-    for (const auto *name : {"intervals", "segments", "sample_fields", "metric_diagonal",
-                             "contrasts", "units", "thresholds", "fields", "frame", "charts",
-                             "neighbor_begin", "neighbor_count"})
-        if (coverage.has(name))
-            result.set(name, render_record_view(coverage.at(name)));
-    if (!spatial) result.set("control_rank", render_record_view(coverage.at("controls").at("rank")));
-    result.set("native_declaration_sha256", Json::string(native_declaration_digest(generated)));
+    auto result = assignment ? render_record_view(coverage) : Json::object();
+    if (!assignment) {
+        result.set("schema", Json::string(spatial ? "gadget.spatial.fields.reference.v1"
+                                                  : "gadget.coverage.fields.reference.v1"));
+        result.set("native", source->declaration().at("native"));
+        result.set("source_index", source->source_index());
+        for (const auto *name : {"intervals", "segments", "sample_fields", "metric_diagonal",
+                                 "contrasts", "units", "thresholds", "fields", "frame", "charts",
+                                 "neighbor_begin", "neighbor_count"})
+            if (coverage.has(name))
+                result.set(name, render_record_view(coverage.at(name)));
+        if (!spatial)
+            result.set("control_rank", render_record_view(coverage.at("controls").at("rank")));
+        result.set("native_declaration_sha256", Json::string(native_declaration_digest(generated)));
+    }
     auto certificate = Json::object();
     certificate.set("schema", Json::string("gadget.assay.result.v1"));
     certificate.set("query", render_record_view(generated.at("query")));

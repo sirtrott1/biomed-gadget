@@ -184,7 +184,7 @@ def execute(binary, root, manifest, intent_path, selection_path):
         raise ValueError('Source context changed after relocation')
     (root / 'pipeline').rename(root / 'relocated-pipeline')
     replay = run(binary, 'replay-derivation', '--workspace',
-                 root / 'relocated-pipeline/expression/workspace/workspace.json',
+                 root / 'relocated-pipeline/expression/workspace/workspace.rfcxs',
                  '--assay', 'expression', '--out', root / 'replayed-expression')
     if replay['status'] != 'PASS':
         raise ValueError('Detached expression replay failed')

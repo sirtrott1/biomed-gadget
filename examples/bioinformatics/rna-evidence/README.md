@@ -22,7 +22,7 @@ build/gadget/gadget pipeline \
   --request data/rna-evidence/plan.json \
   --out results/rna-evidence
 build/gadget/gadget replay-derivation \
-  --workspace results/rna-evidence/expression/workspace/workspace.json \
+  --workspace results/rna-evidence/expression/workspace/workspace.rfcxs \
   --assay expression --out results/rna-evidence-replay
 ```
 
@@ -118,15 +118,20 @@ native coordinate representation. There is no feature-count, pair-comparison or
 witness-count policy ceiling. Native kernels and coupled output can still require
 substantial time and memory when the actual ambiguity is large.
 
-The pipeline materializes lower and upper endpoints as separate native tensor
-fields on the complete declared target carrier. Observation columns record
-sample identity, endpoint, scale and the hash of the full scale provenance in the
-retained request. The archive also retains every used physical source, generating
-request, candidate witness and result certificate. `replay-derivation` reconstructs
-and compares the complete mathematical payload after the original input workspace
-has been removed. Downstream native field, Green and topology queries operate on
-these explicitly labelled endpoints; overlap between targets does not itself
-assert a higher biological relation.
+Independent expression and feature assignment materialization retains the candidate
+class complex and the exact class count, lower bound and upper bound fields.
+Singleton targets use their original candidate coordinates. A grouped target has
+an explicit target coordinate and a relation to its declared members. These
+relations describe the assignment protocol. They do not assert tissue topology.
+Class maps, bound maps and ambiguity images are retained as native tensors.
+Supported zero counts remain distinct from coordinates outside a field's support.
+
+The archive retains the original physical bytes and generating request. Pipeline
+branches share the admitted source and fields. `replay-derivation` reconstructs
+and compares the complete mathematical payload after the input workspace has
+been removed. Coupled constraints currently use the existing constrained solver
+and materialization path; native materialization availability is checked against
+the complete recipe.
 
 `tests/expression_allocation_cli.py` independently enumerates finite assignments,
 read placements, coupling constraints, extrema and optimizer residuals. It also

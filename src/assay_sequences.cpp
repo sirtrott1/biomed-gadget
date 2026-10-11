@@ -4,7 +4,7 @@
 #include <sstream>
 
 namespace gadget::assay_detail {
-Json salmon_classes(const std::string &bytes) {
+Json salmon_classes(const std::string &bytes, Vector *native_counts) {
     const auto ls = lines(bytes);
     require(ls.size() >= 3, "truncated Salmon equivalence-class file");
     const auto line = [&](std::size_t i) {
@@ -17,6 +17,7 @@ Json salmon_classes(const std::string &bytes) {
                     rfc::machine::checked_size_add(2, rfc::machine::checked_size_add(n, m)),
             "Salmon class header/dimensions");
     auto candidates = Json::array(), classes = Json::array(), counts = Json::array();
+    if (native_counts) native_counts->clear();
     std::vector<std::string> ids;
     std::set<std::string> seen;
     for (std::size_t i = 0; i < n; ++i) {
@@ -50,6 +51,7 @@ Json salmon_classes(const std::string &bytes) {
         c.set("candidates", p);
         classes.push(c);
         counts.push(Json::string(count.get_str()));
+        if (native_counts) native_counts->push_back(count);
     }
     auto result = Json::object();
     result.set("candidates", candidates);

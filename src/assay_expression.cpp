@@ -1,5 +1,7 @@
 #include "genomic_detail.hpp"
+#include "source_grade_fields.hpp"
 #include <algorithm>
+#include <gadget/record_view.hpp>
 #include <gadget/resources.hpp>
 #include <rfc/machine/checked_size.hpp>
 #include <rfc/numeric/exact_matrix.hpp>
@@ -27,7 +29,8 @@ Json bound(const Json &id, const Rational &lo, const Rational &hi, bool contrast
                                                              : "unresolved"));
     return b;
 }
-Json sequence_evidence(const ResourceImages &images, const Json &source, const Json &sample) {
+Json sequence_evidence(const ResourceImages &images, const Json &source, const Json &sample,
+                       Vector *native_counts = nullptr) {
     members(source, {"mode", "reference_resource", "strands", "ambiguity", "maximum_mismatches",
                      "evidence"});
     auto query = Json::object();
@@ -90,8 +93,11 @@ Json sequence_evidence(const ResourceImages &images, const Json &source, const J
         o.set("match_indices", witnesses[i]);
         observations.push(o);
     }
-    for (auto n : class_counts)
+    for (auto n : class_counts) {
         counts.push(Json::string(std::to_string(n)));
+        if (native_counts)
+            native_counts->emplace_back(std::to_string(n));
+    }
     auto out = Json::object();
     out.set("candidates", candidates);
     out.set("classes", classes);
@@ -292,7 +298,11 @@ Json coupled_expression(const Json &allocation, const Json &declaration,
 } // namespace
 
 Json expression_allocations(const ResourceImages &images, const Json &request,
-                            std::shared_ptr<CpuResources> resources) {
+                            std::shared_ptr<CpuResources> resources,
+                            std::optional<AssayFieldsSource> *retained) {
+    using N = NativeRecordValue;
+    require(!retained || !request.has("coupling"),
+            "coupled expression has no native field producer");
     members(request,
             {"schema", "operation", "samples", "evidence_source", "targets", "contrasts",
              "map_evidence"},
@@ -326,12 +336,14 @@ Json expression_allocations(const ResourceImages &images, const Json &request,
     auto evidence_records = Json::array(), evidence_hashes = Json::array(),
          canonical_candidates = Json::array();
     std::vector<Json> local;
+    std::vector<Vector> local_counts(samples.size()), shared_counts;
+    N::Array native_maps;
     for (std::size_t s = 0; s < samples.size(); ++s) {
         Json adapted;
         {
             auto reservation = resources->reserve(1);
             if (mode == "transcript_sequences")
-                adapted = sequence_evidence(images, source, samples.at(s));
+                adapted = sequence_evidence(images, source, samples.at(s), &local_counts[s]);
             else if (mode == "annotation_alignments") {
                 members(source, {"mode", "annotation", "feature_type", "group_attribute", "overlap",
                                  "strand_policy", "filter", "candidate_search", "junction_policy"});
@@ -341,7 +353,7 @@ Json expression_allocations(const ResourceImages &images, const Json &request,
                 q.set("operation", Json::string("feature_counts"));
                 q.set("resource", samples.at(s).at("resource"));
                 q.set("unit", Json::string("sequenced_segment"));
-                adapted = feature_allocation_evidence(images, q);
+                adapted = feature_allocation_evidence(images, q, &local_counts[s]);
                 const auto a = adapted.at("allocation_request");
                 adapted.set("candidates", a.at("candidates"));
                 adapted.set("classes", a.at("classes"));
@@ -353,7 +365,7 @@ Json expression_allocations(const ResourceImages &images, const Json &request,
                 const auto &image = images.at(label(samples.at(s).at("resource")));
                 require(image.declaration.at("format").text() == "salmon_eq",
                         "unweighted equivalence-class resource required");
-                adapted = salmon_classes(image.bytes);
+                adapted = salmon_classes(image.bytes, &local_counts[s]);
                 adapted.set("reference_sha256",
                             source.at("candidate_search").at("reference_sha256"));
             }
@@ -418,14 +430,25 @@ Json expression_allocations(const ResourceImages &images, const Json &request,
     auto shared_samples = Json::array();
     for (std::size_t s = 0; s < samples.size(); ++s) {
         ExactMatrix map(shared_classes.size(), maps[s].size());
-        Vector counts;
-        for (std::size_t c = 0; c < maps[s].size(); ++c) {
+        require(local_counts[s].size() == maps[s].size(), "local expression count shape");
+        for (std::size_t c = 0; c < maps[s].size(); ++c)
             map.set(maps[s][c], c, 1);
-            counts.push_back(exact_rational(label(local[s].at("counts").at(c))));
+        shared_counts.push_back(map.apply(local_counts[s]));
+        if (retained) {
+            native_maps.elements.emplace_back(N::Object{
+                {{"action", SourceGradeFields::matrix(map)},
+                 {"local_counts",
+                  N(SourceGradeFields::tensor(
+                      local_counts[s].size(), [&](auto i) { return local_counts[s][i]; },
+                      rfc::numeric::StructuralSupport::full(local_counts[s].size())))},
+                 {"class_indices",
+                  N(SourceGradeFields::tensor(
+                      maps[s].size(), [&](auto i) { return Rational(std::to_string(maps[s][i])); },
+                      rfc::numeric::StructuralSupport::full(maps[s].size())))}}});
         }
         auto sample = Json::parse(samples.at(s).dump());
         json_object_object_del(sample.raw(), "resource");
-        sample.set("counts", values(map.apply(counts)));
+        sample.set("counts", values(shared_counts.back()));
         shared_samples.push(sample);
     }
     auto allocation = Json::object(), search = Json::object();
@@ -452,7 +475,62 @@ Json expression_allocations(const ResourceImages &images, const Json &request,
     allocation.set("candidate_search", search);
     if (request.has("kernel_certificate"))
         allocation.set("kernel_certificate", request.at("kernel_certificate"));
-    const auto certificate = analyze_allocations(allocation, resources);
+    const auto certificate =
+        allocation_analysis(allocation, resources, retained, &shared_counts, true);
+    if (retained) {
+        require(retained->has_value(), "native expression allocation missing");
+        auto &native = retained->value();
+        N::Array native_evidence, originals;
+        for (std::size_t s = 0; s < local.size(); ++s) {
+            auto protocol = Json::parse(local[s].dump());
+            json_object_object_del(protocol.raw(), "counts");
+            if (protocol.has("allocation_request"))
+                json_object_object_del(protocol.at("allocation_request").at("samples").at(0).raw(),
+                                       "counts");
+            native_evidence.elements.emplace_back(
+                N::Object{{{"sample", import_record_view(samples.at(s))},
+                           {"evidence", import_record_view(protocol)}}});
+        }
+        std::set<std::string> used;
+        for (std::size_t s = 0; s < samples.size(); ++s)
+            used.insert(label(samples.at(s).at("resource")));
+        for (const auto *name : {"annotation", "reference_resource"})
+            if (source.has(name))
+                used.insert(label(source.at(name)));
+        for (const auto &id : used) {
+            const auto &image = images.at(id);
+            const auto key = static_cast<std::uint64_t>(native.sources.size() + 1);
+            native.sources.emplace_back(
+                key, std::as_bytes(std::span(image.bytes.data(), image.bytes.size())));
+            originals.elements.emplace_back(
+                N::Object{{{"id", N(id)},
+                           {"role", N(std::string("source"))},
+                           {"declaration", import_record_view(image.declaration)},
+                           {"bytes", N(N::ByteSpan{key, 0, image.bytes.size(), false})}}});
+            if (!image.reference_bytes.empty()) {
+                const auto reference_key = static_cast<std::uint64_t>(native.sources.size() + 1);
+                native.sources.emplace_back(reference_key,
+                                            std::as_bytes(std::span(image.reference_bytes.data(),
+                                                                    image.reference_bytes.size())));
+                originals.elements.emplace_back(N::Object{
+                    {{"id", N(id)},
+                     {"role", N(std::string("reference"))},
+                     {"declaration", import_record_view(image.declaration)},
+                     {"bytes",
+                      N(N::ByteSpan{reference_key, 0, image.reference_bytes.size(), false})}}});
+            }
+        }
+        native.declaration =
+            N(N::Object{{{"schema", N(std::string("gadget.expression.fields.v1"))},
+                         {"request", import_record_view(request)},
+                         {"allocation_fields", std::move(native.declaration)},
+                         {"class_maps", N(std::move(native_maps))},
+                         {"evidence_records", N(std::move(native_evidence))},
+                         {"resources", N(std::move(originals))},
+                         {"candidate_search", import_record_view(search)},
+                         {"evidence_hashes", import_record_view(evidence_hashes)}}});
+        return Json{};
+    }
     auto expression = Json::parse(certificate.at("result").dump());
     expression.set("status", Json::string("feasible"));
     // Allocation samples report raw counts. Output expression samples apply the
@@ -483,6 +561,190 @@ Json expression_allocations(const ResourceImages &images, const Json &request,
     out.set("targets", request.at("targets"));
     out.set("map_evidence", request.at("map_evidence"));
     out.set("units", allocation.at("units"));
+    out.set(
+        "scope",
+        Json::string("Assignment and contrast bounds on the declared candidate universe; "
+                     "transcript-to-feature memberships and optional coupling are declarations. "
+                     "Each read record, retained RG/query/mate segment or reported class count is "
+                     "an observation. Placement multiplicity is not count multiplicity. Bound "
+                     "endpoints are separate observables, not fitted abundances."));
+    return out;
+}
+Json allocation_fields_summary_view(const NativeRecord &allocation_fields) {
+    auto result = Json::object();
+    result.set("bound_scope", render_record_view(allocation_fields.at("summary").at("bound_scope")));
+    for (const auto *name : {"native_relation_count", "native_occurrence_count"})
+        result.set(name, render_record_view(allocation_fields.at(name)));
+    result.set("native_complex_sha256", render_record_view(allocation_fields.at("summary").at("native_complex_sha256")));
+    for (const auto *name : {"constraint_rank", "allocation_nullity", "target_ambiguity_rank"})
+        result.set(name, render_record_view(allocation_fields.at(name)));
+    result.set("kernel_residual_zero", Json::boolean(true));
+    if (allocation_fields.at("kernel_factors").size() != 0) {
+        auto certificate = Json::object(), factors = Json::array();
+        const auto entries = [](const NativeRecord &record) {
+            auto rows = Json::array();
+            const auto &tensor = record.tensor();
+            const auto width = tensor.domain().extents().at(1);
+            for (const auto &entry : tensor.values().entries()) {
+                auto row = Json::array();
+                row.push(cardinality(entry.index / width));
+                row.push(cardinality(entry.index % width));
+                row.push(Json::string(entry.value.get_str()));
+                rows.push(row);
+            }
+            return rows;
+        };
+        const auto native = allocation_fields.at("kernel_factors");
+        for (std::size_t c = 0; c < native.size(); ++c) {
+            const auto factor = native.at(c);
+            auto row = Json::object();
+            for (const auto *name : {"class_id", "occurrence_offset", "kernel_offset"})
+                row.set(name, render_record_view(factor.at(name)));
+            row.set("native_relation_identity",
+                    cardinality(rfc::machine::checked_size_add(1000000, c)));
+            row.set("candidates",
+                    render_record_view(allocation_fields.at("classes").at(c).at("candidates")));
+            row.set("kernel_dimension",
+                    cardinality(factor.at("kernel_frame").tensor().domain().extents().at(1)));
+            row.set("kernel_frame", entries(factor.at("kernel_frame")));
+            row.set("target_image", entries(factor.at("target_image")));
+            factors.push(row);
+        }
+        certificate.set("factors", factors);
+        certificate.set("target_coordinate_order",
+                        render_record_view(allocation_fields.at("targets")));
+        certificate.set(
+            "coordinate_rule",
+            Json::string(
+                "Class order then candidate order; occurrence key is occurrence_offset+j+1; target "
+                "rows follow target_coordinate_order; global kernel column is kernel_offset+k"));
+        certificate.set("bound_map_nonzeros",
+                        cardinality(rfc::machine::checked_size_add(
+                            allocation_fields.at("lower_map").tensor().values().entries().size(),
+                            allocation_fields.at("upper_map").tensor().values().entries().size())));
+        certificate.set(
+            "target_image_nonzeros",
+            cardinality(allocation_fields.at("target_image").tensor().values().entries().size()));
+        result.set("kernel_certificate", certificate);
+    }
+    return result;
+}
+Json expression_fields_view(const NativeRecord &record) {
+    const auto allocation_fields = record.at("allocation_fields"), request = record.at("request");
+    const auto targets = allocation_fields.at("targets"), samples = allocation_fields.at("samples");
+    const auto coordinates = allocation_fields.at("target_coordinates").tensor();
+    const auto retained_field =
+        [&](const NativeRecord &sample,
+            const char *name) -> const rfc::numeric::SparseRationalTensor & {
+        const auto key = sample.at(name).integer();
+        for (const auto &entry : record.endpoint()->tensors)
+            if (key == rfc::numeric::Integer(std::to_string(entry.key)))
+                return entry.tensor;
+        throw std::invalid_argument("expression field missing from original publication");
+    };
+    const auto bounds = [&](const NativeRecord &sample, Rational scale, bool contrast) {
+        auto result = Json::array();
+        const auto &lower = retained_field(sample, "lower"),
+                   &upper = retained_field(sample, "upper");
+        for (std::size_t t = 0; t < targets.size(); ++t) {
+            const auto coordinate = std::stoull(coordinates.state(t)->get_str());
+            result.push(bound(render_record_view(targets.at(t).at("id")),
+                              lower.state(coordinate).value() * scale,
+                              upper.state(coordinate).value() * scale, contrast));
+        }
+        return result;
+    };
+    auto result = Json::object(), raw_samples = Json::array(), expression_samples = Json::array(),
+         shared_samples = Json::array(), contrasts = Json::array();
+    for (std::size_t s = 0; s < samples.size(); ++s) {
+        const auto sample = samples.at(s);
+        auto row = Json::object();
+        row.set("id", render_record_view(sample.at("id")));
+        row.set("total", Json::string(sample.at("total").rational().get_str()));
+        row.set("bounds", bounds(sample, Rational{1} / sample.at("scale").rational(), false));
+        raw_samples.push(row);
+        auto scaled = Json::parse(row.dump());
+        scaled.set("bounds", bounds(sample, Rational{1}, false));
+        expression_samples.push(scaled);
+        auto shared = render_record_view(request.at("samples").at(s));
+        json_object_object_del(shared.raw(), "resource");
+        Vector counts;
+        const auto &values = retained_field(sample, "class_count");
+        for (std::size_t c = 0; c < allocation_fields.at("classes").size(); ++c)
+            counts.push_back(values.state(c).value());
+        shared.set("counts", assay_detail::values(counts));
+        shared_samples.push(shared);
+    }
+    for (std::size_t c = 0; c < allocation_fields.at("contrasts").size(); ++c) {
+        const auto contrast = allocation_fields.at("contrasts").at(c);
+        auto row = Json::object();
+        for (const auto *name : {"id", "left", "right"})
+            row.set(name, render_record_view(contrast.at(name)));
+        row.set("bounds", bounds(contrast, Rational{1}, true));
+        for (std::size_t i = 0; i < row.at("bounds").size(); ++i)
+            json_object_object_del(row.at("bounds").at(i).raw(), "identifiable");
+        contrasts.push(row);
+    }
+    result.set("samples", raw_samples);
+    result.set("contrasts", contrasts);
+    const auto summary = allocation_fields_summary_view(allocation_fields);
+    json_object_object_foreach(summary.raw(), name, value) {
+        (void)value;
+        result.set(name, summary.at(name));
+    }
+    auto allocation = Json::object();
+    allocation.set("schema", Json::string("gadget.assay.allocations.v1"));
+    allocation.set("operation", Json::string("allocation_bounds"));
+    for (const auto *name : {"candidates", "classes", "targets", "units"})
+        allocation.set(name, render_record_view(allocation_fields.at(name)));
+    allocation.set("samples", shared_samples);
+    allocation.set("contrasts", render_record_view(request.at("contrasts")));
+    allocation.set("class_partition", Json::string("disjoint_observations"));
+    allocation.set("candidate_search", render_record_view(record.at("candidate_search")));
+    allocation.set("evidence", render_record_view(record.at("evidence_hashes")));
+    if (request.has("kernel_certificate"))
+        allocation.set("kernel_certificate", render_record_view(request.at("kernel_certificate")));
+    auto certificate = Json::object();
+    certificate.set("schema", Json::string("gadget.assay.result.v1"));
+    certificate.set("query", allocation);
+    certificate.set("source_digest", Json::string("sha256:" + sha256(allocation.dump())));
+    certificate.set("result", result);
+    certificate.set("arithmetic", Json::string("rational"));
+    certificate.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
+    certificate.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
+    certificate = seal(certificate, "certificate_sha256");
+    auto expression = Json::parse(result.dump());
+    expression.set("samples", expression_samples);
+    expression.set("status", Json::string("feasible"));
+    auto evidence = render_record_view(record.at("evidence_records")), maps = Json::array();
+    for (std::size_t s = 0; s < samples.size(); ++s) {
+        const auto local = record.at("class_maps").at(s);
+        Vector counts;
+        for (std::size_t c = 0; c < local.at("local_counts").tensor().domain().logical_size(); ++c)
+            counts.push_back(local.at("local_counts").tensor().state(c).value());
+        evidence.at(s).at("evidence").set("counts", values(counts));
+        if (evidence.at(s).at("evidence").has("allocation_request"))
+            evidence.at(s)
+                .at("evidence")
+                .at("allocation_request")
+                .at("samples")
+                .at(0)
+                .set("counts", values(counts));
+        auto map = Json::array();
+        for (std::size_t c = 0; c < local.at("class_indices").tensor().domain().logical_size(); ++c)
+            map.push(
+                cardinality(std::stoull(local.at("class_indices").tensor().state(c)->get_str())));
+        maps.push(map);
+    }
+    auto out = Json::object();
+    out.set("evidence_records", evidence);
+    out.set("class_maps", maps);
+    out.set("allocation_request", allocation);
+    out.set("allocation_certificate", certificate);
+    out.set("expression", expression);
+    out.set("targets", render_record_view(targets));
+    out.set("map_evidence", render_record_view(request.at("map_evidence")));
+    out.set("units", render_record_view(allocation_fields.at("units")));
     out.set(
         "scope",
         Json::string("Assignment and contrast bounds on the declared candidate universe; "

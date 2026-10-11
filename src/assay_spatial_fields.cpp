@@ -57,7 +57,7 @@ numeric::SparseRationalTensor extend(const numeric::SparseRationalTensor &input,
             numeric::SparseRationalVector(size, input.values().entries())};
 }
 } // namespace
-AlignmentFieldsSource spatial_fields_source(const ScientificStudy &source, const Json &assay,
+AssayFieldsSource spatial_fields_source(const ScientificStudy &source, const Json &assay,
                                             const Json &request) {
     const auto original = source.endpoint();
     require(assay.at("declaration").at("carrier").text() == "observations",

@@ -1,6 +1,7 @@
 #include "genomic_detail.hpp"
 #include "source_grade_fields.hpp"
 #include <gadget/record_view.hpp>
+#include <algorithm>
 #include <rfc/core/builder.hpp>
 #include <rfc/field/boundary.hpp>
 
@@ -24,7 +25,7 @@ struct Relation {
 };
 } // namespace
 
-AlignmentFieldsSource alignment_fields_source(const ResourceImage &resource, const Json &request) {
+AssayFieldsSource alignment_fields_source(const ResourceImage &resource, const Json &request) {
     members(request, {"schema", "operation", "resource", "filter"});
     require(request.at("schema").text() == "gadget.assays.query.v1" &&
                 request.at("operation").text() == "alignment_evidence",
@@ -191,63 +192,41 @@ AlignmentFieldsSource alignment_fields_source(const ResourceImage &resource, con
     }
     return {std::move(endpoint), std::move(result), std::move(originals)};
 }
-AlignmentFieldsSource feature_count_fields_source(const ResourceImages &images, const Json &request,
+AssayFieldsSource feature_count_fields_source(const ResourceImages &images, const Json &request,
                                                   std::shared_ptr<CpuResources> resources) {
     if (!resources)
         resources = CpuResources::local();
     Json evidence;
+    std::vector<Vector> native_counts(1);
     {
         auto reservation = resources->reserve(1);
-        evidence = feature_allocation_evidence(images, request);
+        evidence = feature_allocation_evidence(images, request, &native_counts.front());
     }
     const auto allocation = evidence.at("allocation_request");
-    std::optional<rfc::storage::TemporalEndpoint> source;
-    const auto certificate = allocation_analysis(allocation, resources, &source);
+    std::optional<AssayFieldsSource> source;
+    const auto certificate = allocation_analysis(allocation, resources, &source, &native_counts);
     auto reservation = resources->reserve(1);
     require(source.has_value(), "allocation source missing");
-    auto endpoint = std::move(*source);
+    auto endpoint = std::move(source->endpoint);
     const auto candidates = allocation.at("candidates");
     const auto classes = allocation.at("classes");
-    endpoint.carriers.push_back({1,
-                                 rfc::storage::TemporalCarrierKind::SourceGrade,
-                                 {0},
-                                 {},
-                                 0,
-                                 rfc::numeric::IndexDomain::linear(candidates.size())});
-    endpoint.carriers.push_back({2,
-                                 rfc::storage::TemporalCarrierKind::SourceGrade,
-                                 {1},
-                                 {},
-                                 0,
-                                 rfc::numeric::IndexDomain::linear(classes.size())});
-    SourceGradeFields fields{endpoint};
-    const auto counts = allocation.at("samples").at(0).at("counts");
+    const auto &declaration = std::get<N::Object>(source->declaration.data).members;
+    const auto samples = std::find_if(declaration.begin(), declaration.end(),
+        [](const auto &entry) { return entry.first == "samples"; });
+    require(samples != declaration.end(), "allocation sample declaration missing");
+    const auto &samples_value = samples->second;
+    const auto &sample = std::get<N::Object>(
+        std::get<N::Array>(samples_value.data).elements.front().data).members;
     N::Object quantitative;
-    quantitative.members.emplace_back(
-        "class_count", fields.column("assignment.class_count", 1, classes.size(),
-                                     [&](auto i) { return exact_rational(counts.at(i).text()); }));
+    N total;
+    for (const auto &[name, value] : sample) {
+        if (name == "class_count" || name == "lower" || name == "upper")
+            quantitative.members.emplace_back(name, value);
+        if (name == "total") total = value;
+    }
     std::map<std::string, std::size_t> candidate_ids;
     for (std::size_t i = 0; i < candidates.size(); ++i)
         candidate_ids.emplace(candidates.at(i).text(), i);
-    const auto bounds = certificate.at("result").at("samples").at(0).at("bounds");
-    std::vector<std::size_t> supported;
-    Vector lower(candidates.size()), upper(candidates.size());
-    for (std::size_t i = 0; i < bounds.size(); ++i) {
-        const auto target = allocation.at("targets").at(i);
-        require(target.at("candidates").size() == 1,
-                "feature target must name its original candidate");
-        const auto coordinate = candidate_ids.at(target.at("candidates").at(0).text());
-        supported.push_back(coordinate);
-        lower[coordinate] = exact_rational(bounds.at(i).at("lower").text());
-        upper[coordinate] = exact_rational(bounds.at(i).at("upper").text());
-    }
-    const auto support = rfc::numeric::StructuralSupport::sparse(candidates.size(), supported);
-    quantitative.members.emplace_back("lower", fields.column(
-                                                   "assignment.lower", 0, candidates.size(),
-                                                   [&](auto i) { return lower[i]; }, support));
-    quantitative.members.emplace_back("upper", fields.column(
-                                                   "assignment.upper", 0, candidates.size(),
-                                                   [&](auto i) { return upper[i]; }, support));
     const auto segments = evidence.at("segments");
     N::Object segment_fields;
     const auto column = [&](std::size_t size, auto value) {
@@ -317,12 +296,6 @@ AlignmentFieldsSource feature_count_fields_source(const ResourceImages &images, 
     const auto excluded = evidence.at("excluded_record_indices");
     N exclusions =
         column(excluded.size(), [&](auto i) { return Rational(excluded.at(i).integer()); });
-    auto summary = Json::object();
-    json_object_object_foreach(certificate.at("result").raw(), name, value) {
-        (void)value;
-        if (std::string_view(name) != "samples" && std::string_view(name) != "contrasts")
-            summary.set(name, certificate.at("result").at(name));
-    }
     auto identity = Json::object();
     for (const auto *name :
          {"schema", "source_digest", "arithmetic", "gadget_sha256", "rexgraph_sha256"})
@@ -350,10 +323,10 @@ AlignmentFieldsSource feature_count_fields_source(const ResourceImages &images, 
          {"overlap_count", integer(witnesses.size())},
          {"overlaps", N(std::move(overlaps))},
          {"excluded_record_indices", std::move(exclusions)},
-         {"allocation_summary", import_record_view(summary)},
+         {"allocation_fields", std::move(source->declaration)},
          {"allocation_identity", import_record_view(identity)},
          {"allocation_total",
-          N(exact_rational(certificate.at("result").at("samples").at(0).at("total").text()))},
+          std::move(total)},
          {"scope", N(evidence.at("scope").text())},
          {"decoded_query_names", N(N::ByteSpan{3, 0, names.size(), false})},
          {"original_alignments", N(N::ByteSpan{1, 0, alignments.bytes.size(), false})},
@@ -361,6 +334,12 @@ AlignmentFieldsSource feature_count_fields_source(const ResourceImages &images, 
     if (evidence.has("execution"))
         std::get<N::Object>(result.data)
             .members.emplace_back("execution", import_record_view(evidence.at("execution")));
+    if (!alignments.reference_bytes.empty()) {
+        originals.emplace_back(4, std::as_bytes(std::span(alignments.reference_bytes.data(),
+                                                         alignments.reference_bytes.size())));
+        std::get<N::Object>(result.data).members.emplace_back(
+            "original_reference", N(N::ByteSpan{4, 0, alignments.reference_bytes.size(), false}));
+    }
     return {std::move(endpoint), std::move(result), std::move(originals)};
 }
 } // namespace gadget::assay_detail
