@@ -698,9 +698,12 @@ NativeRecord NativeRecord::create_from_endpoint(NativeRecordValue &&value,std::u
 NativeRecord NativeRecord::publish_fields(const NativeRecord &source, std::uint64_t ns,
                                           std::vector<storage::TemporalTensor> fields,
                                           NativeRecordValue value,
-                                          std::vector<RawByteSource> added_sources) {
+                                          std::vector<RawByteSource> added_sources,
+                                          std::vector<storage::TemporalCarrier> added_carriers) {
     require(ns != source.source_namespace(), "field publication requires a new namespace");
     auto endpoint = *source.endpoint();
+    endpoint.carriers.insert(endpoint.carriers.end(), std::make_move_iterator(added_carriers.begin()),
+                             std::make_move_iterator(added_carriers.end()));
     endpoint.tensors.insert(endpoint.tensors.end(), std::make_move_iterator(fields.begin()),
                             std::make_move_iterator(fields.end()));
     return create_owned(std::move(value), ns, std::move(added_sources), std::move(endpoint),

@@ -38,6 +38,7 @@ int main(int argc, char **argv) {
                    "       snapshot (--input DATA_ROOT | --snapshot STUDY) --out NEW_DIRECTORY\n"
                    "       native-record --input FILE --out FILE.rfcxs\n"
                    "       record-view --input FILE\n"
+                   "       replay-scientific --record FILE.rfcxs --out-record FILE.rfcxs\n"
                    "       native-study --study FILE --out FILE.rfcxs\n"
                    "       native-workspace --workspace FILE --out FILE.rfcxs\n"
                    "       [--measurements DECLARATION] (raw input only)\n"
@@ -147,6 +148,7 @@ int main(int argc, char **argv) {
             {"import-table", {"--spec", "--out"}},
             {"native-record", {"--input","--out"}},
             {"record-view", {"--input","--member","--format","--assay"}},
+            {"replay-scientific", {"--record", "--out-record"}},
             {"native-study", {"--study","--out"}},
             {"native-workspace", {"--workspace","--out"}},
             {"resources", {}},
@@ -608,6 +610,12 @@ int main(int argc, char **argv) {
             return 0;
         }
         if(command=="native-record") {gadget::read_record(required("--input")).native().write(required("--out"));return 0;}
+        if (command == "replay-scientific") {
+            const auto replayed = gadget::replay_scientific_record(
+                gadget::NativeRecord::read(required("--record")), gadget::CpuResources::local());
+            replayed.write(required("--out-record"));
+            return 0;
+        }
         if(command=="record-view") {
             const auto retained=options.contains("--assay")
                 ? gadget::RetainedRecord(gadget::AssayWorkspace(required("--input")).derivation_certificate(options.at("--assay")))

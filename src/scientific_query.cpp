@@ -2,6 +2,9 @@
 #include "research_ensemble.hpp"
 #include "research_factored.hpp"
 #include "research_prepared.hpp"
+#include "research_linear.hpp"
+#include "research_calibration.hpp"
+#include "scientific_result_fields.hpp"
 #include "research_response.hpp"
 #include "research_structural_calibration.hpp"
 #include "research_temporal.hpp"
@@ -72,6 +75,7 @@ struct PreparedContext {
 } // namespace
 struct ScientificSession::State {
     std::shared_ptr<const ScientificStudy> owner;
+    std::optional<RawByteSource> original_publication;
     const ScientificStudy::State &source;
     std::map<std::string, PreparedContext> contexts;
     std::map<std::string, std::unique_ptr<State>> publication_sessions;
@@ -1818,6 +1822,27 @@ struct ScientificSession::State {
         resolved.set("values", values);
         return resolved;
     }
+    NativeRecord record(const NativeRecord &query, const Json &admitted) {
+        using N = NativeRecordValue;
+        const auto operation = admitted.at("operation").text();
+        if (operation != "linear_model_comparison" && operation != "finite_reference_calibration")
+            return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
+        const auto fields = operation == "linear_model_comparison"
+            ? research_detail::linear_model_fields(*owner, admitted, resources).publication
+            : research_detail::finite_reference_fields(*owner, admitted, resources);
+        std::uint64_t source_key = 1;
+        for (const auto &bytes : fields.raw_sources())
+            source_key = std::max(source_key, rfc::machine::checked_size_add(bytes.key(), 1));
+        if (!original_publication)
+            original_publication.emplace(owner->native_publication().archive_source(1));
+        auto bytes = original_publication->rekey(source_key);
+        N value(N::Object{{{"schema", N(std::string("gadget.scientific.result.fields.v1"))},
+            {"certificate", import_record_view(certificate(admitted))},
+            {"fields", fields.unbound_value()},
+            {"source_study_publication", N(N::ByteSpan{source_key, 0, bytes.bytes().size(), false})}}});
+        const auto retained = fields.derive(std::move(value), {std::move(bytes)});
+        return retain_operation(retained, query, retained.unbound_value());
+    }
     Json run(const Json &query, std::optional<rfc::runtime::ExecutionLease> native_lease = {}) {
         auto result = certificate(query);
         const auto operation = query.at("operation").text();
@@ -2452,8 +2477,10 @@ void ScientificSession::validate(const Json &query) {
     state_->admit(admitted);
 }
 NativeRecord ScientificSession::execute_record(const NativeRecord &query) {
-    const auto result=execute(render_record_view(query));
-    return retain_operation(state_->owner->native_publication(),query,import_record_view(result));
+    const auto admitted = render_record_view(query);
+    std::lock_guard lock(state_->mutex);
+    state_->admit(admitted);
+    return state_->record(query, admitted);
 }
 Json ScientificSession::execute(const Json &query) {
     auto admitted = Json::parse(query.dump());
@@ -2558,8 +2585,28 @@ void ScientificSession::clear_native_novelty_preparations() {
     state_->native_novelty.clear();
 }
 NativeRecord ScientificSession::execute_plan_record(const NativeRecord &plan) {
-    const auto result=execute_plan(render_record_view(plan));
-    return retain_operation(state_->owner->native_publication(),plan,import_record_view(result));
+    const auto admitted = render_record_view(plan);
+    members(admitted, {"schema", "id", "question", "source_digest", "steps"});
+    require(admitted.at("schema").text() == "gadget.scientific.plan.v1", "unsupported plan schema");
+    (void)text(admitted.at("id"));
+    (void)text(admitted.at("question"));
+    require(admitted.at("source_digest").text() == state_->source.digest, "plan source binding mismatch");
+    const auto steps = admitted.at("steps");
+    source_array(steps, "plan steps");
+    require(steps.size() > 0, "plan requires at least one step");
+    std::lock_guard lock(state_->mutex);
+    std::set<std::string> identities;
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+        members(steps.at(i), {"id", "query"});
+        require(identities.insert(text(steps.at(i).at("id"))).second, "duplicate plan step identity");
+        state_->admit(steps.at(i).at("query"));
+    }
+    std::vector<std::pair<std::string, NativeRecord>> results;
+    for (std::size_t i = 0; i < steps.size(); ++i)
+        results.emplace_back(steps.at(i).at("id").text(),
+            state_->record(plan.at("steps").at(i).at("query"), steps.at(i).at("query")));
+    return scientific_detail::retain_scientific_plan(state_->owner->native_publication(), plan,
+                                                    state_->source.digest, results);
 }
 Json ScientificSession::execute_plan(const Json &plan) {
     auto admitted = Json::parse(plan.dump());

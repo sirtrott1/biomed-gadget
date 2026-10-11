@@ -12,6 +12,10 @@
 namespace rfc::storage { class NativeAtlasSource; }
 namespace gadget {
 class CpuResources;
+// Recompute a retained model or finite calibration operation from its original
+// study bytes and query, then verify its complete fields, carriers and support.
+NativeRecord replay_scientific_record(const NativeRecord &publication,
+    std::shared_ptr<CpuResources> resources = {});
 class AssayWorkspace;
 // Reports completed admission stages. Throwing aborts construction; no source
 // publication or input file is changed by admission.

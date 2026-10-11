@@ -32,7 +32,7 @@ struct SourceGradeFields {
                                      {}, {}, key, rfc::numeric::IndexDomain::linear(size)});
         return key;
     }
-    NativeRecordValue vector(std::string name, std::uint64_t carrier, const Vector &values) {
+    NativeRecordValue vector(std::string name, std::uint64_t carrier, const rfc::numeric::RationalVector &values) {
         return on_carrier(std::move(name), carrier,
                           tensor(values.size(), [&](auto i) { return values[i]; },
                                  rfc::numeric::StructuralSupport::full(values.size())));
@@ -93,7 +93,7 @@ struct SourceGradeFields {
         return {rfc::numeric::IndexDomain::linear(size), std::move(support),
                 rfc::numeric::SparseRationalVector(size, std::move(entries))};
     }
-    NativeRecordValue field(std::string name, std::uint16_t grade, const Vector &values) {
+    NativeRecordValue field(std::string name, std::uint16_t grade, const rfc::numeric::RationalVector &values) {
         return column(std::move(name), grade, values.size(), [&](auto i) { return values[i]; });
     }
     static NativeRecordValue matrix(const rfc::numeric::ExactMatrix &value) {

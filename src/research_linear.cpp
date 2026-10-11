@@ -1,5 +1,6 @@
 #include "research_linear.hpp"
 #include "research_fields.hpp"
+#include "scientific_result_fields.hpp"
 #include "scientific_model.hpp"
 #include <algorithm>
 #include <gadget/resources.hpp>
@@ -10,34 +11,10 @@
 namespace gadget::research_detail {
 namespace {
 using Matrix = rfc::numeric::ExactMatrix;
-Json rational(Rational value) {
-    value.canonicalize();
-    return Json::string(value.get_str());
-}
-Json vector_json(const Vector &values) {
-    auto out = Json::array();
-    for (const auto &value : values)
-        out.push(rational(value));
-    return out;
-}
-Json strings(const std::vector<std::string> &values) {
-    auto out = Json::array();
-    for (const auto &value : values)
-        out.push(Json::string(value));
-    return out;
-}
-Json sparse_matrix(const Matrix &matrix) {
-    auto out = Json::object(), entries = Json::array();
-    for (const auto &[position, value] : matrix.entries()) {
-        auto entry = Json::object();
-        entry.set("row", cardinality(position.first));
-        entry.set("column", cardinality(position.second));
-        entry.set("value", rational(value));
-        entries.push(entry);
-    }
-    out.set("rows", cardinality(matrix.rows()));
-    out.set("columns", cardinality(matrix.cols()));
-    out.set("entries", entries);
+using Value = scientific_detail::ResultValue;
+Value strings(const std::vector<std::string> &values) {
+    auto out = Value::array();
+    for (const auto &value : values) out.push(Value::string(value));
     return out;
 }
 struct Column {
@@ -70,21 +47,13 @@ struct Model : scientific_detail::PreparedObservedModel {
 struct Fit {
     Vector coefficients, represented, residual;
     Rational quadrance;
-    Json record;
+    Vector normal;
 };
 Fit fit(const Model &model, const Vector &input, const rfc::field::ExactMetric &metric,
         const rfc::runtime::CpuTileStop &stop) {
     const auto native = model.apply(input, [&] { stop.check(); });
-    Fit out{native.coefficients, native.represented, native.residual, native.quadrance, Json{}};
-    const auto normal = model.design.transpose().apply(metric.apply(out.residual));
-    out.record = Json::object();
-    out.record.set("particular_coefficients", vector_json(out.coefficients));
-    out.record.set("represented", vector_json(out.represented));
-    out.record.set("residual", vector_json(out.residual));
-    out.record.set("residual_quadrance", rational(out.quadrance));
-    out.record.set("normal_equations", vector_json(normal));
-    out.record.set("orthogonality_exact", Json::boolean(true));
-    out.record.set("reconstruction_exact", Json::boolean(true));
+    Fit out{native.coefficients, native.represented, native.residual, native.quadrance,
+            model.design.transpose().apply(metric.apply(native.residual))};
     return out;
 }
 } // namespace
@@ -115,7 +84,7 @@ std::set<std::string> linear_model_field_ids(const Json &query) {
     return out;
 }
 
-Json linear_model_comparison(const ScientificStudy &study, const Json &query, bool validate,
+std::optional<LinearModelFields> evaluate_linear_model(const ScientificStudy &study, const Json &query, bool validate,
                              const std::shared_ptr<CpuResources> &resources) {
     members(query,
             {"operation", "responses", "terms", "controls", "selection", "support", "metric",
@@ -250,19 +219,23 @@ Json linear_model_comparison(const ScientificStudy &study, const Json &query, bo
                         "model metric diagonal must be positive");
     }
     if (validate)
-        return Json{};
+        return std::nullopt;
     auto reservation = cpu->reserve(workers);
-    auto result = Json::object(), declarations = Json::array(), strata = Json::array();
-    result.set("schema", Json::string("gadget.linear.model.comparison.v1"));
-    result.set("native_carrier", Json::string(std::to_string(*input.carrier)));
-    result.set("grade", cardinality(input.grade.value));
-    result.set("arithmetic", Json::string("exact_rational"));
-    result.set("coefficient_rule", Json::string("beta = particular + kernel * free; only "
+    scientific_detail::ResultFields publication(study.native_publication());
+    const auto full_columns = publication.axis(columns.size());
+    std::map<LinearModelAxis, std::optional<Rational>> comparisons_by_axis;
+    const auto rational = [&](const Rational &value) {return publication.scalar(value);};
+    auto result = Value::object(), declarations = Value::array(), strata = Value::array();
+    result.set("schema", Value::string("gadget.linear.model.comparison.v1"));
+    result.set("native_carrier", Value::string(std::to_string(*input.carrier)));
+    result.set("grade", Value::count(input.grade.value));
+    result.set("arithmetic", Value::string("exact_rational"));
+    result.set("coefficient_rule", Value::string("beta = particular + kernel * free; only "
                                                 "kernel-annihilating contrasts are identified"));
     for (const auto &column : columns) {
-        auto declaration = Json::object(), units = Json::array();
-        declaration.set("id", Json::string(column.id));
-        declaration.set("role", Json::string(column.role));
+        auto declaration = Value::object(), units = Value::array();
+        declaration.set("id", Value::string(column.id));
+        declaration.set("role", Value::string(column.role));
         declaration.set("factors", strings(column.factors));
         for (const auto &id : column.factors)
             units.push(input.meaning.at(id).at("units"));
@@ -271,44 +244,60 @@ Json linear_model_comparison(const ScientificStudy &study, const Json &query, bo
     }
     result.set("columns", declarations);
     for (const auto &scope : scopes) {
-        auto stratum = Json::object(), coordinates = Json::array(), exclusions = Json::array();
-        stratum.set("id", Json::string(scope.id));
+        auto stratum = Value::object(), coordinates = Value::array(), exclusions = Value::array();
+        stratum.set("id", Value::string(scope.id));
         stratum.set("selection", strings(scope.selection));
         stratum.set("entities", input.identity(scope.rows));
         for (const auto row : scope.rows)
-            coordinates.push(cardinality(row));
+            coordinates.push(Value::count(row));
         stratum.set("coordinates", coordinates);
-        stratum.set("n", cardinality(scope.rows.size()));
+        stratum.set("n", Value::count(scope.rows.size()));
         std::set<std::size_t> retained(scope.rows.begin(), scope.rows.end());
         for (std::size_t row = 0; row < input.entities.size(); ++row) {
             if (retained.contains(row))
                 continue;
-            auto exclusion = Json::object(), missing = Json::array(), selectors = Json::array();
+            auto exclusion = Value::object(), missing = Value::array(), selectors = Value::array();
             for (const auto &id : complete)
                 if (!input.fields.at(id)->tensor.support().contains(row))
-                    missing.push(Json::string(id));
+                    missing.push(Value::string(id));
             for (const auto &id : scope.selection)
                 if (!input.fields.at(id)->tensor.support().contains(row) ||
                     input.value(id, row) != 1)
-                    selectors.push(Json::string(id));
-            exclusion.set("entity", Json::string(input.entities[row]));
-            exclusion.set("coordinate", cardinality(row));
+                    selectors.push(Value::string(id));
+            exclusion.set("entity", Value::string(input.entities[row]));
+            exclusion.set("coordinate", Value::count(row));
             exclusion.set("unobserved_fields", missing);
             exclusion.set("unselected_indicators", selectors);
             exclusions.push(exclusion);
         }
         stratum.set("excluded", exclusions);
         if (scope.rows.empty()) {
-            stratum.set("status", Json::string("no_joint_observations"));
+            stratum.set("status", Value::string("no_joint_observations"));
             strata.push(stratum);
             continue;
         }
-        stratum.set("status", Json::string("completed"));
+        stratum.set("status", Value::string("completed"));
+        const auto row_carrier = publication.axis(scope.rows.size());
+        const auto row_coordinates = publication.coordinates(scope.rows, row_carrier);
+        Matrix row_lift(input.entities.size(), scope.rows.size());
+        for (std::size_t i = 0; i < scope.rows.size(); ++i) row_lift.set(scope.rows[i], i, 1);
+        auto scope_binding = Value::object();
+        scope_binding.set("stratum", Value::string(scope.id));
+        scope_binding.set("source_carrier", Value::count(*input.carrier));
+        scope_binding.set("row_carrier", Value::count(row_carrier));
+        scope_binding.set("row_coordinates", Value(row_coordinates));
+        scope_binding.set("source_lift", publication.matrix(row_lift, row_carrier, *input.carrier));
+        publication.bind(std::move(scope_binding));
+        const auto selected = [&](const Vector &value) {
+            return publication.selected(value, *input.carrier, scope.rows, row_coordinates);
+        };
+        std::map<std::string, Value> observations;
+        for (const auto &id : responses) observations.emplace(id, selected(input.values(id, scope.rows)));
         Vector weights(scope.rows.size(), Rational{1});
         if (metric_field)
             weights = input.values(*metric_field, scope.rows);
         const auto metric = field::ExactMetric::diagonal(weights);
-        stratum.set("metric_diagonal", vector_json(weights));
+        stratum.set("metric_diagonal", selected(weights));
         Matrix all(scope.rows.size(), columns.size());
         for (std::size_t j = 0; j < columns.size(); ++j)
             for (std::size_t i = 0; i < scope.rows.size(); ++i) {
@@ -317,7 +306,7 @@ Json linear_model_comparison(const ScientificStudy &study, const Json &query, bo
                     value *= input.value(id, scope.rows[i]);
                 all.set(i, j, value);
             }
-        auto models = Json::array();
+        auto models = Value::array();
         std::vector<std::vector<Fit>> fits;
         for (const auto &variant : variants) {
             std::vector<std::size_t> selected;
@@ -338,44 +327,66 @@ Json linear_model_comparison(const ScientificStudy &study, const Json &query, bo
                                                          const runtime::CpuTileStop &stop) {
                     computed[j] = fit(model, input.values(responses[j], scope.rows), metric, stop);
                 });
-            auto record = Json::object(), axis = Json::array(), identified = Json::array(),
-                 response_records = Json::array();
+            const auto coefficient_carrier = publication.axis(selected.size()),
+                       frame_carrier = publication.axis(model.projection.frame.cols()),
+                       kernel_carrier = publication.axis(model.kernel.cols());
+            auto model_binding = Value::object();
+            model_binding.set("stratum", Value::string(scope.id));
+            model_binding.set("model", Value::string(model.id));
+            model_binding.set("coefficient_carrier", Value::count(coefficient_carrier));
+            model_binding.set("frame_carrier", Value::count(frame_carrier));
+            model_binding.set("kernel_carrier", Value::count(kernel_carrier));
+            model_binding.set("column_origins", Value(publication.coordinates(selected, coefficient_carrier)));
+            model_binding.set("frame_column_origins", Value(publication.coordinates(model.pivots, frame_carrier)));
+            Matrix column_lift(columns.size(), selected.size());
+            for (std::size_t i = 0; i < selected.size(); ++i) column_lift.set(selected[i], i, 1);
+            model_binding.set("column_lift", publication.matrix(column_lift, coefficient_carrier, full_columns));
+            publication.bind(std::move(model_binding));
+            auto record = Value::object(), axis = Value::array(), identified = Value::array(),
+                 response_records = Value::array();
             for (std::size_t j = 0; j < selected.size(); ++j) {
-                axis.push(Json::string(columns[selected[j]].id));
+                axis.push(Value::string(columns[selected[j]].id));
                 bool unique = true;
                 for (std::size_t k = 0; k < model.kernel.cols(); ++k)
                     unique = unique && model.kernel.get(j, k) == 0;
-                identified.push(Json::boolean(unique));
+                identified.push(Value::boolean(unique));
             }
-            record.set("id", Json::string(model.id));
+            record.set("id", Value::string(model.id));
             record.set("columns", axis);
-            record.set("rank", cardinality(model.projection.frame.cols()));
+            record.set("rank", Value::count(model.projection.frame.cols()));
             record.set("residual_dimension",
-                       cardinality(scope.rows.size() - model.projection.frame.cols()));
-            record.set("coefficient_nullity", cardinality(model.kernel.cols()));
+                       Value::count(scope.rows.size() - model.projection.frame.cols()));
+            record.set("coefficient_nullity", Value::count(model.kernel.cols()));
             record.set("coefficient_identified", identified);
-            record.set("design", sparse_matrix(model.design));
-            record.set("independent_frame", sparse_matrix(model.projection.frame));
-            record.set("coefficient_kernel", sparse_matrix(model.kernel));
+            record.set("design", publication.matrix(model.design, coefficient_carrier, row_carrier));
+            record.set("independent_frame", publication.matrix(model.projection.frame, frame_carrier, row_carrier));
+            record.set("coefficient_kernel", publication.matrix(model.kernel, kernel_carrier, coefficient_carrier));
             for (std::size_t j = 0; j < responses.size(); ++j) {
-                auto response = computed[j].record;
-                response.set("field", Json::string(responses[j]));
+                auto response = Value::object();
+                response.set("particular_coefficients", publication.vector(computed[j].coefficients, coefficient_carrier));
+                response.set("represented", publication.selected(computed[j].represented, *input.carrier, scope.rows, row_coordinates));
+                response.set("residual", publication.selected(computed[j].residual, *input.carrier, scope.rows, row_coordinates));
+                response.set("residual_quadrance", rational(computed[j].quadrance));
+                response.set("normal_equations", publication.vector(computed[j].normal, coefficient_carrier));
+                response.set("orthogonality_exact", Value::boolean(true));
+                response.set("reconstruction_exact", Value::boolean(true));
+                response.set("field", Value::string(responses[j]));
                 response.set("meaning", input.meaning.at(responses[j]));
-                response.set("input", vector_json(input.values(responses[j], scope.rows)));
+                response.set("input", observations.at(responses[j]));
                 if (model.id == "full") {
-                    auto readings = Json::array();
+                    auto readings = Value::array();
                     for (const auto &contrast : contrasts) {
                         const auto ambiguity = model.kernel.transpose().apply(contrast.weights);
                         const bool unique = numeric::is_zero(ambiguity);
-                        auto reading = Json::object();
-                        reading.set("id", Json::string(contrast.id));
-                        reading.set("weights", vector_json(contrast.weights));
-                        reading.set("kernel_pairings", vector_json(ambiguity));
-                        reading.set("identified", Json::boolean(unique));
+                        auto reading = Value::object();
+                        reading.set("id", Value::string(contrast.id));
+                        reading.set("weights", publication.vector(contrast.weights, coefficient_carrier));
+                        reading.set("kernel_pairings", publication.vector(ambiguity, kernel_carrier));
+                        reading.set("identified", Value::boolean(unique));
                         reading.set("value", unique
                                                  ? rational(numeric::dot(contrast.weights,
                                                                          computed[j].coefficients))
-                                                 : Json{});
+                                                 : Value{});
                         readings.push(reading);
                     }
                     response.set("coefficient_contrasts", readings);
@@ -383,25 +394,25 @@ Json linear_model_comparison(const ScientificStudy &study, const Json &query, bo
                 response_records.push(response);
             }
             record.set("responses", response_records);
-            auto execution = Json::object();
-            execution.set("owner", Json::string("rfc::numeric::PreparedExactSolve"));
-            execution.set("gram_preparations", cardinality(1));
-            execution.set("applications", cardinality(responses.size()));
-            execution.set("factor_entries", cardinality(model.projection.solve.stored_entries()));
-            execution.set("requested_workers", cardinality(report.requested_workers));
-            execution.set("worker_slots", cardinality(report.worker_slots));
-            execution.set("completed_tiles", cardinality(report.completed_tiles));
+            auto execution = Value::object();
+            execution.set("owner", Value::string("rfc::numeric::PreparedExactSolve"));
+            execution.set("gram_preparations", Value::count(1));
+            execution.set("applications", Value::count(responses.size()));
+            execution.set("factor_entries", Value::count(model.projection.solve.stored_entries()));
+            execution.set("requested_workers", Value::count(report.requested_workers));
+            execution.set("worker_slots", Value::count(report.worker_slots));
+            execution.set("completed_tiles", Value::count(report.completed_tiles));
             record.set("execution", execution);
             models.push(record);
         }
         stratum.set("models", models);
-        auto comparisons = Json::array();
+        auto comparisons = Value::array();
         for (std::size_t m = 0; m < variants.size(); ++m) {
             if (m == 1)
                 continue;
-            auto comparison = Json::object(), readings = Json::array();
-            comparison.set("reduced", Json::string(variants[m].id));
-            comparison.set("full", Json::string("full"));
+            auto comparison = Value::object(), readings = Value::array();
+            comparison.set("reduced", Value::string(variants[m].id));
+            comparison.set("full", Value::string("full"));
             for (std::size_t j = 0; j < responses.size(); ++j) {
                 const auto contribution =
                     numeric::sub(fits[1][j].represented, fits[m][j].represented);
@@ -409,16 +420,19 @@ Json linear_model_comparison(const ScientificStudy &study, const Json &query, bo
                 require(gain >= 0 && gain == metric.inner(contribution, contribution) &&
                             metric.inner(contribution, fits[1][j].residual) == 0,
                         "nested linear model quadrance identity");
-                auto reading = Json::object();
-                reading.set("field", Json::string(responses[j]));
-                reading.set("added_representation", vector_json(contribution));
+                auto reading = Value::object();
+                reading.set("field", Value::string(responses[j]));
+                reading.set("added_representation", selected(contribution));
                 reading.set("added_quadrance", rational(gain));
                 reading.set("reduced_residual_quadrance", rational(fits[m][j].quadrance));
                 reading.set("fraction_of_reduced_residual",
                             fits[m][j].quadrance == 0
-                                ? Json{}
+                                ? Value{}
                                 : rational(Rational{gain / fits[m][j].quadrance}));
-                reading.set("nested_identity_exact", Json::boolean(true));
+                comparisons_by_axis.emplace(LinearModelAxis{scope.id, variants[m].id, responses[j]},
+                    fits[m][j].quadrance == 0 ? std::optional<Rational>{}
+                        : std::optional<Rational>{Rational{gain / fits[m][j].quadrance}});
+                reading.set("nested_identity_exact", Value::boolean(true));
                 readings.push(reading);
             }
             comparison.set("responses", readings);
@@ -430,10 +444,19 @@ Json linear_model_comparison(const ScientificStudy &study, const Json &query, bo
     result.set("strata", strata);
     result.set(
         "definition",
-        Json::string("For each declared stratum, minimize (y-X beta)* M (y-X beta) on fixed joint "
+        Value::string("For each declared stratum, minimize (y-X beta)* M (y-X beta) on fixed joint "
                      "observed support. Retain Pi_image(X) y, its orthogonal residual, the "
                      "complete coefficient fibre, and full-versus-reduced field differences. "
                      "Indicator responses describe supplied memberships."));
-    return result;
+    return LinearModelFields{publication.finish(std::move(result)), std::move(comparisons_by_axis)};
+}
+LinearModelFields linear_model_fields(const ScientificStudy &study, const Json &query,
+                                      const std::shared_ptr<CpuResources> &resources) {
+    return evaluate_linear_model(study, query, false, resources).value();
+}
+Json linear_model_comparison(const ScientificStudy &study, const Json &query, bool validate,
+                             const std::shared_ptr<CpuResources> &resources) {
+    auto result = evaluate_linear_model(study, query, validate, resources);
+    return result ? render_record_view(result->publication) : Json{};
 }
 } // namespace gadget::research_detail

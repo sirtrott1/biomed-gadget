@@ -4,6 +4,7 @@
 #include "genomic_detail.hpp"
 #include <cmath>
 #include <gadget/record_view.hpp>
+#include "scientific_result_fields.hpp"
 #include <rfc/storage/declaration_codec.hpp>
 #include <rfc/storage/mapped_file.hpp>
 
@@ -175,6 +176,34 @@ Json render_record_view(const NativeRecord &record) {
     case NativeRecordKind::Object:{
         if (record.has("schema") && record.at("schema").kind() == NativeRecordKind::Text) {
             const auto schema = record.at("schema").text();
+            if (schema == "gadget.scientific.result.fields.v1") {
+                auto out = render_record_view(record.at("certificate"));
+                out.set("result", render_record_view(record.at("fields")));
+                return scientific_detail::seal(out, "certificate_sha256");
+            }
+            if (schema == "gadget.scientific.plan.fields.v1") {
+                auto out = Json::object(), steps = Json::array();
+                for (std::size_t i = 0; i < record.at("steps").size(); ++i) {
+                    const auto retained = record.at("steps").at(i);
+                    auto step = Json::object();
+                    step.set("id", render_record_view(retained.at("id")));
+                    const auto publication = NativeRecord::decode(retained.at("publication").bytes());
+                    step.set("certificate", render_record_view(publication.at("result")));
+                    steps.push(step);
+                }
+                const auto plan = render_record_view(record.at("plan"));
+                out.set("schema", Json::string("gadget.scientific.plan.certificate.v1"));
+                out.set("status", Json::string("complete"));
+                out.set("plan", plan);
+                out.set("plan_sha256", Json::string("sha256:" + sha256(plan.dump())));
+                out.set("source_digest", render_record_view(record.at("source_digest")));
+                out.set("steps", steps);
+                return scientific_detail::seal(out, "certificate_sha256");
+            }
+            if (schema == "gadget.scientific.fields.v1")
+                return render_record_view(record.at("view"));
+            if (schema == "gadget.scientific.tensor.view.v1")
+                return scientific_detail::result_tensor_view(record);
             if (schema == "gadget.sequence.alignment.fields.v1")
                 return assay_detail::sequence_alignment_fields_view(record);
             if (schema == "gadget.sequence.assembly.fields.v1")
