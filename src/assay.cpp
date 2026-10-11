@@ -1745,12 +1745,11 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
         } else
             resources = CpuResources::local();
     }
-    if (operation == "variant_genotypes" || operation == "chromatin_contrast" ||
-        operation == "assay_sections")
+    if (operation == "constrained_allocations" || operation == "variant_genotypes" || operation == "chromatin_contrast" ||
+        operation == "assay_sections" || operation == "exact_sequence_alignment" || operation == "sequence_assembly_graph")
         return render_record_view(
             execute_structured(admit_record_view(request), resources, {}, false).at("result"));
-    if (operation == "feature_counts" ||
-        (operation == "expression_allocations" && !request.has("coupling")))
+    if (operation == "feature_counts" || operation == "expression_allocations")
         return render_record_view(execute_assignment(admit_record_view(request), resources).at("result"));
     if (operation == "aggregate_assay" || operation == "design_aggregation")
         return render_record_view(execute_aggregation(admit_record_view(request), resources, {}, false).at("result"));
@@ -2648,7 +2647,8 @@ NativeRecord AssayWorkspace::execute_spatial(const NativeRecord &request,
 NativeRecord
 AssayWorkspace::execute_assignment(const NativeRecord &request,
                                    std::shared_ptr<CpuResources> resources,
-                                   std::optional<std::uint64_t> source_namespace) const {
+                                   std::optional<std::uint64_t> source_namespace,
+                                   const NativeRecord *previous_coupling) const {
     const auto query = render_record_view(request);
     using N = NativeRecordValue;
     require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
@@ -2680,7 +2680,7 @@ AssayWorkspace::execute_assignment(const NativeRecord &request,
     auto fields = [&] {
         if (expression) {
             std::optional<AssayFieldsSource> retained;
-            expression_allocations(images, query, resources, &retained);
+            expression_allocations(images, query, resources, &retained, previous_coupling);
             require(retained.has_value(), "expression source missing");
             return std::move(*retained);
         }
@@ -2855,8 +2855,12 @@ NativeRecord AssayWorkspace::execute_structured(
     std::optional<AssayFieldsSource> retained;
     if (name == "assay_sections") {
         assay_sections(*this, query, resources, &retained);
+    } else if (name == "constrained_allocations") {
+        auto reservation = resources->reserve(1);
+        constrained_allocations(query, &retained);
     } else {
-        require(name == "variant_genotypes" || name == "chromatin_contrast",
+        require(name == "variant_genotypes" || name == "chromatin_contrast" ||
+                    name == "exact_sequence_alignment" || name == "sequence_assembly_graph",
                 "structured assay operation");
         ResourceImages images;
         const auto load = [&](const Json &id) {
@@ -2876,6 +2880,8 @@ NativeRecord AssayWorkspace::execute_structured(
         if (query.has("samples"))
             for (std::size_t i = 0; i < query.at("samples").size(); ++i)
                 load(query.at("samples").at(i).at("resource"));
+        if (query.has("query_resource")) load(query.at("query_resource"));
+        if (query.has("reference_resource")) load(query.at("reference_resource"));
         genomic_analysis(images, query, resources, &retained);
     }
     require(retained.has_value(), "structured native fields missing");
@@ -3012,9 +3018,12 @@ NativeRecord AssayWorkspace::execute_structured(
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
     const auto query = render_record_view(request);
-    if (query.has("operation") && (query.at("operation").text() == "variant_genotypes" ||
+    if (query.has("operation") && (query.at("operation").text() == "constrained_allocations" ||
+                                   query.at("operation").text() == "variant_genotypes" ||
                                    query.at("operation").text() == "chromatin_contrast" ||
-                                   query.at("operation").text() == "assay_sections"))
+                                   query.at("operation").text() == "assay_sections" ||
+                                   query.at("operation").text() == "exact_sequence_alignment" ||
+                                   query.at("operation").text() == "sequence_assembly_graph"))
         return execute_structured(request, std::move(resources));
     if (query.has("operation") && query.at("operation").text() == "controlled_coverage")
         return execute_coverage(request,std::move(resources));
@@ -3022,7 +3031,7 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
         return execute_spatial(request, std::move(resources));
     if (query.has("operation") && (query.at("operation").text() == "alignment_evidence" ||
                                    query.at("operation").text() == "feature_counts" ||
-                                   (query.at("operation").text() == "expression_allocations" && !query.has("coupling"))))
+                                   query.at("operation").text() == "expression_allocations"))
         return execute_assignment(request, std::move(resources));
     if (query.has("operation") && (query.at("operation").text() == "aggregate_assay" ||
                                    query.at("operation").text() == "design_aggregation"))

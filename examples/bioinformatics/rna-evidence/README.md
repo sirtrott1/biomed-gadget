@@ -129,9 +129,10 @@ Supported zero counts remain distinct from coordinates outside a field's support
 The archive retains the original physical bytes and generating request. Pipeline
 branches share the admitted source and fields. `replay-derivation` reconstructs
 and compares the complete mathematical payload after the input workspace has
-been removed. Coupled constraints currently use the existing constrained solver
-and materialization path; native materialization availability is checked against
-the complete recipe.
+been removed. Coupled constraints consume typed class counts and exact solver optima. Every
+solver retains its source complex, affine maps and complete optimizing factors
+under a separate namespace. Explicit assignment maps connect those variables to
+the original candidates and classes. Replay retains and checks each namespace.
 
 `tests/expression_allocation_cli.py` independently enumerates finite assignments,
 read placements, coupling constraints, extrema and optimizer residuals. It also

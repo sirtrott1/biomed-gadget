@@ -233,9 +233,9 @@ def main():
         save(name+'-derive.json',request)
         destination = root/('derived-'+name)
         admitted = run('derive-assays','--workspace',workspace,'--request',root/(name+'-derive.json'),'--out',destination)
-        if name not in ('spatial', 'counts-sam', 'aggregate', 'chromatin', 'genotypes-calls.vcf'):
+        if name not in ('spatial', 'counts-sam', 'aggregate', 'chromatin', 'genotypes-calls.vcf', 'alignment', 'alignment-ties'):
             check(len(admitted['assays'][0]['declaration']['provenance']) >= 3,'derived source lineage')
-        if name in ('chromatin', 'genotypes-calls.vcf'):
+        if name in ('chromatin', 'genotypes-calls.vcf', 'alignment', 'alignment-ties'):
             check(admitted['schema'] == 'gadget.assays.workspace.v2', 'native structured publication')
             check(not (destination/'workspace.json').exists(), 'no numerical workspace authority')
             reference = run('record-view', '--input', destination/'workspace.rfcxs', '--assay', 'derived-'+name)['result']
@@ -272,7 +272,7 @@ def main():
         if name == 'alignment-ties':
             q = dict(schema='gadget.assays.query.v1',operation='native_query',assay='derived-alignment-ties',query=dict(operation='green_response',context='all',field='all.chosen_path',**{'lambda':'1'},interior=[0,1],coordinates=dict(id='8800',cells=[str(1000000+i) for i in range(5)])))
             save('tied-green-request.json',q)
-            green = run('assay-query','--workspace',destination/'workspace.json','--request',root/'tied-green-request.json')
+            green = run('assay-query','--workspace',destination/'workspace.rfcxs','--request',root/'tied-green-request.json')
             save('tied-green-result.json',green)
             g = green['result']['answers'][0]['certificate']['result']
             check([Q(x['value']['rational']) for x in g['field']] == [Q(-1,5),Q(-1,5),Q(3,5),Q(-1,5),Q(-1,5)],'native Green acts on the full optimal-alignment relation carrier')
@@ -282,13 +282,13 @@ def main():
                           sections=[dict(id='prefix-cost',grade=0,fields=['all.minimum_prefix_cost'],quantity='declared_minimum_edit_cost',units='declared_edit_cost')],metric='identity')
             q=dict(schema='gadget.assays.query.v1',operation='native_query',assay='derived-alignment-ties',query=sections)
             save('tied-sections-request.json',q)
-            cohom=run('assay-query','--workspace',destination/'workspace.json','--request',root/'tied-sections-request.json')
+            cohom=run('assay-query','--workspace',destination/'workspace.rfcxs','--request',root/'tied-sections-request.json')
             save('tied-sections-result.json',cohom)
             check([c['dimension'] for c in cohom['result']['answers'][0]['certificate']['result']['cohomology']] == [1,2],'full retained edit-grid sheaf cohomology')
         moved = root/('relocated '+name)
         shutil.copytree(destination,moved)
         reimported = root/('reimported-'+name)
-        if name in ('spatial', 'counts-sam', 'aggregate', 'chromatin', 'genotypes-calls.vcf'):
+        if name in ('spatial', 'counts-sam', 'aggregate', 'chromatin', 'genotypes-calls.vcf', 'alignment', 'alignment-ties'):
             check((moved/'workspace.rfcxs').read_bytes() == (destination/'workspace.rfcxs').read_bytes(),
                   'complete portable native spatial publication')
         else:
@@ -297,7 +297,7 @@ def main():
         original_location = root/'workspace unavailable during generation replay'
         (root/'workspace').rename(original_location)
         try:
-            replay = run('replay-derivation','--workspace',moved/('workspace.rfcxs' if name in ('spatial', 'counts-sam', 'aggregate', 'chromatin', 'genotypes-calls.vcf') else 'workspace.json'),'--assay','derived-'+name,'--out',root/('regenerated-'+name))
+            replay = run('replay-derivation','--workspace',moved/('workspace.rfcxs' if name in ('spatial', 'counts-sam', 'aggregate', 'chromatin', 'genotypes-calls.vcf', 'alignment', 'alignment-ties') else 'workspace.json'),'--assay','derived-'+name,'--out',root/('regenerated-'+name))
             check(replay['status'] == 'PASS','original generating method re-executed from relocated lineage alone')
             save(name+'-generation-replay.json',replay)
         finally:

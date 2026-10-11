@@ -53,7 +53,7 @@ def main():
     derive=dict(schema='gadget.assays.materialize.v1',id='assembly',source_namespace='929000',design=design,recipe=assembly,channel='observation')
     run('derive-assays','--workspace',workspace,'--request',save('derive.json',derive),'--out',root/'assembly')
     def execute(name,assay,query):
-        ws=root/'assembly/workspace.json' if assay=='assembly' else workspace
+        ws=root/'assembly/workspace.rfcxs' if assay=='assembly' else workspace
         req=dict(schema='gadget.assays.query.v1',operation='native_query',assay=assay,query=query)
         requests[name]=req;answer=run('assay-query','--workspace',ws,'--request',save(name+'-request.json',req))
         save(name+'-result.json',answer);results[name]=answer
@@ -114,15 +114,15 @@ def main():
     check(p['result']['stages'][2]['grades'][1]['integral_homology']==dict(free_rank=0,torsion_invariants=['2'],retained_cell_scales=['1']*4),'retained torsion survives the rational barcode death')
     for suffix,change in [('fractional-lattice',dict(coefficient_domain='retained_lattice',values=['1/2']*4)),('missing-coordinate',dict(values=['1'])),('extra-member',dict(guess='anything'))]:
         bad=dict(requests['unfilled-cycle']['query'],**change);run('query','--study',root/'workspace/assays/0/partitions/0/study.json','--query',save('invalid-'+suffix+'.json',bad),fail=True)
-    invalid=dict(requests['assembly-count-field']['query'],grade=0);run('query','--study',root/'assembly/assays/0/partitions/0/study.json','--query',save('invalid-field-grade.json',invalid),fail=True)
+    invalid=dict(requests['assembly-count-field']['query'],grade=0);run('assay-query','--workspace',root/'assembly/workspace.rfcxs','--request',save('invalid-field-grade.json',dict(schema='gadget.assays.query.v1',operation='native_query',assay='assembly',query=invalid)),fail=True)
     check(all(o.get('evidence') for o in loop['occurrences']),'source occurrence spans available for review')
     def workflow(name,value):
-        declaration=json.loads((root/'assembly/assays/0/partitions/0/study.json').read_text());study=root/'assembly/assays/0/partitions/0/study.json'
-        binding=run('query','--study',study,'--query',save(name+'-query.json',dict(operation='inspect')))['source_digest']
+        inspection=run('assay-query','--workspace',root/'assembly/workspace.rfcxs','--request',save(name+'-query.json',dict(schema='gadget.assays.query.v1',operation='native_query',assay='assembly',query=dict(operation='inspect'))))
+        binding=inspection['result']['answers'][0]['source_index']['source_digest']
         claim=dict(path=['facts','zero_chain'],value_type='boolean',comparison='equal',value=value)
         entry=dict(id='whole',type='sequence',steps=[dict(id='chain',type='query',query=requests['self-loop']['query']),dict(id='check',type='check_claims',**{'from':'chain'},claims=[claim]),dict(id='decision',type='branch',**{'from':'check'},condition=dict(path=['contradicted'],value_type='count',comparison='equal',value=0),on_true=dict(id='agreed',type='query',query=dict(operation='coverage',field='all.kmer_occurrence_count')),on_false=dict(id='inspect',type='query',query=dict(operation='inspect')))])
         w=dict(schema='gadget.scientific.workflow.v1',id=name,source_digest=binding,limits=dict(depth=8,nodes=8,model_calls=0,parallel_workers=2),definitions=[],entry=entry)
-        answer=run('workflow','--study',study,'--request',save(name+'-workflow.json',w));save(name+'-workflow-result.json',answer)
+        answer=run('workflow','--workspace',root/'assembly/workspace.rfcxs','--assay','assembly','--request',save(name+'-workflow.json',w));save(name+'-workflow-result.json',answer)
         check(answer['status']=='complete','structural claims drive an owning workflow')
         events=answer['trace'];event=next(e for e in events if e['type']=='branch');check(event['branch_taken']==('on_true' if not value else 'on_false'),'zero boundary does not certify a zero chain')
     workflow('correct-structural-claim',False);workflow('wrong-structural-claim',True)

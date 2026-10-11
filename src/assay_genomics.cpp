@@ -682,9 +682,9 @@ Json genomic_analysis(const ResourceImages &images, const Json &request,
     if (op == "reference_sequence_matches")
         return reference_matches(images, request);
     if (op == "sequence_assembly_graph")
-        return assembly_graph(*image(images, request.at("resource")), request);
+        return assembly_graph(*image(images, request.at("resource")), request, retained);
     if (op == "exact_sequence_alignment")
-        return alignment_analysis(images, request);
+        return alignment_analysis(images, request, retained);
     if (op == "alignment_evidence")
         return alignment_evidence(*image(images, request.at("resource")), request);
     if (op == "variant_genotypes")

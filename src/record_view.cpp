@@ -175,6 +175,12 @@ Json render_record_view(const NativeRecord &record) {
     case NativeRecordKind::Object:{
         if (record.has("schema") && record.at("schema").kind() == NativeRecordKind::Text) {
             const auto schema = record.at("schema").text();
+            if (schema == "gadget.sequence.alignment.fields.v1")
+                return assay_detail::sequence_alignment_fields_view(record);
+            if (schema == "gadget.sequence.assembly.fields.v1")
+                return assay_detail::sequence_assembly_fields_view(record);
+            if (schema == "gadget.constraints.fields.v1")
+                return assay_detail::constraint_fields_view(record);
             if (schema == "gadget.genotype.fields.v1")
                 return assay_detail::genotype_fields_view(record);
             if (schema == "gadget.chromatin.fields.v1")

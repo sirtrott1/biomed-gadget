@@ -258,7 +258,7 @@ Json read_reconstruction(const ResourceImage &resource, const Json &request) {
         auto absent = Json::array();
         for (auto v : witnesses->unreachable_suffix_vertices)
             absent.push(cardinality(v));
-        out.set("route_witnesses", witnesses->histories);
+        out.set("route_witnesses", witnesses->histories_view());
         out.set("unreachable_suffix_vertices", absent);
         out.set("native_route_calls", cardinality(witnesses->histories.size() +
                                                   witnesses->unreachable_suffix_vertices.size()));

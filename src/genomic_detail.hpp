@@ -49,7 +49,9 @@ Json feature_allocation_evidence(const ResourceImages &images, const Json &reque
                                  Vector *native_counts = nullptr);
 Json expression_allocations(const ResourceImages &images, const Json &request,
                             std::shared_ptr<CpuResources> resources,
-                            std::optional<AssayFieldsSource> *retained = nullptr);
+                            std::optional<AssayFieldsSource> *retained = nullptr,
+                            const NativeRecord *previous_coupling = nullptr);
+Json constraint_request_view(const NativeRecord &record);
 Json controlled_coverage(const ResourceImages &images, const Json &request);
 using SpatialRelationSink = std::function<void(std::size_t, std::size_t, const Rational &)>;
 Json spatial_analysis(const Json &assay, const Json &request, const SpatialRelationSink &sink = {});
@@ -74,19 +76,25 @@ Json design_aggregation(const Matrix &matrix, const Json &declaration, const Jso
                         const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
                         const std::vector<NativeAssayPartition> &partitions = {},
                         std::optional<AssayFieldsSource> *retained = nullptr);
-Json alignment_analysis(const ResourceImages &images, const Json &request);
+Json alignment_analysis(const ResourceImages &images, const Json &request,
+                        std::optional<AssayFieldsSource> *retained = nullptr);
+Json sequence_alignment_fields_view(const NativeRecord &record);
 struct SequenceRecord {
     std::string id, bases;
     Json evidence;
 };
 std::vector<SequenceRecord> sequence_records(const ResourceImage &resource);
 Json reference_matches(const ResourceImages &images, const Json &request);
-Json assembly_graph(const ResourceImage &resource, const Json &request);
+Json assembly_graph(const ResourceImage &resource, const Json &request,
+                    std::optional<AssayFieldsSource> *retained = nullptr);
+Json sequence_assembly_fields_view(const NativeRecord &record);
 Json indexed_alignment(const ResourceImages &images, const Json &request);
 Json splice_search(const ResourceImages &images, const Json &request);
 Json read_reconstruction(const ResourceImage &resource, const Json &request);
 Json query_batch(const AssayWorkspace &workspace, const Json &request,
                  const std::shared_ptr<CpuResources> &resources);
-Json constrained_allocations(const Json &request);
+Json constrained_allocations(const Json &request,
+                            std::optional<AssayFieldsSource> *retained = nullptr);
+Json constraint_fields_view(const NativeRecord &record);
 Json relational_persistence(const ScientificStudy &study, const Json &request);
 } // namespace gadget::assay_detail

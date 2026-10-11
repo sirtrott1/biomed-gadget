@@ -1,7 +1,9 @@
 #include "sequence_route_witnesses.hpp"
+#include "source_grade_fields.hpp"
 
 namespace gadget::assay_detail {
-Json alignment_analysis(const ResourceImages &images, const Json &request) {
+Json alignment_analysis(const ResourceImages &images, const Json &request,
+                        std::optional<AssayFieldsSource> *retained) {
     members(request, {"schema", "operation", "query_resource", "query_id", "reference_resource",
                       "reference_id", "scoring", "ambiguity", "mode"});
     require(request.at("mode").text() == "global_linear_gap", "alignment mode");
@@ -69,32 +71,141 @@ Json alignment_analysis(const ResourceImages &images, const Json &request) {
     const sequence::CompleteRouteWitnesses witnesses(graph, start, end);
     const auto &route = witnesses.chosen;
     const auto &potential = witnesses.prefix, &suffix = witnesses.suffix;
-    auto potentials = Json::array();
-    for (std::size_t v = 0; v < n; ++v) {
-        const auto index = graph.object_index(v + 1);
-        require(index == v, "native edit-grid source coordinate order");
-        auto p = Json::object();
-        p.set("query_prefix", cardinality(v / width));
-        p.set("reference_prefix", cardinality(v % width));
-        p.set("minimum_prefix_cost", Json::string(potential[index].get_str()));
-        p.set("minimum_suffix_cost", Json::string(suffix[index].get_str()));
-        const auto origin = [](const sequence::RouteWitnessOrigin &o) {
-            auto item = Json::object();
-            item.set("route", cardinality(o.route));
-            item.set("position", cardinality(o.position));
-            return item;
-        };
-        p.set("prefix_witness", origin(witnesses.prefix_origins[index]));
-        p.set("suffix_witness", origin(witnesses.suffix_origins[index]));
-        potentials.push(p);
-    }
     const auto boundary = rfc::field::boundary_matrix(source, rfc::core::Grade{1});
     witnesses.verify(boundary, costs, start, end);
+    std::vector<rfc::path::TraversalStep> traversal;
+    for (auto e : route.relations) traversal.push_back({e, Rational{1}});
+    const auto realization = rfc::path::realize(source, rfc::core::Grade{1}, std::move(traversal));
+    Vector demand(n, 0); demand[start] -= 1; demand[end] += 1;
+    require(realization.boundary == demand && rfc::numeric::dot(costs, realization.field) == route.distance,
+            "native ordered edit route boundary and cost");
+    Vector minimizing(steps.size(), 0), prefix_route(n), prefix_position(n), suffix_route(n), suffix_position(n);
+    std::string operations;
+    for (std::size_t e = 0; e < steps.size(); ++e) {
+        const auto &step = steps[e];
+        operations += step.operation;
+        if (potential[step.source] + costs[e] + suffix[step.target] == route.distance) minimizing[e] = 1;
+    }
+    for (std::size_t v = 0; v < n; ++v) {
+        prefix_route[v] = Rational(std::to_string(witnesses.prefix_origins[v].route));
+        prefix_position[v] = Rational(std::to_string(witnesses.prefix_origins[v].position));
+        suffix_route[v] = Rational(std::to_string(witnesses.suffix_origins[v].route));
+        suffix_position[v] = Rational(std::to_string(witnesses.suffix_origins[v].position));
+    }
+    AssayFieldsSource native{rfc::storage::TemporalEndpoint(source), {}, {}};
+    for (std::size_t k = 0; k < source.grade_count(); ++k)
+        native.endpoint.carriers.push_back({k + 1, rfc::storage::TemporalCarrierKind::SourceGrade,
+            rfc::core::Grade{static_cast<std::uint16_t>(k)}, {}, 0,
+            rfc::numeric::IndexDomain::linear(source.grade({static_cast<std::uint16_t>(k)}).cell_count())});
+    using N = NativeRecordValue;
+    const auto integer = [](std::size_t i) {return N(rfc::numeric::Integer(std::to_string(i)));};
+    SourceGradeFields store(native.endpoint);
+    N::Array fields, cell_ids, histories;
+    const auto field = [&](std::string id, std::uint16_t grade, const Vector &values,
+                           std::string quantity, std::string units) {
+        auto key = store.field(id, grade, values);
+        fields.elements.emplace_back(N::Object{{{"id", N(id)}, {"key", key},
+            {"quantity", N(quantity)}, {"units", N(units)},
+            {"method", N(std::string("Declared edit grid and exact native route witnesses"))}}});
+        return key;
+    };
+    const auto cost_key = field("step_cost", 1, costs, "declared_edit_cost", scoring.at("units").text()),
+        chosen_key = field("chosen_path", 1, realization.field, "declared_route_membership", "dimensionless"),
+        minimizing_key = field("optimal_support", 1, minimizing, "declared_route_membership", "dimensionless"),
+        prefix_key = field("minimum_prefix_cost", 0, potential, "declared_minimum_edit_cost", scoring.at("units").text()),
+        suffix_key = field("minimum_suffix_cost", 0, suffix, "declared_minimum_edit_cost", scoring.at("units").text());
+    Vector ordered_edges;
+    std::size_t begin = 0;
+    for (const auto &history : witnesses.histories) {
+        histories.elements.emplace_back(N::Object{{{"kind", N(history.kind)}, {"from_vertex", integer(history.from)},
+            {"to_vertex", integer(history.to)}, {"minimum_cost", N(history.route.distance)},
+            {"begin", integer(begin)}, {"size", integer(history.route.relations.size())}}});
+        for (auto e : history.route.relations) ordered_edges.emplace_back(std::to_string(e));
+        begin = rfc::machine::checked_size_add(begin, history.route.relations.size());
+    }
+    const auto occurrence_axis = store.explicit_carrier(ordered_edges.size());
+    rfc::numeric::ExactMatrix lift(steps.size(), ordered_edges.size());
+    for (std::size_t i = 0; i < ordered_edges.size(); ++i) lift.set(ordered_edges[i].get_num().get_ui(), i, 1);
+    N::Array vertices, relations;
+    for (std::size_t v = 0; v < n; ++v)
+        vertices.elements.emplace_back("prefix:" + std::to_string(v / width) + ":" + std::to_string(v % width));
+    for (std::size_t e = 0; e < steps.size(); ++e) relations.elements.emplace_back("edit:" + std::to_string(e));
+    cell_ids.elements.emplace_back(std::move(vertices)); cell_ids.elements.emplace_back(std::move(relations));
+    native.declaration = N(N::Object{{{"schema", N(std::string("gadget.sequence.alignment.fields.v1"))},
+        {"protocol", import_record_view(request)}, {"query_sequence", N(query)}, {"reference_sequence", N(reference)},
+        {"operations", N(operations)}, {"fields", N(std::move(fields))}, {"cell_ids", N(std::move(cell_ids))},
+        {"step_cost", cost_key}, {"chosen_path", chosen_key}, {"optimal_support", minimizing_key},
+        {"minimum_prefix_cost", prefix_key}, {"minimum_suffix_cost", suffix_key},
+        {"prefix_route", store.field("prefix_route", 0, prefix_route)},
+        {"prefix_position", store.field("prefix_position", 0, prefix_position)},
+        {"suffix_route", store.field("suffix_route", 0, suffix_route)},
+        {"suffix_position", store.field("suffix_position", 0, suffix_position)},
+        {"realized_boundary", store.field("realized_boundary", 0, realization.boundary)},
+        {"ordered_relations", store.vector("ordered_relations", occurrence_axis, ordered_edges)},
+        {"ordered_source_lift", store.map("ordered_source_lift", occurrence_axis, 2, lift)},
+        {"route_witnesses", N(std::move(histories))}}});
+    if (retained) {retained->emplace(std::move(native)); return Json::object();}
+    const auto publication = NativeRecord::create_from_endpoint(std::move(native.declaration), new_native_record_namespace(),
+        std::move(native.sources), std::move(native.endpoint));
+    return sequence_alignment_fields_view(publication);
+}
+Json sequence_alignment_fields_view(const NativeRecord &record) {
+    const auto &source = record.endpoint()->source;
+    const auto request = render_record_view(record.at("protocol"));
+    const auto query = record.at("query_sequence").text(), reference = record.at("reference_sequence").text(),
+               ambiguity = request.at("ambiguity").text(), operations = record.at("operations").text();
+    const auto scoring = request.at("scoring");
+    const auto width = reference.size() + 1, n = source.grade({0}).cell_count();
+    const auto values = [&](std::string_view key) {
+        const auto &tensor = retained_tensor(record, record.at(key)).tensor;
+        Vector result(tensor.domain().logical_size());
+        tensor.support().for_each_active([&](auto i) {result[i] = *tensor.state(i);});
+        return result;
+    };
+    const auto costs = values("step_cost"), potential = values("minimum_prefix_cost"), suffix = values("minimum_suffix_cost"),
+        chosen = values("chosen_path"), minimizing = values("optimal_support"), ordered = values("ordered_relations"),
+        prefix_route = values("prefix_route"), prefix_position = values("prefix_position"),
+        suffix_route = values("suffix_route"), suffix_position = values("suffix_position");
+    struct Step {std::size_t source, target; char operation;};
+    std::vector<Step> steps;
+    const auto &grade = source.grade({1});
+    for (std::size_t e = 0; e < grade.cell_count(); ++e) {
+        const auto [begin, end] = grade.incidence_range(e);
+        require(end - begin == 2, "retained edit step incidence");
+        steps.push_back({grade.lower_index[begin], grade.lower_index[begin + 1], operations.at(e)});
+    }
+    auto histories = Json::array();
+    std::vector<std::uint32_t> chosen_relations;
+    for (std::size_t h = 0; h < record.at("route_witnesses").size(); ++h) {
+        const auto history = record.at("route_witnesses").at(h);
+        auto item = Json::object(), relations = Json::array();
+        const auto begin = history.at("begin").integer().get_ui(), size = history.at("size").integer().get_ui();
+        for (std::size_t i = begin; i < begin + size; ++i) {
+            const auto e = ordered.at(i).get_num().get_ui();
+            relations.push(cardinality(e)); if (h == 0) chosen_relations.push_back(e);
+        }
+        for (const auto *name : {"kind", "from_vertex", "to_vertex", "minimum_cost"}) item.set(name, render_record_view(history.at(name)));
+        item.set("ordered_relations", relations); histories.push(item);
+    }
+    const auto distance = record.at("route_witnesses").at(0).at("minimum_cost").rational();
+    auto potentials = Json::array();
+    for (std::size_t v = 0; v < n; ++v) {
+        auto p = Json::object();
+        p.set("query_prefix", cardinality(v / width)); p.set("reference_prefix", cardinality(v % width));
+        p.set("minimum_prefix_cost", Json::string(potential[v].get_str()));
+        p.set("minimum_suffix_cost", Json::string(suffix[v].get_str()));
+        const auto origin = [&](const Rational &route, const Rational &position) {
+            auto out = Json::object(); out.set("route", cardinality(route.get_num().get_ui()));
+            out.set("position", cardinality(position.get_num().get_ui())); return out;
+        };
+        p.set("prefix_witness", origin(prefix_route[v], prefix_position[v]));
+        p.set("suffix_witness", origin(suffix_route[v], suffix_position[v])); potentials.push(p);
+    }
     auto path = Json::array(), all_optimal = Json::array();
     std::set<std::size_t> optimal_indices,
-        chosen_indices(route.relations.begin(), route.relations.end());
+        chosen_indices(chosen_relations.begin(), chosen_relations.end());
     std::string aligned_query, aligned_reference;
-    for (auto relation : route.relations) {
+    for (auto relation : chosen_relations) {
         const auto &s = steps[relation];
         const auto i = s.source / width, j = s.source % width;
         aligned_query += s.operation == 'D' ? '-' : query[i];
@@ -109,8 +220,7 @@ Json alignment_analysis(const ResourceImages &images, const Json &request) {
     }
     for (std::size_t k = 0; k < steps.size(); ++k) {
         const auto &s = steps[k];
-        const auto from = graph.object_index(s.source + 1), to = graph.object_index(s.target + 1);
-        if (potential[from] + costs[k] + suffix[to] != route.distance)
+        if (minimizing[k] == 0)
             continue;
         optimal_indices.insert(k);
         auto p = Json::object();
@@ -128,7 +238,7 @@ Json alignment_analysis(const ResourceImages &images, const Json &request) {
     out.set("reference_sequence", Json::string(reference));
     out.set("aligned_query", Json::string(aligned_query));
     out.set("aligned_reference", Json::string(aligned_reference));
-    out.set("minimum_cost", Json::string(route.distance.get_str()));
+    out.set("minimum_cost", Json::string(distance.get_str()));
     out.set("compatibility_rule",
             Json::string(ambiguity == "literal"    ? "equal_tokens"
                          : ambiguity == "possible" ? "nonempty_IUPAC_intersection"
@@ -138,10 +248,17 @@ Json alignment_analysis(const ResourceImages &images, const Json &request) {
     out.set("prefix_suffix_witnesses", potentials);
     out.set("primal_dual_verified", Json::boolean(true));
     out.set("suffix_dual_verified", Json::boolean(true));
-    out.set("route_witnesses", witnesses.histories);
-    out.set("native_route_calls", cardinality(witnesses.histories.size()));
-    out.set("realized_path",
-            sequence::realized_receipt(source, routes, route.relations, 0, n - 1, route.distance));
+    out.set("route_witnesses", histories);
+    out.set("native_route_calls", cardinality(histories.size()));
+    auto realized = Json::object(), realized_field = Json::array(), realized_order = Json::array();
+    for (auto e : chosen_relations) realized_order.push(cardinality(e));
+    for (std::size_t e = 0; e < chosen.size(); ++e) if (chosen[e] != 0) {
+        auto value = Json::object(); value.set("relation", cardinality(e));
+        value.set("coefficient", Json::string(chosen[e].get_str())); realized_field.push(value);
+    }
+    realized.set("ordered_relations", realized_order); realized.set("realized_field", realized_field);
+    realized.set("boundary_verified", Json::boolean(true)); realized.set("cost_verified", Json::boolean(true));
+    out.set("realized_path", realized);
     out.set("vertices", cardinality(n));
     out.set("relations", cardinality(steps.size()));
     out.set("native_complex_sha256",

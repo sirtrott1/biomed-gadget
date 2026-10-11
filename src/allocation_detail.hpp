@@ -16,7 +16,9 @@ struct Problem {
     std::vector<std::string> senses;
     ExactMatrix constraints, objective;
     Integer declared_box{1};
+    Problem() = default;
     explicit Problem(const Json &request);
+    void validate() const;
 };
 struct Block {
     std::vector<std::size_t> parameters, variables, inequalities;
@@ -33,8 +35,15 @@ struct Factors {
     std::size_t equality_rank{};
     Json equality_origins = Json::array(), inequality_origins = Json::array();
     Json carrier, contradiction = Json::object();
+    std::optional<rfc::core::RelationalComplex> source;
+    Vector contradiction_left;
     bool consistent{true};
     explicit Factors(const Problem &problem);
     Json certificate(const Problem &problem) const;
 };
+struct Result {
+    AssayFieldsSource fields;
+    std::optional<Rational> optimum;
+};
+Result solve_fields(const Problem &problem);
 } // namespace gadget::assay_detail::allocation_detail

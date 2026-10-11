@@ -95,6 +95,35 @@ Problem::Problem(const Json &request) : declaration(request) {
         objective.set(0, j, values[j]);
 }
 
+void Problem::validate() const {
+    require(domain == "bounded_integer" || domain == "bounded_rational", "allocation domain");
+    require(direction == "minimize" || direction == "maximize", "allocation objective sense");
+    const auto n = lower.size(), m = rhs.size();
+    require(n > 0 && n <= std::numeric_limits<std::uint32_t>::max() &&
+                m <= std::numeric_limits<std::uint32_t>::max(),
+            "allocation native cell coordinate representation");
+    require(upper.size() == n && names.size() == n && constraints.cols() == n &&
+                constraints.rows() == m && senses.size() == m && objective.rows() == 1 &&
+                objective.cols() == n, "typed allocation source shape");
+    Integer box{1};
+    std::set<std::string> ids;
+    for (std::size_t i = 0; i < n; ++i) {
+        require(ids.insert(text(names.at(i), source_byte_limit())).second,
+                "duplicate allocation variable");
+        require(lower[i] <= upper[i], "allocation variable bounds");
+        if (domain == "bounded_integer") {
+            require(lower[i].get_den() == 1 && upper[i].get_den() == 1,
+                    "integer allocation requires integer bounds");
+            const Rational width = upper[i] - lower[i] + 1;
+            box *= width.get_num();
+        }
+    }
+    require(domain != "bounded_integer" || declared_box == box, "typed allocation box count");
+    for (const auto &sense : senses)
+        require(sense == "eq" || sense == "le" || sense == "ge", "allocation constraint sense");
+    (void)text(declaration.at("units"), source_byte_limit());
+    (void)text(declaration.at("evidence"), source_byte_limit());
+}
 namespace {
 Json origin(const std::string &kind, std::size_t index) {
     auto out = Json::object();
@@ -108,12 +137,13 @@ Json index_json(const std::vector<std::size_t> &indices) {
         out.push(cardinality(i));
     return out;
 }
-Json source_carrier(const Problem &p) {
+Json source_carrier(const Problem &p, std::optional<rfc::core::RelationalComplex> &retained) {
     rfc::core::RelationSignature signature;
     std::map<std::string, rfc::core::RelationTypeId> types;
     for (const auto *sense : {"eq", "le", "ge"})
         types.emplace(sense, signature.add_type(std::string("declared.allocation.linear.") + sense));
     rfc::core::RelationalComplexBuilder builder(signature);
+    builder.declare_grade(rfc::core::Grade{1});
     const auto n = p.constraints.cols(), m = p.constraints.rows();
     for (std::size_t j = 0; j < n; ++j)
         builder.declare_witness_identity(j + 1);
@@ -131,6 +161,7 @@ Json source_carrier(const Problem &p) {
         builder.add_grade_one(rfc::core::RelationKey{i + 1}, types.at(p.senses[i]), slots);
     }
     const auto complex = builder.freeze();
+    retained.emplace(complex);
     if (m)
         require(rfc::field::materialize_boundary_matrix(complex, {1}) == p.constraints.transpose(),
                 "native allocation source boundary residual");
@@ -148,7 +179,7 @@ Json source_carrier(const Problem &p) {
 } // namespace
 
 Factors::Factors(const Problem &p) {
-    carrier = source_carrier(p);
+    carrier = source_carrier(p, source);
     const auto n = p.constraints.cols(), m = p.constraints.rows();
     std::vector<std::size_t> eq_rows, fixed;
     for (std::size_t i = 0; i < m; ++i)
@@ -196,6 +227,7 @@ Factors::Factors(const Problem &p) {
                         "native left-null contradiction residual");
                 contradiction.set("kind", Json::string("inconsistent_equalities"));
                 contradiction.set("left_null_vector", vector_json(lambda));
+                contradiction_left = lambda;
                 contradiction.set("rhs_action", Json::string(value.get_str()));
                 return;
             }

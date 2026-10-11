@@ -5,10 +5,15 @@ namespace gadget::assay_detail::sequence {
 struct RouteWitnessOrigin {
     std::size_t route{}, position{};
 };
+struct RouteWitness {
+    rfc::path::RouteResult route;
+    std::uint32_t from{}, to{};
+    std::string kind;
+};
 struct CompleteRouteWitnesses {
     Vector prefix, suffix;
     std::vector<RouteWitnessOrigin> prefix_origins, suffix_origins;
-    Json histories = Json::array();
+    std::vector<RouteWitness> histories;
     rfc::path::RouteResult chosen;
     std::vector<bool> suffix_reachable;
     std::vector<std::size_t> unreachable_suffix_vertices;
@@ -30,7 +35,6 @@ struct CompleteRouteWitnesses {
                                 std::uint32_t to, const std::string &kind) {
             require(route.reachable, "complete native route witness reachability");
             const auto witness = histories.size();
-            auto history = Json::object(), relations = Json::array();
             std::vector<std::uint32_t> points{from};
             Vector costs{Rational{0}};
             require(route.projected_edges.size() == route.relations.size(),
@@ -44,7 +48,6 @@ struct CompleteRouteWitnesses {
                 // Scalars are canonical SDK rationals. The route, source lift
                 // and dual action remain native; this records its contraction.
                 costs.push_back(costs.back() + edge.measure);
-                relations.push(cardinality(edge.source_relation));
             }
             require(points.back() == to && costs.back() == route.distance,
                     "native route endpoint and cost witness");
@@ -70,12 +73,7 @@ struct CompleteRouteWitnesses {
                     }
                 }
             }
-            history.set("kind", Json::string(kind));
-            history.set("from_vertex", cardinality(from));
-            history.set("to_vertex", cardinality(to));
-            history.set("minimum_cost", Json::string(route.distance.get_str()));
-            history.set("ordered_relations", relations);
-            histories.push(history);
+            histories.push_back({route, from, to, kind});
         };
         chosen = initial ? std::move(*initial) : rfc::path::dijkstra_exact(graph, start, end);
         record(chosen, start, end, "pair");
@@ -99,6 +97,19 @@ struct CompleteRouteWitnesses {
                                                      [](bool v) { return v; })),
                 "complete native prefix and suffix witnesses");
         suffix_reachable = std::move(suffix_known);
+    }
+    Json histories_view() const {
+        auto out = Json::array();
+        for (const auto &history : histories) {
+            auto item = Json::object(), relations = Json::array();
+            item.set("kind", Json::string(history.kind));
+            item.set("from_vertex", cardinality(history.from));
+            item.set("to_vertex", cardinality(history.to));
+            item.set("minimum_cost", Json::string(history.route.distance.get_str()));
+            for (auto e : history.route.relations) relations.push(cardinality(e));
+            item.set("ordered_relations", relations); out.push(item);
+        }
+        return out;
     }
     void verify(const rfc::numeric::ExactMatrix &boundary, const Vector &costs, std::uint32_t start,
                 std::uint32_t end) const {
@@ -158,16 +169,13 @@ struct CompleteRouteWitnesses {
         }
         const auto prefix_action = boundary.transpose().apply(prefix),
                    suffix_action = boundary.transpose().apply(negative_suffix);
-        for (std::size_t i = 0; i < histories.size(); ++i) {
-            const auto history = histories.at(i);
-            for (std::size_t k = 0; k < history.at("ordered_relations").size(); ++k) {
-                const auto e = history.at("ordered_relations").at(k).integer();
-                if (history.at("from_vertex").integer() == start)
+        for (const auto &history : histories)
+            for (const auto e : history.route.relations) {
+                if (history.from == start)
                     require(prefix_action.at(e) == costs.at(e), "tight native prefix witness");
-                if (history.at("to_vertex").integer() == end)
+                if (history.to == end)
                     require(suffix_action.at(e) == costs.at(e), "tight native suffix witness");
             }
-        }
     }
 };
 } // namespace gadget::assay_detail::sequence

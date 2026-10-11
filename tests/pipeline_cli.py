@@ -49,7 +49,7 @@ recipe_schemas=json.loads((schema_root/'pipeline-default.schema.json').read_text
 recipe_schemas={entry['properties']['method']['const']:entry for entry in recipe_schemas}
 assert set(recipe_schemas)=={recipe['method'] for recipe in profiles['recipes']}
 for recipe in profiles['recipes']:
-    assert recipe['native_materialization'] == (recipe['operation'] in ['controlled_coverage','spatial_relations','feature_counts','expression_allocations','aggregate_assay','design_aggregation','variant_genotypes','chromatin_contrast','assay_sections'])
+    assert recipe['native_materialization'] == (recipe['operation'] in ['controlled_coverage','spatial_relations','feature_counts','expression_allocations','aggregate_assay','design_aggregation','variant_genotypes','chromatin_contrast','assay_sections','constrained_allocations','exact_sequence_alignment','sequence_assembly_graph'])
     parameters=recipe_schemas[recipe['method']]['properties']['parameters']
     refs=[value['$ref'] for value in parameters.get('properties',{}).values() if '$ref' in value]
     for ref in refs:

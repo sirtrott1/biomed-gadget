@@ -259,7 +259,7 @@ def main():
     originals=['alignment-source','alignment-source-queries.fa','alignment-source-reference.fa','alignment-source-import.json']
     for name in originals:shutil.move(root/name,withheld/name)
     try:
-        replay=run('replay-derivation','--workspace',root/'derived/workspace.json','--assay','alignment-fields','--out',root/'replayed')
+        replay=run('replay-derivation','--workspace',root/'derived/workspace.rfcxs','--assay','alignment-fields','--out',root/'replayed')
         check(replay['status']=='PASS','complete larger alignment replays with original workspace, source files and import declaration unavailable')
         save('replay.json',replay)
     finally:

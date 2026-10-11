@@ -1,4 +1,5 @@
 #include "genomic_detail.hpp"
+#include "allocation_detail.hpp"
 #include "source_grade_fields.hpp"
 #include <algorithm>
 #include <gadget/record_view.hpp>
@@ -117,192 +118,240 @@ struct Measure {
     Vector coefficients;
 };
 
-Json coupled_expression(const Json &allocation, const Json &declaration,
-                        const std::shared_ptr<CpuResources> &resources) {
+
+NativeRecordValue &member(NativeRecordValue &value, std::string_view name) {
+    for (auto &entry : std::get<NativeRecordValue::Object>(value.data).members)
+        if (entry.first == name) return entry.second;
+    throw std::invalid_argument("native expression declaration member absent");
+}
+NativeRecordValue coupled_expression(const Json &allocation, const Json &declaration,
+    const std::vector<Vector> &counts, AssayFieldsSource &native,
+    const std::shared_ptr<CpuResources> &resources, const NativeRecord *previous) {
+    using N = NativeRecordValue;
+    using allocation_detail::Problem;
     members(declaration, {"constraints", "witness_representation", "evidence"});
     (void)label(declaration.at("evidence"));
     const auto samples = allocation.at("samples"), classes = allocation.at("classes"),
                targets = allocation.at("targets"), contrasts = allocation.at("contrasts");
     std::map<std::string, std::size_t> sample_ids, target_ids;
     std::vector<std::set<std::string>> target_members;
-    std::vector<Rational> scales;
-    for (std::size_t s = 0; s < samples.size(); ++s) {
-        sample_ids.emplace(label(samples.at(s).at("id")), s);
-        scales.push_back(exact_rational(label(samples.at(s).at("scale"))));
+    Vector scales;
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        sample_ids.emplace(label(samples.at(i).at("id")), i);
+        scales.push_back(exact_rational(label(samples.at(i).at("scale"))));
     }
-    for (std::size_t t = 0; t < targets.size(); ++t) {
-        target_ids.emplace(label(targets.at(t).at("id")), t);
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        target_ids.emplace(label(targets.at(i).at("id")), i);
         std::set<std::string> members;
-        for (std::size_t i = 0; i < targets.at(t).at("candidates").size(); ++i)
-            members.insert(label(targets.at(t).at("candidates").at(i)));
+        for (std::size_t j = 0; j < targets.at(i).at("candidates").size(); ++j)
+            members.insert(label(targets.at(i).at("candidates").at(j)));
         target_members.push_back(std::move(members));
     }
+    Problem problem;
+    problem.domain = "bounded_integer";
+    problem.names = Json::array();
     auto variables = Json::array(), origins = Json::array(), rows = Json::array();
     std::vector<std::vector<std::size_t>> conservation;
-    std::vector<Rational> totals;
+    Vector totals;
     std::vector<std::pair<std::size_t, std::string>> coordinates;
-    for (std::size_t s = 0; s < samples.size(); ++s)
+    std::vector<std::size_t> class_indices;
+    for (std::size_t i = 0; i < samples.size(); ++i)
         for (std::size_t c = 0; c < classes.size(); ++c) {
             std::vector<std::size_t> columns;
-            const auto total = samples.at(s).at("counts").at(c);
-            const auto members = classes.at(c).at("candidates");
-            for (std::size_t i = 0; i < members.size(); ++i) {
-                const auto id = Json::string("allocation:" + std::to_string(s) + ":" +
-                                             std::to_string(c) + ":" + std::to_string(i));
+            const auto candidates = classes.at(c).at("candidates");
+            for (std::size_t j = 0; j < candidates.size(); ++j) {
+                const auto id = "allocation:" + std::to_string(i) + ":" +
+                                std::to_string(c) + ":" + std::to_string(j);
                 auto v = Json::object(), origin = Json::object();
-                v.set("id", id);
-                v.set("lower", Json::string("0"));
-                v.set("upper", total);
-                columns.push_back(variables.size());
-                variables.push(v);
-                coordinates.emplace_back(s, label(members.at(i)));
-                origin.set("id", id);
-                origin.set("sample", samples.at(s).at("id"));
-                origin.set("class", classes.at(c).at("id"));
-                origin.set("candidate", members.at(i));
+                v.set("id", Json::string(id)); variables.push(v); problem.names.push(v.at("id"));
+                columns.push_back(problem.lower.size());
+                problem.lower.emplace_back(0); problem.upper.push_back(counts.at(i).at(c));
+                const Rational width = counts.at(i).at(c) + 1;
+                problem.declared_box *= width.get_num();
+                coordinates.emplace_back(i, label(candidates.at(j)));
+                class_indices.push_back(c);
+                origin.set("id", v.at("id")); origin.set("sample", samples.at(i).at("id"));
+                origin.set("class", classes.at(c).at("id")); origin.set("candidate", candidates.at(j));
                 origins.push(origin);
             }
-            conservation.push_back(std::move(columns));
-            totals.push_back(exact_rational(label(total)));
+            conservation.push_back(std::move(columns)); totals.push_back(counts.at(i).at(c));
         }
-    const auto n = variables.size();
+    const auto n = problem.lower.size();
     ExactMatrix target_map(rfc::machine::checked_size_mul(samples.size(), targets.size()), n);
     for (std::size_t j = 0; j < n; ++j)
         for (std::size_t t = 0; t < targets.size(); ++t)
             if (target_members[t].contains(coordinates[j].second))
                 target_map.set(coordinates[j].first * targets.size() + t, j, 1);
-    const auto target_transpose = target_map.transpose();
-    const auto row = [&](std::size_t i) {
-        Vector selector(target_map.rows(), 0);
-        selector.at(i) = 1;
-        return target_transpose.apply(selector);
+    const auto transpose = target_map.transpose();
+    const auto target_row = [&](std::size_t i) {
+        Vector selector(target_map.rows(), 0); selector.at(i) = 1;
+        return transpose.apply(selector);
     };
+    const auto declared = declaration.at("constraints");
+    problem.constraints = ExactMatrix(rfc::machine::checked_size_add(conservation.size(), declared.size()), n);
     for (std::size_t i = 0; i < conservation.size(); ++i) {
-        Vector coefficients(n, 0);
-        for (auto j : conservation[i])
-            coefficients[j] = 1;
-        auto r = Json::object();
-        r.set("id", Json::string("conservation:" + std::to_string(i)));
-        r.set("coefficients", values(coefficients));
-        r.set("sense", Json::string("eq"));
-        r.set("rhs", Json::string(totals[i].get_str()));
-        rows.push(r);
+        for (auto j : conservation[i]) problem.constraints.set(i, j, 1);
+        problem.senses.emplace_back("eq"); problem.rhs.push_back(totals[i]);
+        auto row = Json::object(); row.set("id", Json::string("conservation:" + std::to_string(i))); rows.push(row);
     }
     std::set<std::string> constraint_ids;
-    const auto declared = declaration.at("constraints");
     for (std::size_t i = 0; i < declared.size(); ++i) {
-        const auto r = declared.at(i);
-        members(r, {"id", "terms", "sense", "rhs", "evidence"});
-        require(constraint_ids.insert(label(r.at("id"))).second,
-                "duplicate expression constraint identity");
-        (void)label(r.at("evidence"));
+        const auto row = declared.at(i);
+        members(row, {"id", "terms", "sense", "rhs", "evidence"});
+        require(constraint_ids.insert(label(row.at("id"))).second, "duplicate expression constraint identity");
+        (void)label(row.at("evidence"));
         Vector coefficients(n, 0);
-        for (std::size_t k = 0; k < r.at("terms").size(); ++k) {
-            const auto term = r.at("terms").at(k);
+        for (std::size_t j = 0; j < row.at("terms").size(); ++j) {
+            const auto term = row.at("terms").at(j);
             members(term, {"sample", "target", "coefficient"});
-            require(sample_ids.contains(label(term.at("sample"))) &&
-                        target_ids.contains(label(term.at("target"))),
+            require(sample_ids.contains(label(term.at("sample"))) && target_ids.contains(label(term.at("target"))),
                     "coupling term requires declared sample and target");
-            coefficients = rfc::numeric::add(
-                coefficients,
+            coefficients = rfc::numeric::add(coefficients,
                 rfc::numeric::scale(exact_rational(label(term.at("coefficient"))),
-                                    row(sample_ids.at(label(term.at("sample"))) * targets.size() +
-                                        target_ids.at(label(term.at("target"))))));
+                    target_row(sample_ids.at(label(term.at("sample"))) * targets.size() +
+                               target_ids.at(label(term.at("target"))))));
         }
-        auto translated = Json::object();
-        translated.set("id", Json::string("declared:" + label(r.at("id"))));
-        translated.set("coefficients", values(coefficients));
-        translated.set("sense", r.at("sense"));
-        translated.set("rhs", r.at("rhs"));
-        rows.push(translated);
+        for (std::size_t j = 0; j < n; ++j) problem.constraints.set(conservation.size() + i, j, coefficients[j]);
+        problem.senses.push_back(label(row.at("sense"))); problem.rhs.push_back(exact_rational(label(row.at("rhs"))));
+        auto translated = Json::object(); translated.set("id", Json::string("declared:" + label(row.at("id")))); rows.push(translated);
     }
+    problem.declaration = Json::object();
+    for (const auto &[name, value] : std::vector<std::pair<std::string, std::string>>{
+            {"schema", "gadget.assays.query.v1"}, {"operation", "constrained_allocations"}, {"domain", problem.domain}})
+        problem.declaration.set(name, Json::string(value));
+    problem.declaration.set("variables", variables); problem.declaration.set("constraints", rows);
+    problem.declaration.set("units", allocation.at("units")); problem.declaration.set("evidence", declaration.at("evidence"));
+    problem.declaration.set("witness_representation", declaration.at("witness_representation"));
+    problem.declaration.set("typed_source", Json::boolean(true));
     std::vector<Measure> measures;
-    auto sample_results = Json::array(), contrast_results = Json::array();
-    for (std::size_t s = 0; s < samples.size(); ++s) {
-        auto item = Json::object();
-        item.set("id", samples.at(s).at("id"));
-        item.set("bounds", Json::array());
-        sample_results.push(item);
+    for (std::size_t i = 0; i < samples.size(); ++i)
         for (std::size_t t = 0; t < targets.size(); ++t)
-            measures.push_back({targets.at(t).at("id"), s, t, false,
-                                rfc::numeric::scale(scales[s], row(s * targets.size() + t))});
-    }
+            measures.push_back({targets.at(t).at("id"), i, t, false,
+                rfc::numeric::scale(scales[i], target_row(i * targets.size() + t))});
     for (std::size_t c = 0; c < contrasts.size(); ++c) {
-        const auto item = contrasts.at(c);
-        auto result = Json::parse(item.dump());
-        result.set("bounds", Json::array());
-        contrast_results.push(result);
-        const auto l = sample_ids.at(label(item.at("left"))),
-                   r = sample_ids.at(label(item.at("right")));
+        const auto contrast = contrasts.at(c);
+        const auto left = sample_ids.at(label(contrast.at("left"))), right = sample_ids.at(label(contrast.at("right")));
         for (std::size_t t = 0; t < targets.size(); ++t)
-            measures.push_back(
-                {targets.at(t).at("id"), c, t, true,
-                 rfc::numeric::sub(rfc::numeric::scale(scales[l], row(l * targets.size() + t)),
-                                   rfc::numeric::scale(scales[r], row(r * targets.size() + t)))});
+            measures.push_back({targets.at(t).at("id"), c, t, true,
+                rfc::numeric::sub(rfc::numeric::scale(scales[left], target_row(left * targets.size() + t)),
+                                  rfc::numeric::scale(scales[right], target_row(right * targets.size() + t)))});
     }
-    auto problem = Json::object();
-    problem.set("schema", Json::string("gadget.assays.query.v1"));
-    problem.set("operation", Json::string("constrained_allocations"));
-    problem.set("domain", Json::string("bounded_integer"));
-    problem.set("variables", variables);
-    problem.set("constraints", rows);
-    problem.set("units", allocation.at("units"));
-    problem.set("evidence", declaration.at("evidence"));
-    problem.set("witness_representation", declaration.at("witness_representation"));
-    std::map<std::string, Json> solved_requests;
-    auto certificates = Json::array(), out = Json::object();
-    out.set("variable_origins", origins);
-    out.set("declaration", declaration);
-    for (const auto &m : measures) {
-        Rational low{0}, high{0};
+    SourceGradeFields store(native.endpoint);
+    const auto assignment_axis = store.explicit_carrier(n), output_axis = store.explicit_carrier(target_map.rows());
+    const auto target_map_key = store.map("coupled.target_map", assignment_axis, output_axis, target_map);
+    std::map<std::string, std::size_t> candidate_indices;
+    const auto candidate_ids = allocation.at("candidates");
+    for (std::size_t i = 0; i < candidate_ids.size(); ++i) candidate_indices.emplace(label(candidate_ids.at(i)), i);
+    ExactMatrix candidate_map(native.endpoint.source.grade({0}).cell_count(), n),
+                class_map(native.endpoint.source.grade({1}).cell_count(), n);
+    Vector sample_coordinates, variable_coordinates;
+    for (std::size_t j = 0; j < n; ++j) {
+        candidate_map.set(candidate_indices.at(coordinates[j].second), j, 1);
+        class_map.set(class_indices[j], j, 1);
+        sample_coordinates.emplace_back(std::to_string(coordinates[j].first));
+        variable_coordinates.emplace_back(std::to_string(j));
+    }
+    const auto candidate_map_key = store.map("coupled.assignment_candidates", assignment_axis, 1, candidate_map),
+        class_map_key = store.map("coupled.assignment_classes", assignment_axis, 2, class_map),
+        sample_coordinates_key = store.vector("coupled.assignment_samples", assignment_axis, sample_coordinates),
+        variable_coordinates_key = store.vector("coupled.solver_variables", assignment_axis, variable_coordinates);
+
+    struct Solved { std::size_t index; std::optional<Rational> optimum; };
+    std::map<std::pair<bool, Vector>, Solved> solved;
+    N::Array solvers, certificates, sample_bounds, contrast_bounds;
+    Vector sample_lower(target_map.rows()), sample_upper(target_map.rows()),
+           contrast_lower(rfc::machine::checked_size_mul(contrasts.size(), targets.size())),
+           contrast_upper(contrast_lower.size());
+    bool feasible = true;
+    for (const auto &measure : measures) {
         for (bool maximize : {false, true}) {
-            auto objective = Json::object();
-            objective.set("sense", Json::string(maximize ? "maximize" : "minimize"));
-            objective.set("coefficients", values(m.coefficients));
-            problem.set("objective", objective);
-            const auto request_bytes = problem.dump();
-            if (!solved_requests.contains(request_bytes)) {
+            const auto identity = std::make_pair(maximize, measure.coefficients);
+            if (!solved.contains(identity)) {
+                problem.direction = maximize ? "maximize" : "minimize";
+                auto objective = Json::object(); objective.set("sense", Json::string(problem.direction));
+                problem.declaration.set("objective", objective);
+                problem.objective = ExactMatrix(1, n);
+                for (std::size_t j = 0; j < n; ++j) problem.objective.set(0, j, measure.coefficients[j]);
                 auto reservation = resources->reserve(1);
-                solved_requests.emplace(request_bytes, constrained_allocations(problem));
+                auto result = allocation_detail::solve_fields(problem);
+                const auto index = solvers.elements.size();
+                const auto ns = previous ? NativeRecord::decode(previous->at("solvers").at(index).at("constraint_publication").bytes()).source_namespace()
+                                         : new_native_record_namespace();
+                const auto publication = NativeRecord::create_from_endpoint(std::move(result.fields.declaration), ns,
+                    std::move(result.fields.sources), std::move(result.fields.endpoint));
+                const auto key = static_cast<std::uint64_t>(native.sources.size() + 1);
+                auto owner = publication.archive_source(key); const auto size = owner.bytes().size();
+                native.sources.push_back(std::move(owner));
+                solvers.elements.emplace_back(N::Object{{{"constraint_publication", N(N::ByteSpan{key, 0, size, false})},
+                    {"variable_binding", N(N::Object{{{"source_namespace", N(rfc::numeric::Integer(std::to_string(ns)))},
+                        {"grade", N(rfc::numeric::Integer(0))}, {"source_coordinates", variable_coordinates_key},
+                        {"meaning", N(std::string("Original ordered assignment variables of this solver source"))}}})}}});
+                solved.emplace(identity, Solved{index, result.optimum});
             }
-            const auto solved = solved_requests.at(request_bytes);
-            auto certificate = Json::object();
-            certificate.set("request", Json::parse(problem.dump()));
-            certificate.set("result", solved);
-            certificate.set("kind", Json::string(m.contrast ? "contrast" : "sample"));
-            certificate.set("output_index", cardinality(m.output));
-            certificate.set("target_index", cardinality(m.target));
-            certificates.push(certificate);
-            if (solved.at("status").text() == "infeasible") {
-                out.set("status", Json::string("infeasible"));
-                out.set("certificates", certificates);
-                out.set("samples", Json::array());
-                out.set("contrasts", Json::array());
-                return out;
-            }
-            (maximize ? high : low) = exact_rational(label(solved.at("minimum_or_maximum")));
+            const auto &result = solved.at(identity);
+            certificates.elements.emplace_back(N::Object{{{"solver", N(rfc::numeric::Integer(std::to_string(result.index)))},
+                {"kind", N(std::string(measure.contrast ? "contrast" : "sample"))},
+                {"output_index", N(rfc::numeric::Integer(std::to_string(measure.output)))},
+                {"target_index", N(rfc::numeric::Integer(std::to_string(measure.target)))}}});
+            if (!result.optimum) {feasible = false; break;}
+            auto &values = measure.contrast ? (maximize ? contrast_upper : contrast_lower)
+                                            : (maximize ? sample_upper : sample_lower);
+            values.at(measure.output * targets.size() + measure.target) = *result.optimum;
         }
-        auto item = (m.contrast ? contrast_results : sample_results).at(m.output);
-        item.at("bounds").push(bound(m.id, low, high, m.contrast));
+        if (!feasible) break;
     }
-    out.set("status", Json::string("feasible"));
-    out.set("samples", sample_results);
-    out.set("contrasts", contrast_results);
-    out.set("certificates", certificates);
-    out.set(
-        "constraint_units",
-        Json::string(
-            "Unscaled assigned counts; positive sample scales apply only to output observables"));
-    return out;
+    if (previous) require(previous->at("solvers").size() == solvers.elements.size(), "replayed coupled solver family differs");
+    const auto &coordinates_tensor = std::get<rfc::numeric::SparseRationalTensor>(member(native.declaration, "target_coordinates").data);
+    std::vector<std::size_t> target_coordinates;
+    for (std::size_t t = 0; t < targets.size(); ++t)
+        target_coordinates.push_back(coordinates_tensor.state(t)->get_num().get_ui());
+    const auto source_size = native.endpoint.source.grade({0}).cell_count();
+    const auto field = [&](std::string name, const Vector &values, std::size_t begin) {
+        Vector mapped(source_size);
+        if (feasible)
+            for (std::size_t t = 0; t < target_coordinates.size(); ++t) mapped.at(target_coordinates[t]) = values.at(begin + t);
+        auto active = target_coordinates; std::sort(active.begin(), active.end());
+        active.erase(std::unique(active.begin(), active.end()), active.end());
+        if (!feasible) active.clear();
+        return store.column(std::move(name), 0, source_size, [&](auto i) {return mapped[i];},
+            rfc::numeric::StructuralSupport::sparse(source_size, std::move(active)));
+    };
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        const auto prefix = "coupled.sample:" + std::to_string(i);
+        sample_bounds.elements.emplace_back(N::Object{{{"id", N(label(samples.at(i).at("id")))},
+            {"lower", field(prefix + ".lower", sample_lower, i * targets.size())},
+            {"upper", field(prefix + ".upper", sample_upper, i * targets.size())}}});
+    }
+    for (std::size_t i = 0; i < contrasts.size(); ++i) {
+        const auto prefix = "coupled.contrast:" + std::to_string(i);
+        N::Object item;
+        for (const auto *name : {"id", "left", "right"}) item.members.emplace_back(name, import_record_view(contrasts.at(i).at(name)));
+        item.members.emplace_back("lower", field(prefix + ".lower", contrast_lower, i * targets.size()));
+        item.members.emplace_back("upper", field(prefix + ".upper", contrast_upper, i * targets.size()));
+        contrast_bounds.elements.emplace_back(std::move(item));
+    }
+    return N(N::Object{{{"status", N(std::string(feasible ? "feasible" : "infeasible"))},
+        {"variable_origins", import_record_view(origins)}, {"declaration", import_record_view(declaration)},
+        {"target_map", target_map_key}, {"assignment_candidates", candidate_map_key},
+        {"assignment_classes", class_map_key}, {"assignment_samples", sample_coordinates_key},
+        {"solvers", N(std::move(solvers))},
+        {"certificates", N(std::move(certificates))}, {"samples", N(std::move(sample_bounds))},
+        {"contrasts", N(std::move(contrast_bounds))}}});
 }
+
 } // namespace
 
 Json expression_allocations(const ResourceImages &images, const Json &request,
                             std::shared_ptr<CpuResources> resources,
-                            std::optional<AssayFieldsSource> *retained) {
+                            std::optional<AssayFieldsSource> *retained, const NativeRecord *previous_coupling) {
     using N = NativeRecordValue;
-    require(!retained || !request.has("coupling"),
-            "coupled expression has no native field producer");
+    if (!retained) {
+        std::optional<AssayFieldsSource> fields;
+        expression_allocations(images, request, resources, &fields);
+        const auto publication = NativeRecord::create_from_endpoint(std::move(fields->declaration),
+            new_native_record_namespace(), std::move(fields->sources), std::move(fields->endpoint));
+        return expression_fields_view(publication);
+    }
     members(request,
             {"schema", "operation", "samples", "evidence_source", "targets", "contrasts",
              "map_evidence"},
@@ -475,12 +524,15 @@ Json expression_allocations(const ResourceImages &images, const Json &request,
     allocation.set("candidate_search", search);
     if (request.has("kernel_certificate"))
         allocation.set("kernel_certificate", request.at("kernel_certificate"));
-    const auto certificate =
-        allocation_analysis(allocation, resources, retained, &shared_counts, true);
+    (void)allocation_analysis(allocation, resources, retained, &shared_counts, true);
     if (retained) {
         require(retained->has_value(), "native expression allocation missing");
         auto &native = retained->value();
         N::Array native_evidence, originals;
+        std::optional<N> coupling;
+        if (request.has("coupling"))
+            coupling.emplace(coupled_expression(allocation, request.at("coupling"), shared_counts,
+                                                native, resources, previous_coupling));
         for (std::size_t s = 0; s < local.size(); ++s) {
             auto protocol = Json::parse(local[s].dump());
             json_object_object_del(protocol.raw(), "counts");
@@ -529,47 +581,12 @@ Json expression_allocations(const ResourceImages &images, const Json &request,
                          {"resources", N(std::move(originals))},
                          {"candidate_search", import_record_view(search)},
                          {"evidence_hashes", import_record_view(evidence_hashes)}}});
+        if (coupling) std::get<N::Object>(native.declaration.data).members.emplace_back("coupling", std::move(*coupling));
         return Json{};
     }
-    auto expression = Json::parse(certificate.at("result").dump());
-    expression.set("status", Json::string("feasible"));
-    // Allocation samples report raw counts. Output expression samples apply the
-    // exact declared scale, as allocation contrasts already do.
-    for (std::size_t s = 0; s < samples.size(); ++s) {
-        const auto bounds = expression.at("samples").at(s).at("bounds");
-        Vector lo, hi;
-        for (std::size_t t = 0; t < bounds.size(); ++t) {
-            lo.push_back(exact_rational(label(bounds.at(t).at("lower"))));
-            hi.push_back(exact_rational(label(bounds.at(t).at("upper"))));
-        }
-        const auto scale = exact_rational(label(samples.at(s).at("scale")));
-        lo = rfc::numeric::scale(scale, lo);
-        hi = rfc::numeric::scale(scale, hi);
-        auto scaled = Json::array();
-        for (std::size_t t = 0; t < bounds.size(); ++t)
-            scaled.push(bound(bounds.at(t).at("id"), lo[t], hi[t]));
-        expression.at("samples").at(s).set("bounds", scaled);
-    }
-    if (request.has("coupling"))
-        expression = coupled_expression(allocation, request.at("coupling"), resources);
-    auto out = Json::object();
-    out.set("evidence_records", evidence_records);
-    out.set("class_maps", class_maps);
-    out.set("allocation_request", allocation);
-    out.set("allocation_certificate", certificate);
-    out.set("expression", expression);
-    out.set("targets", request.at("targets"));
-    out.set("map_evidence", request.at("map_evidence"));
-    out.set("units", allocation.at("units"));
-    out.set(
-        "scope",
-        Json::string("Assignment and contrast bounds on the declared candidate universe; "
-                     "transcript-to-feature memberships and optional coupling are declarations. "
-                     "Each read record, retained RG/query/mate segment or reported class count is "
-                     "an observation. Placement multiplicity is not count multiplicity. Bound "
-                     "endpoints are separate observables, not fitted abundances."));
-    return out;
+    throw std::logic_error("native expression result missing");
 }
+
 Json allocation_fields_summary_view(const NativeRecord &allocation_fields) {
     auto result = Json::object();
     result.set("bound_scope", render_record_view(allocation_fields.at("summary").at("bound_scope")));
@@ -628,6 +645,54 @@ Json allocation_fields_summary_view(const NativeRecord &allocation_fields) {
         result.set("kernel_certificate", certificate);
     }
     return result;
+}
+
+Json coupled_fields_view(const NativeRecord &record) {
+    const auto coupling = record.at("coupling"), allocation = record.at("allocation_fields");
+    const auto coordinates = allocation.at("target_coordinates").tensor();
+    auto out = Json::object(), certificates = Json::array(), samples = Json::array(), contrasts = Json::array();
+    out.set("status", Json::string(coupling.at("status").text()));
+    out.set("variable_origins", render_record_view(coupling.at("variable_origins")));
+    out.set("declaration", render_record_view(coupling.at("declaration")));
+    std::vector<NativeRecord> solvers;
+    std::vector<Json> results;
+    for (std::size_t i = 0; i < coupling.at("solvers").size(); ++i) {
+        solvers.push_back(NativeRecord::decode(coupling.at("solvers").at(i).at("constraint_publication").bytes()));
+        results.push_back(constraint_fields_view(solvers.back()));
+    }
+    for (std::size_t i = 0; i < coupling.at("certificates").size(); ++i) {
+        const auto declaration = coupling.at("certificates").at(i);
+        const auto index = declaration.at("solver").integer().get_ui();
+        auto certificate = Json::object();
+        certificate.set("request", constraint_request_view(solvers.at(index)));
+        certificate.set("result", results.at(index));
+        for (const auto *name : {"kind", "output_index", "target_index"})
+            certificate.set(name, render_record_view(declaration.at(name)));
+        certificates.push(certificate);
+    }
+    if (coupling.at("status").text() == "feasible")
+        for (const auto *name : {"samples", "contrasts"})
+            for (std::size_t i = 0; i < coupling.at(name).size(); ++i) {
+                const auto source = coupling.at(name).at(i);
+                const auto &lower = retained_tensor(record, source.at("lower")).tensor,
+                           &upper = retained_tensor(record, source.at("upper")).tensor;
+                auto row = Json::object(), bounds = Json::array();
+                row.set("id", render_record_view(source.at("id")));
+                const bool contrast = std::string_view(name) == "contrasts";
+                if (contrast)
+                    for (const auto *key : {"left", "right"}) row.set(key, render_record_view(source.at(key)));
+                for (std::size_t t = 0; t < allocation.at("targets").size(); ++t) {
+                    const auto coordinate = coordinates.state(t)->get_num().get_ui();
+                    bounds.push(bound(render_record_view(allocation.at("targets").at(t).at("id")),
+                                      lower.state(coordinate).value(), upper.state(coordinate).value(), contrast));
+                }
+                row.set("bounds", bounds);
+                (contrast ? contrasts : samples).push(row);
+            }
+    out.set("certificates", certificates); out.set("samples", samples); out.set("contrasts", contrasts);
+    if (coupling.at("status").text() == "feasible")
+        out.set("constraint_units", Json::string("Unscaled assigned counts; positive sample scales apply only to output observables"));
+    return out;
 }
 Json expression_fields_view(const NativeRecord &record) {
     const auto allocation_fields = record.at("allocation_fields"), request = record.at("request");
@@ -716,6 +781,7 @@ Json expression_fields_view(const NativeRecord &record) {
     auto expression = Json::parse(result.dump());
     expression.set("samples", expression_samples);
     expression.set("status", Json::string("feasible"));
+    if (record.has("coupling")) expression = coupled_fields_view(record);
     auto evidence = render_record_view(record.at("evidence_records")), maps = Json::array();
     for (std::size_t s = 0; s < samples.size(); ++s) {
         const auto local = record.at("class_maps").at(s);

@@ -362,7 +362,7 @@ def main():
         '--out',root/'derived')
     shutil.move(root/'workspace',root/'original-unavailable')
     try:
-        replay = run('replay-derivation','--workspace',root/'derived/workspace.json',
+        replay = run('replay-derivation','--workspace',root/'derived/workspace.rfcxs',
                      '--assay','coupled-bounds','--out',root/'replayed')
         check(replay['status'] == 'PASS', 'factorized producer replays from retained lineage without original workspace')
         save('replay.json',replay)

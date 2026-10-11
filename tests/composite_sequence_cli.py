@@ -175,7 +175,7 @@ def main():
     withheld=root/'source-unavailable';withheld.mkdir()
     for name in ['portable','portable-source']:shutil.move(root/name,withheld/name)
     try:
-        r=run('replay-derivation','--workspace',root/'derived/workspace.json','--assay','observed-sequence-structure','--out',root/'replayed')
+        r=run('replay-derivation','--workspace',root/'derived/workspace.rfcxs','--assay','observed-sequence-structure','--out',root/'replayed')
         check(r['status']=='PASS','complete observed assembly replays with original workspace, inputs and import declaration unavailable')
     finally:
         for name in ['portable','portable-source']:shutil.move(withheld/name,root/name)

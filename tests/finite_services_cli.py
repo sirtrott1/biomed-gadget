@@ -210,13 +210,13 @@ def main():
         run('derive-assays','--workspace',workspace,'--request',save(name+'-derive.json',req),'--out',root/('derived-'+name))
         shutil.move(root/'workspace',root/'original-unavailable')
         try:
-            receipt=run('replay-derivation','--workspace',root/('derived-'+name)/'workspace.json','--assay','derived-'+name,'--out',root/('replayed-'+name))
+            receipt=run('replay-derivation','--workspace',root/('derived-'+name)/'workspace.rfcxs','--assay','derived-'+name,'--out',root/('replayed-'+name))
             check(receipt['status']=='PASS','generation replay without original source workspace')
             save(name+'-replay.json',receipt)
         finally:
             shutil.move(root/'original-unavailable',root/'workspace')
         if name=='assembly':
-            carrier=run('assay-query','--workspace',root/('derived-'+name)/'workspace.json','--request',save('assembly-native-request.json',dict(schema='gadget.assays.query.v1',operation='native_query',assay='derived-assembly',query=dict(operation='hodge',context='all',field='all.kmer_occurrence_count'))))
+            carrier=run('assay-query','--workspace',root/('derived-'+name)/'workspace.rfcxs','--request',save('assembly-native-request.json',dict(schema='gadget.assays.query.v1',operation='native_query',assay='derived-assembly',query=dict(operation='hodge',context='all',field='all.kmer_occurrence_count'))))
             save('assembly-native-result.json',carrier)
             check(len(carrier['result']['answers'])==1,'generated assembly accepted for native Hodge fields')
     bad=copy.deepcopy(requests['matches-literal']);bad['junctions'][0]['acceptor']=len(reference)+1

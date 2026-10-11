@@ -273,6 +273,12 @@ Coupled bounded allocations use native affine equality kernels and certified
 independent parameter groups, retaining complete feasible and optimal bounds.
 The [method guide](suite.md) explains explicit and factored witness contracts;
 the [coupled example](coupled-allocation-factors.json) provides a portable request.
+Alignment, assembly and constrained allocation publish their generating complexes
+and numerical fields directly through `assay-query --out-record` and
+`derive-assays`. Ordered route lifts, source occurrence maps and affine factors
+remain available in the binary publication. `tests/native_sequence_fields.cpp`
+checks native support, variable bindings, downstream ownership and relocated
+replay for these operations and coupled expression.
 Statistical significance requires an explicit sampling/null model; exact finite
 calculations do not supply that model. Existing DESeq2 comparisons provide a
 benchmark rather than a proof that an alternative is superior for every assay.

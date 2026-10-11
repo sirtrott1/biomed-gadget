@@ -290,11 +290,15 @@ int main(int argc, char **argv) {
         AssayWorkspace derived(root / "derived/workspace.rfcxs");
         const auto replay = derived.replay_derivation("assembly", root / "replayed");
         check(replay.at("status").text() == "PASS", "derived resource provenance replay failed");
+        AssayWorkspace replayed_workspace(root / "replayed/workspace.rfcxs");
+        const auto source_archive = NativeRecord::decode(replayed_workspace.study("assembly")
+            ->producer_publication().at("result").at("workspace_publication").bytes());
         bool replay_bytes = false;
-        for (const auto &entry : fs::recursive_directory_iterator(root / "replayed"))
-            if (entry.is_regular_file() && entry.file_size() == opaque.size() &&
-                read_text(entry.path()) == opaque)
-                replay_bytes = true;
+        for (std::size_t i = 0; i < source_archive.at("originals").size(); ++i) {
+            const auto bytes = source_archive.at("originals").at(i).at("bytes").bytes();
+            if (bytes.size() == opaque.size() && std::equal(bytes.begin(), bytes.end(),
+                    reinterpret_cast<const std::byte *>(opaque.data()))) replay_bytes = true;
+        }
         check(replay_bytes, "derived replay omitted original resource bytes");
         write_text(root / "empty.fastq", "");
         auto empty_resource = Json::object();

@@ -4,6 +4,7 @@
 #include <gadget/record_view.hpp>
 #include <gadget/study.hpp>
 #include <iostream>
+#include <map>
 #include <rfc/core/axioms.hpp>
 #include <rfc/core/builder.hpp>
 #include <rfc/field/augmented_green.hpp>
@@ -282,62 +283,71 @@ int main() {
         recipe.set("design", design);
         const auto relative_derived = fs::relative(api / "derived", fs::current_path());
         source_assay.materialize(recipe, relative_derived);
-        const gadget::AssayWorkspace derived(relative_derived / "workspace.json");
+        const gadget::AssayWorkspace derived(relative_derived / "workspace.rfcxs");
         const auto replayed = derived.replay_derivation(
             "api-grid", fs::relative(api / "replayed", fs::current_path()));
         check(replayed.at("status").text() == "PASS",
               "direct C++ derivation replay accepts relative destinations");
-        const auto amended_capture = api / "amended-capture";
-        fs::copy(relative_derived, amended_capture, fs::copy_options::recursive);
-        auto amended_spec =
-            gadget::Json::parse(gadget::read_text(amended_capture / "reimport.json"));
-        auto retained_record = amended_spec.at("assays").at(0).at("provenance").at(0);
-        const auto retained_path = amended_capture / retained_record.at("path").text();
-        auto retained_result = gadget::Json::parse(gadget::read_text(retained_path));
-        // JSON object order is not mathematical order. Arrays still retain all
-        // source identities, coordinates, relations and operation histories.
-        auto reordered = gadget::Json::object();
-        std::vector<std::string> result_keys;
-        json_object_object_foreach(retained_result.at("result").raw(), result_name, result_entry) {
-            (void)result_entry;
-            result_keys.emplace_back(result_name);
-        }
-        std::reverse(result_keys.begin(), result_keys.end());
-        for (const auto &key : result_keys)
-            reordered.set(key, retained_result.at("result").at(key));
-        reordered.set(
-            "execution",
-            gadget::Json::parse(
-                R"({"owner":"rfc::runtime::CpuTileExecutor","requested_workers":4,"worker_slots":2})"));
-        reordered.set("rexgraph_sha256", gadget::Json::string("historical-authored-build"));
-        retained_result.set("result", reordered);
-        const auto publish_capture = [&] {
-            json_object_object_del(retained_result.raw(), "certificate_sha256");
-            retained_result.set(
-                "certificate_sha256",
-                gadget::Json::string("sha256:" + gadget::sha256(retained_result.dump())));
-            const auto bytes = retained_result.dump() + "\n";
-            gadget::write_text(retained_path, bytes);
-            retained_record.set("sha256", gadget::Json::string("sha256:" + gadget::sha256(bytes)));
-            gadget::write_text(amended_capture / "reimport.json", amended_spec.dump());
+        using N = gadget::NativeRecordValue;
+        const auto member = [](N &value, std::string_view name) -> N & {
+            for (auto &[key, item] : std::get<N::Object>(value.data).members)
+                if (key == name) return item;
+            throw std::runtime_error("native test member absent");
         };
-        publish_capture();
-        gadget::import_assays(amended_capture / "reimport.json", api / "amended-workspace");
-        const auto amended_replay = gadget::AssayWorkspace(api / "amended-workspace/workspace.json")
-                                        .replay_derivation("api-grid", api / "amended-replay");
-        check(amended_replay.at("status").text() == "PASS" &&
-                  amended_replay.at("comparison_profile").text() == "mathematical_payload_v2",
-              "changed native execution/build receipts and object order preserve full derivation "
-              "math");
-        retained_result.at("result").set("minimum_cost", gadget::Json::string("3"));
-        publish_capture();
-        gadget::import_assays(amended_capture / "reimport.json", api / "changed-math-workspace");
-        rejects(
-            [&] {
-                gadget::AssayWorkspace(api / "changed-math-workspace/workspace.json")
-                    .replay_derivation("api-grid", api / "changed-math-replay");
-            },
-            "changed numerical result rejects despite properly rebound source hashes");
+        const auto original_study = derived.study("api-grid");
+        const auto original_producer = original_study->producer_publication();
+        const auto publish_capture = [&](bool change_math, const fs::path &path) {
+            auto result = original_producer.unbound_value();
+            member(member(result, "result"), "rexgraph_sha256") = N(std::string("historical-authored-build"));
+            if (change_math) {
+                auto &routes = member(member(member(result, "result"), "result"), "route_witnesses");
+                member(std::get<N::Array>(routes.data).elements.at(0), "minimum_cost") = N(rfc::numeric::Rational(3));
+            }
+            auto sources = original_producer.raw_sources();
+            std::vector<gadget::RawByteSource> added_sources;
+            std::uint64_t next_key = 1;
+            for (const auto &source : sources) next_key = std::max(next_key, source.key() + 1);
+            std::map<std::uint64_t, std::uint64_t> source_bindings;
+            for (const auto &source : original_study->native_publication().raw_sources()) {
+                const auto shared = std::find_if(sources.begin(), sources.end(),
+                    [&](const auto &candidate) {return candidate.shares_owner(source);});
+                if (shared != sources.end()) source_bindings.emplace(source.key(), shared->key());
+                else {
+                    source_bindings.emplace(source.key(), next_key);
+                    added_sources.push_back(source.rekey(next_key++));
+                    sources.push_back(added_sources.back());
+                }
+            }
+            const auto producer = original_producer.derive(std::move(result), std::move(added_sources));
+            auto study_value = original_study->native_publication().at("study").unbound_value(source_bindings);
+            std::erase_if(std::get<N::Object>(study_value.data).members,
+                          [](const auto &item) {return item.first == "native";});
+            const auto publication = gadget::ScientificStudy::publish_annotations(producer,
+                std::move(study_value), original_study->native_publication().at("documents").unbound_value(source_bindings));
+            const gadget::ScientificStudy amended_study(publication);
+            const auto collection = derived.native_publication();
+            auto root_value = collection.unbound_value();
+            auto &publications = std::get<N::Array>(member(root_value, "publications").data).elements;
+            const auto original_key = collection.at("publications").at(0).at("bytes").byte_source().key();
+            auto owner = publication.archive_source(original_key);
+            member(publications.at(0), "bytes") = N(N::ByteSpan{original_key, 0, owner.bytes().size(), false});
+            auto &assays = std::get<N::Array>(member(member(root_value, "manifest"), "assays").data).elements;
+            auto &packets = std::get<N::Array>(member(assays.at(0), "partitions").data).elements;
+            member(packets.at(0), "source_digest") = N(amended_study.digest());
+            auto collection_sources = collection.raw_sources();
+            for (auto &source : collection_sources) if (source.key() == original_key) source = owner;
+            gadget::NativeRecord::create(std::move(root_value), gadget::new_native_record_namespace(),
+                                         std::move(collection_sources)).write(path);
+        };
+        publish_capture(false, api / "amended-workspace.rfcxs");
+        const auto amended_replay = gadget::AssayWorkspace(api / "amended-workspace.rfcxs")
+            .replay_derivation("api-grid", api / "amended-replay");
+        check(amended_replay.at("status").text() == "PASS",
+              "changed software receipt preserves the native mathematical payload");
+        publish_capture(true, api / "changed-math-workspace.rfcxs");
+        rejects([&] {gadget::AssayWorkspace(api / "changed-math-workspace.rfcxs")
+            .replay_derivation("api-grid", api / "changed-math-replay");},
+            "changed native route cost rejects despite rebound source digests");
         check(!fs::exists(api / "changed-math-replay"),
               "failed mathematical replay removes prospective publication");
         const auto edit_study = derived.study("api-grid");

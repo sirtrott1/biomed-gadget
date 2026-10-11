@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
               AssayWorkspace::supports_native_materialization("spatial_relations") &&
               AssayWorkspace::supports_native_materialization("aggregate_assay") &&
               AssayWorkspace::supports_native_materialization("design_aggregation") &&
-              !AssayWorkspace::supports_native_materialization("sequence_assembly_graph"),
+              AssayWorkspace::supports_native_materialization("sequence_assembly_graph"),
           "native producer availability changed");
     check(!fs::exists(root / "derived/workspace.json"),
           "native derivation generated a JSON authority");
@@ -648,7 +648,7 @@ int main(int argc, char **argv) {
     auto coupled_view = Json::parse(allocation_recipe.dump());
     coupled_view.set("coupling", Json::object());
     check(AssayWorkspace::supports_native_materialization(coupled_recipe) &&
-              !AssayWorkspace::supports_native_materialization(admit_record_view(coupled_view)),
+              AssayWorkspace::supports_native_materialization(admit_record_view(coupled_view)),
           "native allocation capability omitted the coupled constraint boundary");
     fs::rename(root / "allocation-input", root / "allocation-input-away");
     allocation_input.reset();
