@@ -1,5 +1,6 @@
 #include "scientific_native_hodge.hpp"
 #include "scientific_detail.hpp"
+#include "scientific_result_fields.hpp"
 #include <charconv>
 #include <rfc/runtime/cpu_tiles.hpp>
 #include <set>
@@ -9,40 +10,16 @@ namespace {
 using namespace rfc;
 using Pin = storage::PinnedNativeAccession;
 using Matrix = numeric::ExactMatrix;
-Json vector(const numeric::RationalVector &values) {
-    auto result = Json::array();
-    for (const auto &value : values)
-        result.push(Json::string(value.get_str()));
-    return result;
-}
-Json indices(const std::vector<std::size_t> &values) {
-    auto result = Json::array();
-    for (auto value : values)
-        result.push(cardinality(value));
-    return result;
-}
-Json matrix(const Matrix &value) {
-    auto result = Json::object(), entries = Json::array();
-    result.set("rows", cardinality(value.rows()));
-    result.set("columns", cardinality(value.cols()));
-    for (const auto &[position, coefficient] : value.entries()) {
-        auto entry = Json::object();
-        entry.set("row", cardinality(position.first));
-        entry.set("column", cardinality(position.second));
-        entry.set("value", Json::string(coefficient.get_str()));
-        entries.push(entry);
-    }
-    result.set("entries", entries);
-    return result;
-}
-Json reduction(const numeric::PreparedExactFrames &plan) {
-    auto result = Json::object();
-    result.set("original", matrix(plan.original()));
-    result.set("image", matrix(plan.image()));
-    result.set("coefficients", matrix(plan.coordinates()));
-    result.set("kernel", matrix(plan.kernel()));
-    result.set("pivot_columns", indices(plan.pivots()));
-    result.set("free_columns", indices(plan.free_columns()));
+ResultValue reduction(ResultFields &fields, const numeric::PreparedExactFrames &plan,
+                      std::uint64_t domain, std::uint64_t range,
+                      std::uint64_t image, std::uint64_t kernel) {
+    auto result = ResultValue::object();
+    result.set("original", fields.matrix(plan.original(), domain, range));
+    result.set("image", fields.matrix(plan.image(), image, range));
+    result.set("coefficients", fields.matrix(plan.coordinates(), domain, image));
+    result.set("kernel", fields.matrix(plan.kernel(), kernel, domain));
+    result.set("pivot_columns", fields.indices(plan.pivots(), image));
+    result.set("free_columns", fields.indices(plan.free_columns(), kernel));
     return result;
 }
 Json requirements(const runtime::ExecutionRequirements &value) {
@@ -157,7 +134,7 @@ inference::NativeHodgeFrameRequest request(const Json &query, const NativeHodgeB
 void NativeHodgePlans::validate(const Json &query, const NativeHodgeBinding &binding) {
     (void)request(query, binding);
 }
-Json NativeHodgePlans::execute(const Json &query, const NativeHodgeBinding &binding,
+NativeRecord NativeHodgePlans::execute_fields(const Json &query, const NativeHodgeBinding &binding,
                                runtime::ExecutionLease lease, CpuResources &cpu) {
     lease.check_cancelled();
     const auto selected = request(query, binding);
@@ -180,66 +157,87 @@ Json NativeHodgePlans::execute(const Json &query, const NativeHodgeBinding &bind
     auto plan = existing == plans_.end() ? inference::PreparedNativeHodgeFrames::prepare(
                                                binding.publication, selected, available, lease)
                                          : existing->second;
-    std::vector<Json> records(binding.fields.size());
+    std::vector<std::optional<inference::DerivedNativeHodgeDecomposition>> derived_fields(binding.fields.size());
     runtime::CpuTileExecutor executor({workers, capacity, binding.fields.size()});
-    const auto work = executor.run_tiles(
+    (void)executor.run_tiles(
         binding.fields.size(), [&](std::size_t i, std::size_t, const runtime::CpuTileStop &stop) {
             stop.check();
-            const auto derived = plan.execute(binding.fields[i], available, lease);
-            const auto &value = derived.values();
-            const auto &report = derived.provenance();
-            auto field = Json::object(), sectors = Json::object(), coordinates = Json::object(),
-                 receipt = Json::object(), limits = Json::object();
-            field.set("id", query.at("fields").at(i));
-            field.set("input_field_key", Json::string(std::to_string(report.input_field)));
-            field.set("meaning", binding.declarations.at("fields").at(i));
-            numeric::RationalVector input(binding.fields[i].tensor()->domain().logical_size());
-            for (const auto &e : binding.fields[i].tensor()->values().entries())
-                input[e.index] = e.value;
-            field.set("input", vector(input));
-            sectors.set("gradient", vector(value.gradient));
-            sectors.set("curl", vector(value.curl));
-            sectors.set("harmonic", vector(value.harmonic));
-            coordinates.set("gradient", vector(value.gradient_coordinates));
-            coordinates.set("curl", vector(value.curl_coordinates));
-            coordinates.set("harmonic", vector(value.harmonic_coordinates));
-            field.set("sectors", sectors);
-            field.set("frame_coordinates", coordinates);
-            field.set("reconstructed", vector(value.reconstructed));
-            receipt.set("execution_policy", Json::string(report.execution_policy));
-            receipt.set("preparation_policy", Json::string(report.preparation_policy));
-            receipt.set("preparation_source_sequence",
-                        Json::string(std::to_string(report.preparation_availability.max_sequence)));
-            receipt.set("execution_source_sequence",
-                        Json::string(std::to_string(report.execution_availability.max_sequence)));
-            receipt.set("execution_steps", cardinality(report.execution_steps));
-            limits.set("dimension", Json::string(std::to_string(report.action_limits.dimension)));
-            limits.set("entries", Json::string(std::to_string(report.action_limits.entries)));
-            limits.set("steps", Json::string(std::to_string(report.action_limits.steps)));
-            limits.set("integer_bits",
-                       Json::string(std::to_string(report.action_limits.integer_bits)));
-            receipt.set("action_limits", limits);
-            receipt.set("requirements", requirements(report.selected_requirements));
-            receipt.set("source_namespace", Json::string(std::to_string(report.source_namespace)));
-            receipt.set("source_sequence", Json::string(std::to_string(report.sequence)));
-            receipt.set("carrier", Json::string(std::to_string(report.carrier)));
-            receipt.set("fallback", Json::boolean(report.fallback));
-            field.set("native_execution", receipt);
-            records[i] = std::move(field);
+            derived_fields[i].emplace(plan.execute(binding.fields[i], available, lease));
             stop.check();
         });
-    auto fields = Json::array();
-    for (const auto &field : records)
-        fields.push(field);
+    ResultFields stored(binding.source);
+    const auto source_carrier = plan.carrier();
+    const auto &native_frames = plan.numeric_plan();
+    const auto gradient_axis = stored.axis(native_frames.gradient_frame().cols());
+    const auto curl_axis = stored.axis(native_frames.curl_frame().cols());
+    const auto harmonic_axis = stored.axis(native_frames.harmonic_frame().cols());
+    auto fields = ResultValue::array();
+    for (std::size_t i = 0; i < derived_fields.size(); ++i) {
+        const auto &derived = *derived_fields[i];
+        const auto &value = derived.values();
+        const auto &report = derived.provenance();
+        auto field = ResultValue::object(), sectors = ResultValue::object(), coordinates = ResultValue::object();
+        auto receipt = Json::object(), limits = Json::object();
+        field.set("id", query.at("fields").at(i));
+        field.set("input_field_key", ResultValue::string(std::to_string(report.input_field)));
+        field.set("meaning", binding.declarations.at("fields").at(i));
+        field.set("input", stored.stored(report.input_field, "vector"));
+        sectors.set("gradient", stored.vector(value.gradient, source_carrier));
+        sectors.set("curl", stored.vector(value.curl, source_carrier));
+        sectors.set("harmonic", stored.vector(value.harmonic, source_carrier));
+        coordinates.set("gradient", stored.vector(value.gradient_coordinates, gradient_axis));
+        coordinates.set("curl", stored.vector(value.curl_coordinates, curl_axis));
+        coordinates.set("harmonic", stored.vector(value.harmonic_coordinates, harmonic_axis));
+        field.set("sectors", std::move(sectors));
+        field.set("frame_coordinates", std::move(coordinates));
+        field.set("reconstructed", stored.vector(value.reconstructed, source_carrier));
+        receipt.set("execution_policy", Json::string(report.execution_policy));
+        receipt.set("preparation_policy", Json::string(report.preparation_policy));
+        receipt.set("preparation_source_sequence", Json::string(std::to_string(report.preparation_availability.max_sequence)));
+        receipt.set("execution_source_sequence", Json::string(std::to_string(report.execution_availability.max_sequence)));
+        receipt.set("execution_steps", cardinality(report.execution_steps));
+        limits.set("dimension", Json::string(std::to_string(report.action_limits.dimension)));
+        limits.set("entries", Json::string(std::to_string(report.action_limits.entries)));
+        limits.set("steps", Json::string(std::to_string(report.action_limits.steps)));
+        limits.set("integer_bits", Json::string(std::to_string(report.action_limits.integer_bits)));
+        receipt.set("action_limits", limits);
+        receipt.set("requirements", requirements(report.selected_requirements));
+        receipt.set("source_namespace", Json::string(std::to_string(report.source_namespace)));
+        receipt.set("source_sequence", Json::string(std::to_string(report.sequence)));
+        receipt.set("carrier", Json::string(std::to_string(report.carrier)));
+        receipt.set("fallback", Json::boolean(report.fallback));
+        field.set("native_execution", receipt);
+        fields.push(std::move(field));
+    }
     const auto &numeric_plan = plan.numeric_plan();
-    auto frames = Json::object(), reductions = Json::object(), result = Json::object(),
-         preparation = Json::object();
-    frames.set("gradient", matrix(numeric_plan.gradient_frame()));
-    frames.set("curl", matrix(numeric_plan.curl_frame()));
-    frames.set("harmonic", matrix(numeric_plan.harmonic_frame()));
-    reductions.set("gradient", reduction(numeric_plan.gradient_reduction()));
-    reductions.set("curl", reduction(numeric_plan.curl_reduction()));
-    reductions.set("harmonic", reduction(numeric_plan.harmonic_reduction()));
+    auto frames = ResultValue::object(), reductions = ResultValue::object(), result = ResultValue::object();
+    auto preparation = Json::object();
+    frames.set("gradient", stored.matrix(numeric_plan.gradient_frame(), gradient_axis, source_carrier));
+    frames.set("curl", stored.matrix(numeric_plan.curl_frame(), curl_axis, source_carrier));
+    frames.set("harmonic", stored.matrix(numeric_plan.harmonic_frame(), harmonic_axis, source_carrier));
+    const auto lower_axis = selected.grade.value ? selected.grade_carriers[selected.grade.value - 1]
+                                                 : stored.axis(0);
+    const auto upper_axis = std::size_t{selected.grade.value} + 1 < selected.grade_carriers.size()
+                             ? selected.grade_carriers[selected.grade.value + 1] : stored.axis(0);
+    const auto gradient_kernel = stored.axis(numeric_plan.gradient_reduction().kernel().cols());
+    const auto curl_kernel = stored.axis(numeric_plan.curl_reduction().kernel().cols());
+    const auto constraint_axis = stored.axis(numeric_plan.harmonic_reduction().original().rows());
+    const auto constraint_image = stored.axis(numeric_plan.harmonic_reduction().image().cols());
+    reductions.set("gradient", reduction(stored, numeric_plan.gradient_reduction(), lower_axis,
+                                          source_carrier, gradient_axis, gradient_kernel));
+    reductions.set("curl", reduction(stored, numeric_plan.curl_reduction(), upper_axis,
+                                      source_carrier, curl_axis, curl_kernel));
+    reductions.set("harmonic", reduction(stored, numeric_plan.harmonic_reduction(), source_carrier,
+                                          constraint_axis, constraint_image, harmonic_axis));
+    auto binding_record = ResultValue::object();
+    binding_record.set("kind", ResultValue::string("source_grade_hodge_frames"));
+    binding_record.set("source_namespace", ResultValue::string(std::to_string(binding.publication.source_namespace())));
+    binding_record.set("source_sequence", ResultValue::string(std::to_string(binding.publication.sequence())));
+    binding_record.set("grade_carriers", query.at("grade_carriers"));
+    binding_record.set("metrics", query.at("metrics"));
+    binding_record.set("frames", frames);
+    binding_record.set("reductions", reductions);
+    stored.bind(std::move(binding_record));
     preparation.set("steps", cardinality(plan.preparation_steps()));
     preparation.set("retained_requirements", requirements(plan.retained_requirements()));
     preparation.set("dimension_admission", cardinality(selected.dimension_limit));
@@ -247,24 +245,28 @@ Json NativeHodgePlans::execute(const Json &query, const NativeHodgeBinding &bind
                     cardinality(numeric_plan.chain_interfaces_checked()));
     auto execution = Json::object();
     execution.set("reserved_workers", cardinality(workers));
-    execution.set("completed_fields", cardinality(records.size()));
+    execution.set("completed_fields", cardinality(derived_fields.size()));
     execution.set("executor", Json::string("rfc::runtime::CpuTileExecutor"));
-    (void)work; // Wall time remains a separate measurement, outside scientific certificates.
     result.set("native_work", execution);
     result.set("profile", Json::string("source-grade-complete-hodge-frames-v1"));
     result.set("publication", binding.declarations);
-    result.set("grade", cardinality(selected.grade.value));
+    result.set("grade", ResultValue::count(selected.grade.value));
     result.set("grade_carriers", query.at("grade_carriers"));
     result.set("metrics", query.at("metrics"));
     result.set("frames", frames);
     result.set("reductions", reductions);
     result.set("fields", fields);
     result.set("native_preparation", preparation);
+    const auto publication = stored.finish(std::move(result));
     lease.check_cancelled();
     if (existing == plans_.end())
         plans_.emplace(key, std::move(plan));
     applications_ = machine::checked_size_add(applications_, binding.fields.size());
-    return Json::parse(result.dump());
+    return publication;
+}
+Json NativeHodgePlans::execute(const Json &query, const NativeHodgeBinding &binding,
+                               runtime::ExecutionLease lease, CpuResources &cpu) {
+    return render_record_view(execute_fields(query, binding, std::move(lease), cpu));
 }
 Json NativeHodgePlans::statistics() const {
     auto result = Json::object();

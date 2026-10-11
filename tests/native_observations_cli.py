@@ -131,3 +131,58 @@ answer_checks = method_answers.qualify(binary, pipeline/'answers', original/'wor
 replay.save(root/'contracts.json', dict(status='PASS', independent=records, refusals=refusals,
                                      session=json.loads(p.stdout), answer_checks=answer_checks))
 print(json.dumps(dict(status="PASS", cases=len(records), refusals=len(refusals), answer_checks=answer_checks)))
+
+# Reopen a result bound to a referenced publication after admission through a coordinator.
+foreign_query = json.loads((root/'unfilled-square/query.json').read_text())
+foreign_query['publication'] = 'unfilled-square'
+replay.save(root/'foreign-native-query.json', foreign_query)
+foreign_output = root/'foreign-native.rfcxs'
+cli = subprocess.run([str(binary), 'query', '--study', str(root/'coordinator.json'),
+                      '--query', str(root/'foreign-native-query.json'), '--out', str(foreign_output)],
+                     capture_output=True, text=True)
+assert cli.returncode == 0, cli.stderr
+cli = subprocess.run([str(binary), 'replay-scientific', '--record', str(foreign_output),
+                      '--out-record', str(root/'foreign-replay.rfcxs')], capture_output=True, text=True)
+assert cli.returncode == 0, cli.stderr
+
+native_records = []
+for case in sorted(root.iterdir()):
+    if not (case/'query.json').is_file() or not (case/'study/study.json').is_file():
+        continue
+    checked = subprocess.run([str(session), str(case), 'native'], capture_output=True, text=True)
+    assert checked.returncode == 0, (case.name, checked.stderr)
+    native_records.append(dict(case=case.name, **json.loads(checked.stdout)))
+    replayed = case/'native/cli-replay.rfcxs'
+    cli = subprocess.run([str(binary), 'replay-scientific', '--record', str(case/'native/result.rfcxs'),
+                          '--out-record', str(replayed)], capture_output=True, text=True)
+    assert cli.returncode == 0, cli.stderr
+    changed = case/'native/changed-field.rfcxs'
+    if changed.exists():
+        refused = case/'native/refused.rfcxs'
+        cli = subprocess.run([str(binary), 'replay-scientific', '--record', str(changed),
+                              '--out-record', str(refused)], capture_output=True, text=True)
+        assert cli.returncode != 0 and not refused.exists(), case.name
+replay.save(root/'native-contracts.json', native_records)
+print(json.dumps(dict(status='PASS', native_cases=len(native_records), checks=sum(x['checks'] for x in native_records))))
+
+# A single native plan retains different providers over one explicitly declared source.
+mixed = root/'mixed'; mixed.mkdir()
+spec = json.loads((root/'unfilled-square/spec.json').read_text())
+spec['carriers'].append(dict(key='30', grade=0, size=4))
+replay.save(mixed/'spec.json', spec)
+subprocess.run([str(producer), str(mixed/'spec.json'), str(mixed/'study')], check=True, capture_output=True, text=True)
+inspected = replay.run(binary, 'query', '--study', mixed/'study/study.json',
+                       '--query', replay.save(mixed/'inspect.json', dict(operation='inspect')))
+observation_query = json.loads((root/'unfilled-square/query.json').read_text())
+hodge_query = dict(operation='hodge_frame_decomposition', publication='self', source_sequence='7',
+                   grade=1, grade_carriers=['30','10'], fields=['x','x2','zero'], metrics=dict(kind='unit'))
+plan = dict(schema='gadget.scientific.plan.v1', id='mixed-native-fields', question='Retain sectors and response readings',
+            source_digest=inspected['source_digest'], steps=[dict(id='sectors', query=hodge_query),
+                                                           dict(id='readings', query=observation_query)])
+cli = subprocess.run([str(binary), 'plan', '--study', str(mixed/'study/study.json'),
+                      '--request', str(replay.save(mixed/'plan.json', plan)), '--out', str(mixed/'plan.rfcxs')],
+                     capture_output=True, text=True)
+assert cli.returncode == 0, cli.stderr
+cli = subprocess.run([str(binary), 'replay-scientific', '--record', str(mixed/'plan.rfcxs'),
+                      '--out-record', str(mixed/'replay.rfcxs')], capture_output=True, text=True)
+assert cli.returncode == 0, cli.stderr

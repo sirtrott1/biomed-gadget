@@ -266,8 +266,8 @@ void produce(const fs::path &out, const fs::path &spec_path,
             fields.push(metadata);
         }
     d.set("fields", fields);
-    const auto encoded =
-        encode_native_series(NativeTemporalSeries(endpoint, id(spec.at("namespace"))));
+    const NativeTemporalSeries native_history(endpoint, id(spec.at("namespace")), native_data_limits());
+    const auto encoded = encode_native_series(native_history);
     const std::string archive(reinterpret_cast<const char *>(encoded.data()), encoded.size());
     write_text(out / "study.rfcxs", archive);
     auto native = Json::object();

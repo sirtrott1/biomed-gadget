@@ -1,3 +1,4 @@
+#include "native_scientific_fields.hpp"
 #include <atomic>
 #include <gadget/scientific.hpp>
 #include <iostream>
@@ -5,9 +6,10 @@
 int main(int argc, char **argv) {
     try {
         using namespace gadget;
-        if (argc != 2)
+        if (argc != 2 && argc != 3)
             throw std::invalid_argument("expected Hodge case");
         const fs::path root = argv[1];
+        if (argc == 3 && std::string(argv[2]) == "native") {native_scientific_test::run(root); return 0;}
         auto owner = std::make_shared<const ScientificStudy>(root / "study/study.json");
         ScientificSession session(owner);
         const auto query = Json::parse(read_text(root / "query.json"));

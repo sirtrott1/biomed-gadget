@@ -675,7 +675,7 @@ struct ScientificSession::State {
         declarations.set("accession", s.referenced(s.operators.at(accession)));
         declarations.set("fields", meanings);
         declarations.set("source_coordinates", coordinates);
-        return {op, s.operator_pins.at(accession), std::move(fields), declarations};
+        return {*s.native_publication, op, s.operator_pins.at(accession), std::move(fields), declarations};
     }
     scientific_detail::NativeNoveltyBinding novelty_binding(const Json &query,
                                                             bool metadata = false) {
@@ -794,7 +794,7 @@ struct ScientificSession::State {
         declarations.set("fields", field_meanings);
         declarations.set("metric_tensors", metric_meanings);
         declarations.set("grade_coordinates", coordinates);
-        return {fields.front(), std::move(fields), std::move(metrics), declarations};
+        return {*s.native_publication, fields.front(), std::move(fields), std::move(metrics), declarations};
     }
     scientific_detail::DeclaredResponseBinding response_binding(const Json &query) {
         auto declarations = Json::object();
@@ -1825,11 +1825,20 @@ struct ScientificSession::State {
     NativeRecord record(const NativeRecord &query, const Json &admitted) {
         using N = NativeRecordValue;
         const auto operation = admitted.at("operation").text();
-        if (operation != "linear_model_comparison" && operation != "finite_reference_calibration")
+        if (operation != "linear_model_comparison" && operation != "finite_reference_calibration" &&
+            operation != "hodge_frame_decomposition" && operation != "linear_response_observation")
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
-        const auto fields = operation == "linear_model_comparison"
-            ? research_detail::linear_model_fields(*owner, admitted, resources).publication
-            : research_detail::finite_reference_fields(*owner, admitted, resources);
+        const auto fields = [&] {
+            if (operation == "linear_model_comparison")
+                return research_detail::linear_model_fields(*owner, admitted, resources).publication;
+            if (operation == "finite_reference_calibration")
+                return research_detail::finite_reference_fields(*owner, admitted, resources);
+            if (operation == "hodge_frame_decomposition")
+                return native_hodge.execute_fields(admitted, hodge_binding(admitted),
+                    source_execution_lease("gadget-native-hodge-machine-addressable-v1"), cpu());
+            return native_observations.execute_fields(admitted, observation_binding(admitted),
+                source_execution_lease("gadget-native-observation-machine-addressable-v1"), cpu());
+        }();
         std::uint64_t source_key = 1;
         for (const auto &bytes : fields.raw_sources())
             source_key = std::max(source_key, rfc::machine::checked_size_add(bytes.key(), 1));

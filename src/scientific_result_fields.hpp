@@ -55,6 +55,18 @@ class ResultFields {
           original_fields_(endpoint_.tensors.size()), original_carriers_(endpoint_.carriers.size()),
           fields_(endpoint_), scalar_(fields_.explicit_carrier(1)) {}
     std::uint64_t axis(std::size_t size) {return fields_.explicit_carrier(size);}
+    ResultValue stored(std::uint64_t key, std::string display) {
+        if (std::none_of(endpoint_.tensors.begin(), endpoint_.tensors.end(),
+                         [&](const auto &tensor) {return tensor.key == key;}))
+            throw std::invalid_argument("scientific source tensor absent");
+        return reference(NativeRecordValue(rfc::numeric::Integer(std::to_string(key))),
+                         std::move(display));
+    }
+    ResultValue indices(const std::vector<std::size_t> &values, std::uint64_t carrier) {
+        Vector coefficients;
+        for (auto value : values) coefficients.emplace_back(std::to_string(value));
+        return reference(fields_.vector("scientific_coordinates", carrier, coefficients), "indices");
+    }
     ResultValue scalar(const Rational &value) {
         return reference(fields_.vector("scientific_scalar", scalar_, Vector{value}), "rational");
     }

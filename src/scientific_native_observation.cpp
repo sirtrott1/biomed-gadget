@@ -1,5 +1,6 @@
 #include "scientific_native_observation.hpp"
 #include "scientific_detail.hpp"
+#include "scientific_result_fields.hpp"
 #include <rfc/runtime/cpu_tiles.hpp>
 #include <type_traits>
 
@@ -8,18 +9,6 @@ namespace {
 using namespace rfc;
 using Pin = storage::PinnedNativeAccession;
 using Base = inference::PreparedNativeWoodburySolve::Base;
-Json indices(const std::vector<std::size_t> &values) {
-    auto out = Json::array();
-    for (auto value : values)
-        out.push(cardinality(value));
-    return out;
-}
-Json vector(const numeric::RationalVector &values) {
-    auto out = Json::array();
-    for (const auto &value : values)
-        out.push(Json::string(value.get_str()));
-    return out;
-}
 Json requirements(const runtime::ExecutionRequirements &value) {
     auto out = Json::object();
     out.set("records", Json::string(std::to_string(value.records)));
@@ -27,23 +16,6 @@ Json requirements(const runtime::ExecutionRequirements &value) {
     out.set("sparse_entries", Json::string(std::to_string(value.sparse_entries)));
     out.set("scalar_work", Json::string(std::to_string(value.scalar_work)));
     out.set("integer_bits", Json::string(std::to_string(value.integer_bits)));
-    return out;
-}
-Json map(const Pin &pin) {
-    auto out = Json::object(), entries = Json::array();
-    const auto tensor = pin.tensor();
-    const auto shape = tensor->domain().extents();
-    out.set("rows", cardinality(shape.at(0)));
-    out.set("columns", cardinality(shape.at(1)));
-    out.set("complete_support", Json::boolean(true));
-    for (const auto &e : tensor->values().entries()) {
-        auto item = Json::object();
-        item.set("row", cardinality(e.index / shape[1]));
-        item.set("column", cardinality(e.index % shape[1]));
-        item.set("value", Json::string(e.value.get_str()));
-        entries.push(item);
-    }
-    out.set("entries", entries);
     return out;
 }
 void complete_map(const Pin &pin) {
@@ -182,7 +154,7 @@ template <class Report> Json receipt(const Report &report) {
 void NativeObservationPlans::validate(const Json &query, const NativeObservationBinding &binding) {
     (void)validate_request(query, binding);
 }
-Json NativeObservationPlans::execute(const Json &query, const NativeObservationBinding &binding,
+NativeRecord NativeObservationPlans::execute_fields(const Json &query, const NativeObservationBinding &binding,
                                      runtime::ExecutionLease lease, CpuResources &cpu) {
     lease.check_cancelled();
     const auto dimension = validate_request(query, binding);
@@ -227,15 +199,12 @@ Json NativeObservationPlans::execute(const Json &query, const NativeObservationB
                     matrix.set(e.index / n, e.index % n, e.value);
                 }
                 order = numeric::minimum_degree_ordering(std::move(matrix), action);
-                ordering.set("rows", indices(order.rows));
-                ordering.set("columns", indices(order.columns));
             }
             prepared.emplace(inference::PreparedNativeWoodburySolve::prepare_base_ordered(
                 binding.operation, std::move(order), lease, available, dimension));
         }
     } else {
         prepared.emplace(existing_base->second.owner);
-        ordering = existing_base->second.ordering;
     }
     descriptor.set("accession", query.at("accession"));
     auto declared_observation = Json::object();
@@ -259,8 +228,7 @@ Json NativeObservationPlans::execute(const Json &query, const NativeObservationB
                          binding.operation.carrier()->domain.logical_size(), false),
              dimension},
             available, lease));
-    // Workers handle immutable native owners and private result slots only.
-    // JSON metadata is assembled after joining, avoiding shared codec refcounts.
+    // Each worker retains an owning result in its own slot.
     using Derived = std::variant<inference::DerivedNativeLinearObservation,
                                  inference::DerivedNativeSelectedObservation>;
     std::vector<std::optional<Derived>> results(binding.fields.size());
@@ -275,19 +243,19 @@ Json NativeObservationPlans::execute(const Json &query, const NativeObservationB
                 *plan);
             stop.check();
         });
-    auto out = Json::object(), fields = Json::array(), preparation = Json::object(),
-         work = Json::object();
+    ResultFields stored(binding.source);
+    auto out = ResultValue::object(), fields = ResultValue::array(), preparation = ResultValue::object();
+    auto work = Json::object();
+    const auto input_carrier = binding.operation.carrier()->key;
+    const auto output_carrier = binding.accession.carrier()->key;
     for (std::size_t i = 0; i < results.size(); ++i) {
-        auto item = Json::object();
+        auto item = ResultValue::object();
         item.set("id", query.at("fields").at(i));
         item.set("meaning", binding.declarations.at("fields").at(i));
-        numeric::RationalVector input(binding.fields[i].tensor()->domain().logical_size());
-        for (const auto &e : binding.fields[i].tensor()->values().entries())
-            input[e.index] = e.value;
-        item.set("input", vector(input));
+        item.set("input", stored.stored(binding.fields[i].tensor_declaration()->key, "vector"));
         std::visit(
             [&](const auto &derived) {
-                item.set("values", vector(derived.values()));
+                item.set("values", stored.vector(derived.values(), output_carrier));
                 item.set("native_execution", receipt(derived.provenance()));
             },
             *results[i]);
@@ -301,7 +269,7 @@ Json NativeObservationPlans::execute(const Json &query, const NativeObservationB
                             Json::boolean(owner.numeric_plan().uses_full_solve()));
             using T = std::decay_t<decltype(owner)>;
             if constexpr (std::is_same_v<T, inference::PreparedNativeLinearObservation>) {
-                preparation.set("row_reuse_word", indices(owner.numeric_plan().row_reuse_word()));
+                preparation.set("row_reuse_word", stored.indices(owner.numeric_plan().row_reuse_word(), output_carrier));
                 preparation.set("distinct_coefficient_rows",
                                 cardinality(owner.numeric_plan().distinct_rows()));
                 preparation.set("certified_nonzero_rows",
@@ -323,23 +291,52 @@ Json NativeObservationPlans::execute(const Json &query, const NativeObservationB
     work.set("completed_fields", cardinality(results.size()));
     work.set("executor", Json::string("rfc::runtime::CpuTileExecutor"));
     out.set("publication", binding.declarations);
-    out.set("operator_map", map(binding.operation));
-    out.set("accession_map", map(binding.accession));
-    out.set("ordering", ordering);
+    out.set("operator_map", stored.stored(binding.operation.tensor_declaration()->key, "declared_map"));
+    out.set("accession_map", stored.stored(binding.accession.tensor_declaration()->key, "declared_map"));
+    auto native_order = ResultValue::object();
+    native_order.set("kind", query.at("ordering").at("kind"));
+    if (query.at("ordering").at("kind").text() != "source") {
+        auto action = guard(binding.operation, lease, dimension);
+        const auto factor = prepared->numeric_solve().factor_receipt(action);
+        std::vector<std::size_t> rows, columns;
+        for (std::size_t i = 0; i < factor.size(); ++i) {
+            rows.push_back(factor.row_coordinate(i));
+            columns.push_back(factor.column_coordinate(i));
+        }
+        const auto row_axis = stored.axis(factor.size()), column_axis = stored.axis(factor.size());
+        native_order.set("rows", stored.indices(rows, row_axis));
+        native_order.set("columns", stored.indices(columns, column_axis));
+    }
+    out.set("ordering", native_order);
+    auto binding_record = ResultValue::object();
+    binding_record.set("kind", ResultValue::string("source_grade_linear_observation"));
+    binding_record.set("source_namespace", ResultValue::string(std::to_string(binding.operation.source_namespace())));
+    binding_record.set("source_sequence", ResultValue::string(std::to_string(binding.operation.sequence())));
+    binding_record.set("operator_map", stored.stored(binding.operation.tensor_declaration()->key, "declared_map"));
+    binding_record.set("accession_map", stored.stored(binding.accession.tensor_declaration()->key, "declared_map"));
+    binding_record.set("input_carrier", ResultValue::string(std::to_string(input_carrier)));
+    binding_record.set("output_carrier", ResultValue::string(std::to_string(output_carrier)));
+    binding_record.set("ordering", std::move(native_order));
+    binding_record.set("observation", query.at("observation"));
+    stored.bind(std::move(binding_record));
     out.set("observation", query.at("observation"));
     out.set("fields", fields);
     out.set("native_preparation", preparation);
     out.set("native_work", work);
     // A rejected action must not publish a new cached preparation or counters.
-    auto detached = Json::parse(out.dump());
+    const auto publication = stored.finish(std::move(out));
     lease.check_cancelled();
     const auto next = machine::checked_size_add(applications_, binding.fields.size());
     if (existing_base == bases_.end())
-        bases_.emplace(base_key, BaseRecord{*prepared, Json::parse(ordering.dump())});
+        bases_.emplace(base_key, BaseRecord{*prepared});
     if (existing_plan == plans_.end())
         plans_.emplace(plan_key, *plan);
     applications_ = next;
-    return detached;
+    return publication;
+}
+Json NativeObservationPlans::execute(const Json &query, const NativeObservationBinding &binding,
+                                     runtime::ExecutionLease lease, CpuResources &cpu) {
+    return render_record_view(execute_fields(query, binding, std::move(lease), cpu));
 }
 Json NativeObservationPlans::statistics() const {
     auto out = Json::object();

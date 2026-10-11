@@ -16,6 +16,16 @@ Json result_tensor_view(const NativeRecord &record) {
             throw std::invalid_argument("scientific scalar support");
         return tensor.support().contains(index) ? Json::string(tensor.state(index)->get_str()) : Json{};
     }
+    if (display == "indices") {
+        auto out = Json::array();
+        for (std::size_t i = 0; i < tensor.domain().logical_size(); ++i) {
+            const auto value = tensor.state(i);
+            if (!value || value->get_den() != 1 || value->get_num() < 0)
+                throw std::invalid_argument("scientific coordinate support");
+            out.push(exact_count(value->get_num()));
+        }
+        return out;
+    }
     if (display == "vector") {
         auto out = Json::array();
         if (record.has("coordinates")) {
@@ -36,7 +46,7 @@ Json result_tensor_view(const NativeRecord &record) {
         }
         return out;
     }
-    if (display != "sparse_matrix" || tensor.domain().extents().size() != 2)
+    if ((display != "sparse_matrix" && display != "declared_map") || tensor.domain().extents().size() != 2)
         throw std::invalid_argument("scientific tensor display");
     auto out = Json::object(), entries = Json::array();
     const auto rows = tensor.domain().extents()[0], columns = tensor.domain().extents()[1];
@@ -50,6 +60,8 @@ Json result_tensor_view(const NativeRecord &record) {
         entries.push(value);
     }
     out.set("entries", entries);
+    if (display == "declared_map")
+        out.set("complete_support", Json::boolean(tensor.support().count() == tensor.domain().logical_size()));
     return out;
 }
 NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeRecord &plan,
@@ -77,7 +89,8 @@ NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeReco
 
 namespace gadget {
 namespace {
-void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_execution = false) {
+void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_execution = false,
+                       bool execution_receipt = false) {
     scientific_detail::require(a.kind() == b.kind(), "replayed scientific value type differs");
     switch (a.kind()) {
     case NativeRecordKind::Null: return;
@@ -102,8 +115,14 @@ void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_e
         return;
     case NativeRecordKind::Object:
         scientific_detail::require(a.names() == b.names(), "replayed scientific object differs");
-        for (const auto &name : a.names())
-            if (!omit_execution || name != "execution") same_result_value(a.at(name), b.at(name), omit_execution);
+        for (const auto &name : a.names()) {
+            if (omit_execution && (name == "execution" || name == "native_work")) continue;
+            if (execution_receipt && (name == "action_limits" || name == "requirements" ||
+                name == "retained_requirements" || name == "steps" || name == "execution_steps" ||
+                name == "preparation_steps" || name.ends_with("policy") || name == "fallback")) continue;
+            same_result_value(a.at(name), b.at(name), omit_execution,
+                omit_execution && (name == "native_execution" || name == "native_preparation"));
+        }
         return;
     }
 }

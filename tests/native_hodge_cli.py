@@ -84,3 +84,36 @@ for name,template in [('remote-boundary','grade-three'),('unselected-metric','po
     family_refusals.append(dict(case=name,stage='native full-family preparation',reason=failed.stderr.strip()))
 replay.save(root/'contracts.json',dict(status='PASS',refusals=refusals,independent=records,answer_checks=answer_checks,family_refusals=family_refusals))
 print(json.dumps(dict(status='PASS',refusals=refusals,cases=len(records))))
+
+# Reopen a result bound to a referenced publication after admission through a coordinator.
+foreign_query = json.loads((root/'unfilled-square/query.json').read_text())
+foreign_query['publication'] = 'unfilled-square'
+replay.save(root/'foreign-native-query.json', foreign_query)
+foreign_output = root/'foreign-native.rfcxs'
+cli = subprocess.run([str(binary), 'query', '--study', str(root/'coordinator.json'),
+                      '--query', str(root/'foreign-native-query.json'), '--out', str(foreign_output)],
+                     capture_output=True, text=True)
+assert cli.returncode == 0, cli.stderr
+cli = subprocess.run([str(binary), 'replay-scientific', '--record', str(foreign_output),
+                      '--out-record', str(root/'foreign-replay.rfcxs')], capture_output=True, text=True)
+assert cli.returncode == 0, cli.stderr
+
+native_records = []
+for case in sorted(root.iterdir()):
+    if not (case/'query.json').is_file() or not (case/'study/study.json').is_file():
+        continue
+    checked = subprocess.run([str(session), str(case), 'native'], capture_output=True, text=True)
+    assert checked.returncode == 0, (case.name, checked.stderr)
+    native_records.append(dict(case=case.name, **json.loads(checked.stdout)))
+    replayed = case/'native/cli-replay.rfcxs'
+    cli = subprocess.run([str(binary), 'replay-scientific', '--record', str(case/'native/result.rfcxs'),
+                          '--out-record', str(replayed)], capture_output=True, text=True)
+    assert cli.returncode == 0, cli.stderr
+    changed = case/'native/changed-field.rfcxs'
+    if changed.exists():
+        refused = case/'native/refused.rfcxs'
+        cli = subprocess.run([str(binary), 'replay-scientific', '--record', str(changed),
+                              '--out-record', str(refused)], capture_output=True, text=True)
+        assert cli.returncode != 0 and not refused.exists(), case.name
+replay.save(root/'native-contracts.json', native_records)
+print(json.dumps(dict(status='PASS', native_cases=len(native_records), checks=sum(x['checks'] for x in native_records))))
