@@ -1,10 +1,11 @@
-#include <gadget/record_view.hpp>
-#include "assay_quality_detail.hpp"
 #include "assay_coverage_detail.hpp"
+#include "assay_field_detail.hpp"
+#include "assay_quality_detail.hpp"
 #include "genomic_detail.hpp"
-#include <rfc/storage/mapped_file.hpp>
-#include <rfc/storage/declaration_codec.hpp>
 #include <cmath>
+#include <gadget/record_view.hpp>
+#include <rfc/storage/declaration_codec.hpp>
+#include <rfc/storage/mapped_file.hpp>
 
 namespace gadget {
 namespace {
@@ -172,6 +173,15 @@ Json render_record_view(const NativeRecord &record) {
     case NativeRecordKind::Text:return Json::string(record.text());
     case NativeRecordKind::Bytes:{auto out=Json::object();out.set("byte_length",Json::string(std::to_string(record.bytes().size())));return out;}
     case NativeRecordKind::Object:{
+        if (record.has("schema") && record.at("schema").kind() == NativeRecordKind::Text) {
+            const auto schema = record.at("schema").text();
+            if (schema == "gadget.genotype.fields.v1")
+                return assay_detail::genotype_fields_view(record);
+            if (schema == "gadget.chromatin.fields.v1")
+                return assay_detail::chromatin_fields_view(record);
+            if (schema == "gadget.sections.fields.v1" || schema == "gadget.sections.selected.v1")
+                return assay_detail::section_fields_view(record);
+        }
         if(record.has("schema") && record.at("schema").kind()==NativeRecordKind::Text &&
            record.at("schema").text()=="gadget.alignment.fields.v1")
             return assay_detail::alignment_fields_view(record);

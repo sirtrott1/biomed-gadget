@@ -28,8 +28,8 @@ if (out/'reopened-bound-assays.rfcxs').read_bytes()!=(out/'bound-assays/workspac
 replays={}
 for assay in ['rna','atac']:
  replays[assay]=run('replay-derivation','--workspace',out/'bound-assays/workspace.rfcxs','--assay',assay,'--out',out/('replayed-'+assay))['status']
-replays['compatible_rna']=run('replay-derivation','--workspace',out/'compatible-rna/workspace.json','--assay','rna-compatible','--out',out/'replayed-compatible-rna')['status']
-workspace=json.loads((out/'compatible-rna/workspace.json').read_text());record=workspace['assays'][0]['originals']['provenance-0'];result=json.loads((out/'compatible-rna'/record['path']).read_text())['result']
+replays['compatible_rna']=run('replay-derivation','--workspace',out/'compatible-rna/workspace.rfcxs','--assay','rna-compatible','--out',out/'replayed-compatible-rna')['status']
+result=run('record-view','--input',out/'compatible-rna/workspace.rfcxs','--assay','rna-compatible')['result']
 answers=json.loads((out/'generating-pipeline/answers.json').read_text())
 answer_artifacts=[ref for answer in answers['answers'] for artifact in answer['artifacts'] for ref in artifact['results']]
 for ref in answer_artifacts:

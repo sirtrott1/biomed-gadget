@@ -2,9 +2,10 @@
 #include <gadget/record_view.hpp>
 #include <iostream>
 #include <map>
-#include <rfc/storage/file_io.hpp>
 #include <rfc/storage/declaration_codec.hpp>
+#include <rfc/storage/file_io.hpp>
 #include <rfc/storage/rfcx.hpp>
+#include <rfc/storage/temporal_diagnostics.hpp>
 #include <set>
 
 using namespace gadget;
@@ -117,7 +118,8 @@ int main(int argc, char **argv) {
     write_text(root / "import.json", spec.dump());
     import_assays(root / "import.json", root / "input");
     AssayWorkspace original(root / "input/workspace.rfcxs");
-    const auto resource_owner = std::make_shared<const AssayWorkspace>(root / "input/workspace.rfcxs");
+    const auto resource_owner =
+        std::make_shared<const AssayWorkspace>(root / "input/workspace.rfcxs");
     check_artifact_owners(original.native_publication());
     check_artifact_owners(NativeRecord::decode(original.native_publication().encode()));
     const auto recipe = Json::parse(
@@ -154,15 +156,19 @@ int main(int argc, char **argv) {
     const auto replace_namespace = [&](auto &&visit, NativeRecordValue &value) -> void {
         if (auto object = std::get_if<NativeRecordValue::Object>(&value.data)) {
             for (auto &[name, member] : object->members) {
-                if (name == "source_namespace") member = NativeRecordValue(std::string("94001"));
-                else visit(visit, member);
+                if (name == "source_namespace")
+                    member = NativeRecordValue(std::string("94001"));
+                else
+                    visit(visit, member);
             }
         } else if (auto array = std::get_if<NativeRecordValue::Array>(&value.data)) {
-            for (auto &member : array->elements) visit(visit, member);
+            for (auto &member : array->elements)
+                visit(visit, member);
         }
     };
     replace_namespace(replace_namespace, wrong_namespace);
-    adopted->native_publication().derive(std::move(wrong_namespace))
+    adopted->native_publication()
+        .derive(std::move(wrong_namespace))
         .write(root / "wrong-namespace.rfcxs");
     refuse([&] { AssayWorkspace invalid_namespace(root / "wrong-namespace.rfcxs"); });
     auto unsupported = Json::parse(request.dump());
@@ -182,46 +188,197 @@ int main(int argc, char **argv) {
               study->native_publication().at("study").at("fields").packed_encoding(0).has_value(),
           "study field declarations were expanded during publication");
     std::vector<std::string> admission_stages;
-    ScientificStudy observed(study->native_publication(), [&](std::string_view name) {
-        admission_stages.emplace_back(name);
-    });
+    ScientificStudy observed(study->native_publication(),
+                             [&](std::string_view name) { admission_stages.emplace_back(name); });
     check(observed.digest() == study->digest() && admission_stages.back() == "study_complete" &&
-              std::find(admission_stages.begin(), admission_stages.end(), "study_prefix") != admission_stages.end(),
+              std::find(admission_stages.begin(), admission_stages.end(), "study_prefix") !=
+                  admission_stages.end(),
           "observed study admission changed its source or omitted prefix checks");
-    const auto original_workspace = rfc::storage::read_file_exact(root / "derived/workspace.rfcxs",
-        native_data_limits().max_archive_bytes);
+    const auto original_workspace = rfc::storage::read_file_exact(
+        root / "derived/workspace.rfcxs", native_data_limits().max_archive_bytes);
     refuse([&] {
         AssayWorkspace aborted(root / "derived/workspace.rfcxs", [](std::string_view) {
             throw std::runtime_error("stop admission");
         });
     });
-    check(original_workspace == rfc::storage::read_file_exact(root / "derived/workspace.rfcxs",
-              native_data_limits().max_archive_bytes), "observer failure changed its input");
+    check(original_workspace ==
+              rfc::storage::read_file_exact(root / "derived/workspace.rfcxs",
+                                            native_data_limits().max_archive_bytes),
+          "observer failure changed its input");
+    const auto chromatin_recipe = Json::parse(
+        R"({"schema":"gadget.assays.query.v1","operation":"chromatin_contrast","samples":[{"id":"base","resource":"control","scale":"1","scale_provenance":"fixture"},{"id":"treated","resource":"treated","scale":"1","scale_provenance":"fixture"}],"contrasts":[{"id":"change","treated":"treated","control":"base"}],"strand_policy":"separate","thresholds":["0"],"absence_policy":"measured_zero_within_union"})");
+    auto chromatin_request = Json::parse(request.dump());
+    chromatin_request.set("recipe", chromatin_recipe);
+    chromatin_request.set("id", Json::string("chromatin"));
+    chromatin_request.set("source_namespace", Json::string("94800"));
+    const auto chromatin =
+        original.materialize_workspace(admit_record_view(chromatin_request), root / "chromatin");
+    const auto chromatin_study = chromatin->study("chromatin");
+    const auto change = chromatin_study->field_accession("all.change");
+    check(change.carrier()->grade == rfc::core::Grade{1},
+          "chromatin atoms lost their native relation grade");
+    const auto original_source = chromatin_study->endpoint();
+    auto section_recipe = Json::parse(
+        R"({"schema":"gadget.assays.query.v1","operation":"assay_sections","views":[{"id":"coverage","assay":"chromatin","partition":0,"fields":[{"section":"contrast","field":"all.change"}],"metric":{"diagonal":["2","3","4"],"domain_quantity":"scaled_coverage_contrast","domain_units":"declared interval weights divided by declared sample scale","quadrance_quantity":"coverage_defect","quadrance_units":"declared_quadrance","method":"Declared diagonal","evidence":"fixture"}}],"sections":["contrast"],"interfaces":[],"metric":{"quantity":"coverage_defect","units":"declared_quadrance","method":"Declared penalty","evidence":"fixture"},"support_policy":"require_all_nonzero_occurrences"})");
+    const auto coordinate_id = chromatin_study->cell_identifier(rfc::core::Grade{1}, 0);
+    auto interface = Json::parse(
+        R"({"id":"constraint","axes":["first"],"quantity":"coverage","units":"coverage","channel":"observation","method":"Declared observable","evidence":"fixture","participants":[{"key":"31","view":"coverage","exists":true,"orientation":"positive","magnitude":"1","map":{"domain_quantity":"scaled_coverage_contrast","domain_units":"declared interval weights divided by declared sample scale","domain_channel":"observation","codomain_quantity":"coverage","codomain_units":"coverage","codomain_channel":"observation","method":"Declared restriction","evidence":"fixture","entries":[{"observable_id":"first","source_id":"placeholder","coefficient":"1"}]}}]})");
+    interface.at("participants")
+        .at(0)
+        .at("map")
+        .at("entries")
+        .at(0)
+        .set("source_id", Json::string(coordinate_id));
+    section_recipe.at("interfaces").push(interface);
+    auto cancellation = Json::parse(interface.dump());
+    cancellation.set("id", Json::string("cancellation"));
+    cancellation.at("participants").at(0).set("key", Json::string("32"));
+    auto repeated = Json::parse(cancellation.at("participants").at(0).dump());
+    repeated.set("key", Json::string("33"));
+    repeated.set("orientation", Json::string("negative"));
+    cancellation.at("participants").push(repeated);
+    section_recipe.at("interfaces").push(cancellation);
+    const auto section_operation = chromatin->execute_record(admit_record_view(section_recipe));
+    const auto native_sections = section_operation.at("result").at("result");
+    std::vector<std::uint64_t> stalks;
+    for (std::size_t i = 0; i < native_sections.at("stalk_carriers").size(); ++i)
+        stalks.push_back(native_sections.at("stalk_carriers").at(i).integer().get_ui());
+    const auto reopened_sheaf =
+        rfc::storage::temporal_linear_cellular_sheaf(*section_operation.endpoint(), stalks);
+    const auto delta = reopened_sheaf.sheaf().coboundary(rfc::core::Grade{0});
+    check(delta.rows() == 2 && delta.cols() == 3 && delta.get(0, 0) == 1 && delta.get(1, 0) == 0,
+          "retained sheaf lost occurrence cancellation or original stalk coordinates");
+    check(native_sections.at("restrictions").size() == 3 &&
+              native_sections.at("sections").at(0).at("residual_quadrance").rational() == 8,
+          "complete section restrictions or exact metric certificate were lost");
+    auto selected_request = Json::parse(chromatin_request.dump());
+    selected_request.set("id", Json::string("compatible"));
+    selected_request.set("source_namespace", Json::string("94810"));
+    selected_request.set("recipe", section_recipe);
+    selected_request.set("view", Json::string("coverage"));
+    selected_request.set("component", Json::string("compatible"));
+    const auto selected =
+        chromatin->materialize_workspace(admit_record_view(selected_request), root / "compatible");
+    const auto selected_study = selected->study("compatible");
+    const auto compatible = selected_study->field_accession("all.contrast");
+    check(compatible.carrier()->grade == rfc::core::Grade{1} &&
+              compatible.tensor()->state(0).value() == 0 &&
+              compatible.tensor()->state(1).value() == -1 &&
+              compatible.tensor()->state(2).value() == 0,
+          "selected section flattened the original grade or lost supported zeros");
+    for (std::size_t k = 0; k < original_source->source.grade_count(); ++k) {
+        const auto grade = rfc::core::Grade{static_cast<std::uint16_t>(k)};
+        const auto &before = original_source->source.grade(grade),
+                   &after = selected_study->endpoint()->source.grade(grade);
+        check(before.cell_count() == after.cell_count() && before.identities == after.identities &&
+                  before.relation_identities == after.relation_identities &&
+                  before.occurrence_identities == after.occurrence_identities,
+              "selected section changed original source identities");
+        for (std::size_t i = 0; i < before.cell_count(); ++i)
+            check(chromatin_study->cell_identifier(grade, i) ==
+                      selected_study->cell_identifier(grade, i),
+                  "selected section changed declared source names");
+    }
+    const auto selected_producer = selected_study->producer_publication().at("result").at("result");
+    const auto complete_sections =
+        NativeRecord::decode(selected_producer.at("sections_publication").bytes());
+    check(complete_sections.source_namespace() !=
+              selected_study->native_history()->source_namespace(),
+          "interface and source complexes share a publication identity");
+    check(
+        selected->replay_derivation("compatible", root / "compatible-replay").at("status").text() ==
+                "PASS" &&
+            chromatin->replay_derivation("chromatin", root / "chromatin-replay")
+                    .at("status")
+                    .text() == "PASS",
+        "native structured replay failed");
+#if GADGET_HAS_HTSLIB
+    const std::string vcf = "##fileformat=VCFv4.3\n##contig=<ID=chr,length=12>\n"
+                            "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+                            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2\tS3\n"
+                            "chr\t2\tv1\tC\tA,G\t.\tPASS\t.\tGT\t0|0\t.|1\t2/1/1\n";
+    write_text(root / "calls.vcf", vcf);
+    auto vcf_resource =
+        Json::parse(R"({"id":"calls","format":"vcf","method":"Original call fixture"})");
+    vcf_resource.set("source", file("calls.vcf", vcf));
+    vcf_resource.set("reference", reference);
+    auto vcf_import = Json::parse(spec.dump());
+    vcf_import.set("id", Json::string("calls"));
+    auto vcf_resources = Json::array();
+    vcf_resources.push(vcf_resource);
+    vcf_import.set("resources", vcf_resources);
+    write_text(root / "calls-import.json", vcf_import.dump());
+    const auto variants = import_assay_workspace(root / "calls-import.json", root / "calls-source");
+    const auto gt_recipe = Json::parse(
+        R"({"schema":"gadget.assays.query.v1","operation":"variant_genotypes","resource":"calls","filter_policy":"pass"})");
+    auto gt_request = Json::parse(request.dump());
+    gt_request.set("id", Json::string("calls"));
+    gt_request.set("source_namespace", Json::string("94830"));
+    gt_request.set("recipe", gt_recipe);
+    const auto genotype =
+        variants->materialize_workspace(admit_record_view(gt_request), root / "called-genotypes");
+    const auto called_study = genotype->study("calls");
+    const auto copies = called_study->field_accession("all.record:0:allele:1").tensor();
+    check(copies->state(0).has_value() && *copies->state(0) == 0 && !copies->state(1) &&
+              *copies->state(2) == 2,
+          "upstream copy fields confused zero, absence or polyploid calls");
+    check(called_study->cell_identifier(rfc::core::Grade{0}, 0) == "S1" &&
+              called_study->cell_identifier(rfc::core::Grade{0}, 2) == "S3",
+          "original sample order was lost");
+    const auto call_source = called_study->producer_publication().at("result").at("result");
+    const auto calls = call_source.at("calls");
+    const auto tensor = [&](const NativeRecord &key) -> const rfc::numeric::SparseRationalTensor & {
+        const auto id = key.integer().get_ui();
+        for (const auto &value : call_source.endpoint()->tensors)
+            if (value.key == id)
+                return value.tensor;
+        throw std::runtime_error("original call tensor is absent");
+    };
+    check(tensor(calls.at("alleles")).state(0).has_value() &&
+              *tensor(calls.at("alleles")).state(0) == 0 && !tensor(calls.at("alleles")).state(2) &&
+              *tensor(calls.at("alleles")).state(3) == 1,
+          "original allele slot support was lost");
+    check(!tensor(calls.at("phase")).state(0) && *tensor(calls.at("phase")).state(1) == 1 &&
+              *tensor(calls.at("phase")).state(3) == 1 && *tensor(calls.at("phase")).state(5) == 0,
+          "phase separators of partial or unphased GT were lost");
+    variants->native_publication().write(root / "calls-portable.rfcxs");
+    fs::rename(root / "calls-source", root / "calls-source-unavailable");
+    fs::rename(root / "calls.vcf", root / "calls-unavailable.vcf");
+    check(genotype->replay_derivation("calls", root / "calls-replayed").at("status").text() ==
+              "PASS",
+          "genotype replay depends on the original VCF path");
+#endif
     const auto packed_number = [](unsigned int value) {
         using N = NativeRecordValue;
-        return NativeRecord::create(N(N::PackedArray{1, [value](const auto &emit) {
-            emit(N(rfc::numeric::Integer(value)));
-        }}), 94301);
+        return NativeRecord::create(
+            N(N::PackedArray{1,
+                             [value](const auto &emit) { emit(N(rfc::numeric::Integer(value))); }}),
+            94301);
     };
     const auto first = packed_number(85), second = packed_number(86);
     const auto &declaration = first.endpoint()->declarations.value();
-    const rfc::composite::CompiledLayout address_layout(declaration.registry, first.type(),
-        declaration.profile, declaration.resource_limits);
+    const rfc::composite::CompiledLayout address_layout(
+        declaration.registry, first.type(), declaration.profile, declaration.resource_limits);
     check(rfc::storage::encode_declared_bits(address_layout, first.value()).bytes ==
               rfc::storage::encode_declared_bits(address_layout, second.value()).bytes,
           "digest fixture must retain identical packed addresses");
     check(native_declaration_digest(first) != native_declaration_digest(second) &&
-              native_declaration_digest(first) == native_declaration_digest(NativeRecord::decode(first.encode())),
+              native_declaration_digest(first) ==
+                  native_declaration_digest(NativeRecord::decode(first.encode())),
           "packed coefficient bytes were omitted from the declaration digest");
     const auto packed_reference = [](unsigned int value) {
         using N = NativeRecordValue;
         auto payload = std::make_shared<const N>(rfc::numeric::Integer(value));
-        return NativeRecord::create(N(N::PackedArray{1, [payload](const auto &emit) {
-            emit(N(N::Object{{{"value", N(N::Owned{0, {}, {}, payload})}}}));
-        }}), 94302);
+        return NativeRecord::create(
+            N(N::PackedArray{1,
+                             [payload](const auto &emit) {
+                                 emit(N(N::Object{{{"value", N(N::Owned{0, {}, {}, payload})}}}));
+                             }}),
+            94302);
     };
     const auto reference_first = packed_reference(85), reference_second = packed_reference(86);
-    check(native_declaration_digest(reference_first) != native_declaration_digest(reference_second) &&
+    check(native_declaration_digest(reference_first) !=
+                  native_declaration_digest(reference_second) &&
               native_declaration_digest(reference_first) ==
                   native_declaration_digest(NativeRecord::decode(reference_first.encode())),
           "owning declaration resolved from a packed reference was omitted from its digest");
@@ -349,24 +506,31 @@ int main(int argc, char **argv) {
     auto bind = Json::parse(
         R"({"schema":"gadget.assays.bindings.v1","id":"bound","assays":[{"input":"derived","assay":"coverage","id":"alias"}],"resources":[],"links":[],"method":"Preserve actual study owner","evidence":"Fixture"})");
     bind.set("design", design);
-    bind.set("resources", Json::parse(
-        R"([{"input":"resources","resource":"control","id":"selected-control"},{"input":"resources","resource":"treated","id":"selected-treated"}])"));
-    bind.set("links", Json::parse(
-        R"([{"id":"sample-link","left_assay":"alias","left_observation":"sample:0","right_assay":"alias","right_observation":"sample:1","relation":"Declared sample comparison","evidence":"Fixture source fields"}])"));
+    bind.set(
+        "resources",
+        Json::parse(
+            R"([{"input":"resources","resource":"control","id":"selected-control"},{"input":"resources","resource":"treated","id":"selected-treated"}])"));
+    bind.set(
+        "links",
+        Json::parse(
+            R"([{"id":"sample-link","left_assay":"alias","left_observation":"sample:0","right_assay":"alias","right_observation":"sample:1","relation":"Declared sample comparison","evidence":"Fixture source fields"}])"));
     const std::weak_ptr<const AssayWorkspace> producer_owner = adopted;
-    auto bound_owner = AssayWorkspace::bind_workspaces(
-        {{"derived", adopted}, {"resources", resource_owner}}, admit_record_view(bind), root / "bound");
+    auto bound_owner =
+        AssayWorkspace::bind_workspaces({{"derived", adopted}, {"resources", resource_owner}},
+                                        admit_record_view(bind), root / "bound");
     check(bound_owner->catalog().at("resources").size() == 2 &&
-          bound_owner->catalog().at("links").size() == 1,
+              bound_owner->catalog().at("links").size() == 1,
           "native binding lost physical bytes or declared links");
     check(bound_owner->native_publication().at("originals").size() == 8,
           "selected resource, reference or provenance bytes were lost");
     check_artifact_owners(bound_owner->native_publication());
     auto invalid_link = Json::parse(bind.dump());
     invalid_link.at("links").at(0).set("right_observation", Json::string("absent"));
-    refuse([&] { (void)AssayWorkspace::bind_workspaces(
-        {{"derived", adopted}, {"resources", resource_owner}}, admit_record_view(invalid_link),
-        root / "invalid-linked"); });
+    refuse([&] {
+        (void)AssayWorkspace::bind_workspaces({{"derived", adopted}, {"resources", resource_owner}},
+                                              admit_record_view(invalid_link),
+                                              root / "invalid-linked");
+    });
     check(!fs::exists(root / "invalid-linked"), "invalid native link was published");
     check(bound_owner->study("alias") == study &&
               bound_owner->study("alias")->native_history() == study->native_history(),

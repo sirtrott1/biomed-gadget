@@ -1,10 +1,14 @@
 #include "assay_field_detail.hpp"
+#include "genomic_detail.hpp"
 #include "scientific_projection.hpp"
+#include "source_grade_fields.hpp"
+#include <gadget/record_view.hpp>
 #include <gadget/resources.hpp>
 #include <rfc/core/builder.hpp>
 #include <rfc/local/cellular_sheaf.hpp>
 #include <rfc/runtime/cpu_tiles.hpp>
 #include <rfc/storage/native_series_codec.hpp>
+#include <rfc/storage/temporal_diagnostics.hpp>
 
 namespace gadget::assay_detail {
 namespace {
@@ -48,7 +52,8 @@ struct Group {
 };
 } // namespace
 Json assay_sections(const AssayWorkspace &workspace, const Json &request,
-                    std::shared_ptr<CpuResources> resources) {
+                    std::shared_ptr<CpuResources> resources,
+                    std::optional<AssayFieldsSource> *retained) {
     members(request,
             {"schema", "operation", "views", "sections", "interfaces", "metric", "support_policy"},
             {"workers"});
@@ -310,125 +315,284 @@ Json assay_sections(const AssayWorkspace &workspace, const Json &request,
             c.defect = g.restriction.transpose().apply(g.action.apply(input));
             stop.check();
         });
-    auto out = Json::object(), result_sections = Json::array(), prepared = Json::array();
-    for (std::size_t g = 0; g < groups.size(); ++g) {
-        const auto &group = groups[g];
-        auto item = Json::object(), coordinates = Json::array(), rows = Json::array();
-        for (auto i : group.coordinates)
-            coordinates.push(cardinality(i));
-        for (auto i : group.rows)
-            rows.push(cardinality(i));
-        item.set("coordinates", coordinates);
-        item.set("assessed_rows", rows);
-        item.set("action", sparse_matrix(group.action));
-        item.set("residual_frame", sparse_matrix(group.projection->frame));
-        item.set("gram",
-                 sparse_matrix(rfc::field::metric_gram(
-                     group.projection->frame, group.projection->metric, group.projection->frame)));
-        item.set("constraint_rank", cardinality(group.projection->frame.cols()));
-        item.set("compatible_dimension",
-                 cardinality(group.coordinates.size() - group.projection->frame.cols()));
-        prepared.push(item);
-    }
-    for (std::size_t s = 0; s < cases.size(); ++s) {
-        const auto &c = cases[s];
-        auto item = Json::object(), fields = Json::array(), constraints = Json::array();
-        item.set("id", sections.at(s));
-        item.set("prepared_group", cardinality(c.group));
-        for (std::size_t v = 0; v < views.size(); ++v) {
-            const auto &view = views[v];
-            const auto &field = view.fields[s];
-            auto values = Json::object(), input = Json::array(), compatible = Json::array(),
-                 residual = Json::array();
-            for (std::size_t j = offsets[v]; j < offsets[v + 1]; ++j) {
-                input.push(c.support[j] ? Json::string(c.input[j].get_str()) : Json{});
-                compatible.push(c.support[j] ? Json::string(c.compatible[j].get_str()) : Json{});
-                residual.push(c.support[j] ? Json::string(c.residual[j].get_str()) : Json{});
+    {
+        using N = NativeRecordValue;
+        using namespace rfc::storage;
+        const auto integer = [](std::size_t x) {
+            return N(rfc::numeric::Integer(std::to_string(x)));
+        };
+        TemporalEndpoint endpoint(source);
+        std::vector<std::uint64_t> view_carriers, interface_carriers, stalk_carriers;
+        const auto carrier = [&](TemporalCarrierKind kind, std::size_t size,
+                                 std::optional<StableCellKey> cell = {}) {
+            const auto key = endpoint.carriers.size() + 1;
+            endpoint.carriers.push_back({key, kind, cell ? cell->grade : rfc::core::Grade{}, cell,
+                                         key, rfc::numeric::IndexDomain::linear(size)});
+            return key;
+        };
+        for (std::size_t v = 0; v < views.size(); ++v)
+            view_carriers.push_back(carrier(TemporalCarrierKind::CellStalk,
+                                            views[v].fields.front().values.size(),
+                                            StableCellKey{rfc::core::Grade{0}, v}));
+        for (std::size_t i = 0; i < dimensions.size(); ++i)
+            interface_carriers.push_back(carrier(TemporalCarrierKind::CellStalk, dimensions[i],
+                                                 StableCellKey{rfc::core::Grade{1}, i}));
+        stalk_carriers = view_carriers;
+        stalk_carriers.insert(stalk_carriers.end(), interface_carriers.begin(),
+                              interface_carriers.end());
+        const auto domain = carrier(TemporalCarrierKind::Explicit, delta.cols());
+        const auto codomain = carrier(TemporalCarrierKind::Explicit, delta.rows());
+        SourceGradeFields store(endpoint);
+        N::Array native_stalks, restrictions, prepared, result_sections, coordinates, row_map;
+        for (auto key : stalk_carriers)
+            native_stalks.elements.push_back(integer(key));
+        for (std::size_t slot = 0; slot < flags.size(); ++slot) {
+            const auto &flag = flags[slot];
+            TemporalTensorOwner owner;
+            owner.kind = TemporalOwnerKind::Occurrence;
+            owner.occurrence = {rfc::core::Grade{1},
+                                source.grade(rfc::core::Grade{1}).occurrence_identities.at(slot)};
+            restrictions.elements.push_back(store.map("restriction:" + std::to_string(slot),
+                                                      view_carriers[flag.view],
+                                                      interface_carriers[flag.relation], flag.map,
+                                                      TemporalTensorRole::SheafRestriction, owner));
+        }
+        const auto delta_key = store.map("coboundary", domain, codomain, delta);
+        const auto metric_key =
+            store.on_carrier("source.metric_diagonal", domain,
+                             SourceGradeFields::tensor(
+                                 diagonal.size(), [&](auto i) { return diagonal[i]; },
+                                 rfc::numeric::StructuralSupport::full(diagonal.size())));
+        for (std::size_t g = 0; g < groups.size(); ++g) {
+            const auto &group = groups[g];
+            const auto active = carrier(TemporalCarrierKind::Explicit, group.coordinates.size());
+            const auto assessed = carrier(TemporalCarrierKind::Explicit, group.rows.size());
+            const auto frame =
+                carrier(TemporalCarrierKind::Explicit, group.projection->frame.cols());
+            N::Array coordinate_ids, row_ids;
+            for (auto i : group.coordinates)
+                coordinate_ids.elements.push_back(integer(i));
+            for (auto i : group.rows)
+                row_ids.elements.push_back(integer(i));
+            prepared.elements.emplace_back(
+                N::Object{{{"coordinates", N(std::move(coordinate_ids))},
+                           {"assessed_rows", N(std::move(row_ids))},
+                           {"inclusion", store.map("group:" + std::to_string(g) + ".inclusion",
+                                                   active, domain, group.inclusion)},
+                           {"restriction", store.map("group:" + std::to_string(g) + ".restriction",
+                                                     codomain, assessed, group.restriction)},
+                           {"action", store.map("group:" + std::to_string(g) + ".action", active,
+                                                assessed, group.action)},
+                           {"residual_frame", store.map("group:" + std::to_string(g) + ".frame",
+                                                        frame, active, group.projection->frame)},
+                           {"gram", store.map("group:" + std::to_string(g) + ".gram", frame, frame,
+                                              rfc::field::metric_gram(group.projection->frame,
+                                                                      group.projection->metric,
+                                                                      group.projection->frame))},
+                           {"constraint_rank", integer(group.projection->frame.cols())},
+                           {"compatible_dimension",
+                            integer(group.coordinates.size() - group.projection->frame.cols())}}});
+        }
+        const auto component = [&](std::string name, std::uint64_t target, const Vector &values,
+                                   const std::vector<unsigned char> &support, std::size_t begin,
+                                   std::size_t end) {
+            std::vector<std::size_t> active;
+            for (std::size_t j = begin; j < end; ++j)
+                if (support[j])
+                    active.push_back(j - begin);
+            return store.on_carrier(
+                std::move(name), target,
+                SourceGradeFields::tensor(
+                    end - begin, [&](auto i) { return values[begin + i]; },
+                    rfc::numeric::StructuralSupport::packed(end - begin, active)));
+        };
+        for (std::size_t s = 0; s < cases.size(); ++s) {
+            const auto &c = cases[s];
+            const auto name = label(sections.at(s));
+            N::Array fields, constraints;
+            for (std::size_t v = 0; v < views.size(); ++v) {
+                const auto &field = views[v].fields[s];
+                auto meaning = Json::object();
+                for (const auto *key : {"id", "key", "context", "channel", "quantity", "units",
+                                        "method", "value_type"})
+                    meaning.set(key, field.meaning.at(key));
+                N::Object record{{{"view", N(views[v].id)},
+                                  {"ids", import_record_view(field.ids)},
+                                  {"keys", import_record_view(field.keys)},
+                                  {"source_grade", integer(field.grade)},
+                                  {"source_digest", N(field.owner->digest())},
+                                  {"meaning", import_record_view(meaning)}}};
+                for (const auto &[part, values] :
+                     std::vector<std::pair<std::string, const Vector *>>{
+                         {"input", &c.input},
+                         {"compatible", &c.compatible},
+                         {"residual", &c.residual}})
+                    record.members.emplace_back(
+                        part, component(name + "." + views[v].id + "." + part, view_carriers[v],
+                                        *values, c.support, offsets[v], offsets[v + 1]));
+                fields.elements.emplace_back(std::move(record));
             }
-            values.set("view", Json::string(view.id));
-            values.set("ids", field.ids);
-            values.set("keys", field.keys);
-            values.set("source_grade", Json::integer(field.grade));
-            values.set("source_digest", Json::string(field.owner->digest()));
-            auto meaning = Json::object();
-            // Original admission documents remain bound by source_digest and are
-            // retained in derivation lineage. Report path-independent field meaning.
+            for (std::size_t i = 0; i < dimensions.size(); ++i) {
+                const auto defect_key = component(
+                    name + ".interface:" + std::to_string(i) + ".defect", interface_carriers[i],
+                    c.defect, c.assessed, row_offsets[i], row_offsets[i + 1]);
+                constraints.elements.emplace_back(
+                    N::Object{{{"field", defect_key},
+                               {"begin", integer(row_offsets[i])},
+                               {"end", integer(row_offsets[i + 1])}}});
+            }
+            result_sections.elements.emplace_back(N::Object{
+                {{"id", N(name)},
+                 {"prepared_group", integer(c.group)},
+                 {"fields", N(std::move(fields))},
+                 {"constraints", N(std::move(constraints))},
+                 {"residual_quadrance", N(c.quadrance)},
+                 {"orthogonality", N(c.orthogonality)},
+                 {"reconstruction_verified", N(true)},
+                 {"complete",
+                  N(std::all_of(c.assessed.begin(), c.assessed.end(), [](auto x) { return x; }) &&
+                    std::all_of(c.support.begin(), c.support.end(), [](auto x) { return x; }))}}});
+        }
+        for (std::size_t v = 0; v < views.size(); ++v)
+            for (std::size_t c = 0; c < views[v].fields.front().ids.size(); ++c)
+                coordinates.elements.emplace_back(
+                    N::Object{{{"view", N(views[v].id)},
+                               {"source_id", N(views[v].fields.front().ids.at(c).text())},
+                               {"source_key", N(views[v].fields.front().keys.at(c).text())},
+                               {"source_grade", integer(views[v].fields.front().grade)}}});
+        for (std::size_t i = 0; i < interfaces.size(); ++i)
+            for (std::size_t a = 0; a < interfaces.at(i).at("axes").size(); ++a)
+                row_map.elements.emplace_back(
+                    N::Object{{{"interface", N(interfaces.at(i).at("id").text())},
+                               {"observable", N(interfaces.at(i).at("axes").at(a).text())}}});
+        N::Array dependency_rows;
+        for (const auto &row : dependencies) {
+            N::Array values;
+            for (auto j : row)
+                values.elements.push_back(integer(j));
+            dependency_rows.elements.emplace_back(std::move(values));
+        }
+        const auto reopened = temporal_linear_cellular_sheaf(endpoint, stalk_carriers);
+        require(reopened.sheaf().coboundary(rfc::core::Grade{0}) == delta,
+                "retained sheaf coboundary differs from its generating maps");
+        const auto encoded = encode_native_series(NativeTemporalSeries(
+            TemporalEndpoint(source), 1, source_codec_limits(source_byte_limit())));
+        N declaration(N::Object{
+            {{"schema", N(std::string("gadget.sections.fields.v1"))},
+             {"stalk_carriers", N(std::move(native_stalks))},
+             {"restrictions", N(std::move(restrictions))},
+             {"coboundary", delta_key},
+             {"metric_diagonal", metric_key},
+             {"request", import_record_view(request)},
+             {"prepared_groups", N(std::move(prepared))},
+             {"sections", N(std::move(result_sections))},
+             {"coordinates", N(std::move(coordinates))},
+             {"constraint_coordinates", N(std::move(row_map))},
+             {"dependencies", N(std::move(dependency_rows))},
+             {"interface_source_sha256",
+              N("sha256:" + sha256(std::string_view(reinterpret_cast<const char *>(encoded.data()),
+                                                    encoded.size())))},
+             {"execution",
+              N(N::Object{{{"owner", N(std::string("rfc::local::LinearCellularSheaf"))},
+                           {"projection_owner", N(std::string("rfc::numeric::PreparedExactSolve"))},
+                           {"worker_slots", integer(execution.worker_slots)},
+                           {"completed_tiles", integer(execution.completed_tiles)},
+                           {"prepared_solves", integer(groups.size())},
+                           {"source_coordinates", integer(diagonal.size())},
+                           {"constraint_coordinates", integer(delta.rows())}}})}}});
+        if (retained) {
+            retained->emplace(AssayFieldsSource{std::move(endpoint), std::move(declaration), {}});
+            return Json::object();
+        }
+        return section_fields_view(NativeRecord::create_from_endpoint(
+            std::move(declaration), new_native_record_namespace(), {}, std::move(endpoint)));
+    }
+}
+
+Json section_fields_view(const NativeRecord &record) {
+    if (record.at("schema").text() == "gadget.sections.selected.v1") {
+        const auto complete = NativeRecord::decode(record.at("sections_publication").bytes());
+        return section_fields_view(complete.at("result").at("result"));
+    }
+    const auto request = record.at("request");
+    const auto matrix = [&](const NativeRecord &key) {
+        return sparse_matrix(rfc::storage::temporal_tensor_matrix(retained_tensor(record, key)));
+    };
+    const auto vector = [&](const NativeRecord &key) {
+        auto result = Json::array();
+        const auto &tensor = retained_tensor(record, key).tensor;
+        for (std::size_t i = 0; i < tensor.domain().logical_size(); ++i) {
+            const auto value = tensor.state(i);
+            result.push(value ? Json::string(value->get_str()) : Json{});
+        }
+        return result;
+    };
+    auto out = Json::object(), groups = Json::array(), sections = Json::array();
+    for (std::size_t g = 0; g < record.at("prepared_groups").size(); ++g) {
+        const auto group = record.at("prepared_groups").at(g);
+        auto item = Json::object();
+        for (const auto *name :
+             {"coordinates", "assessed_rows", "constraint_rank", "compatible_dimension"})
+            item.set(name, render_record_view(group.at(name)));
+        for (const auto *name : {"action", "residual_frame", "gram"})
+            item.set(name, matrix(group.at(name)));
+        groups.push(item);
+    }
+    for (std::size_t s = 0; s < record.at("sections").size(); ++s) {
+        const auto section = record.at("sections").at(s);
+        auto item = Json::object(), fields = Json::array(), constraints = Json::array();
+        for (const auto *name : {"id", "prepared_group", "residual_quadrance", "orthogonality",
+                                 "reconstruction_verified", "complete"})
+            item.set(name, render_record_view(section.at(name)));
+        std::vector<unsigned char> support;
+        for (std::size_t v = 0; v < section.at("fields").size(); ++v) {
+            const auto field = section.at("fields").at(v);
+            auto values = Json::object();
             for (const auto *name :
-                 {"id", "key", "context", "channel", "quantity", "units", "method", "value_type"})
-                meaning.set(name, field.meaning.at(name));
-            values.set("meaning", meaning);
-            values.set("input", input);
-            values.set("compatible", compatible);
-            values.set("residual", residual);
+                 {"view", "ids", "keys", "source_grade", "source_digest", "meaning"})
+                values.set(name, render_record_view(field.at(name)));
+            for (const auto *part : {"input", "compatible", "residual"})
+                values.set(part, vector(field.at(part)));
+            const auto &tensor = retained_tensor(record, field.at("input")).tensor;
+            for (std::size_t i = 0; i < tensor.domain().logical_size(); ++i)
+                support.push_back(tensor.state(i).has_value());
             fields.push(values);
         }
-        for (std::size_t r = 0; r < delta.rows(); ++r) {
-            auto constraint = Json::object(), missing = Json::array();
-            for (auto i : dependencies[r])
-                if (!c.support[i])
-                    missing.push(cardinality(i));
-            constraint.set("row", cardinality(r));
-            constraint.set("assessed", Json::boolean(c.assessed[r]));
-            constraint.set("input_defect",
-                           c.assessed[r] ? Json::string(c.defect[r].get_str()) : Json{});
-            constraint.set("compatible_defect", c.assessed[r] ? Json::string("0") : Json{});
-            constraint.set("missing_coordinates", missing);
-            constraints.push(constraint);
+        std::size_t row = 0;
+        for (std::size_t i = 0; i < section.at("constraints").size(); ++i) {
+            const auto &tensor =
+                retained_tensor(record, section.at("constraints").at(i).at("field")).tensor;
+            for (std::size_t j = 0; j < tensor.domain().logical_size(); ++j, ++row) {
+                const auto state = tensor.state(j);
+                auto constraint = Json::object(), missing = Json::array();
+                const auto dependencies = record.at("dependencies").at(row);
+                for (std::size_t k = 0; k < dependencies.size(); ++k) {
+                    const auto coordinate = dependencies.at(k).integer().get_ui();
+                    if (!support.at(coordinate))
+                        missing.push(cardinality(coordinate));
+                }
+                constraint.set("row", cardinality(row));
+                constraint.set("assessed", Json::boolean(state.has_value()));
+                constraint.set("input_defect", state ? Json::string(state->get_str()) : Json{});
+                constraint.set("compatible_defect", state ? Json::string("0") : Json{});
+                constraint.set("missing_coordinates", missing);
+                constraints.push(constraint);
+            }
         }
         item.set("fields", fields);
         item.set("constraints", constraints);
-        item.set("residual_quadrance", Json::string(c.quadrance.get_str()));
-        item.set("orthogonality", Json::string(c.orthogonality.get_str()));
-        item.set("reconstruction_verified", Json::boolean(true));
-        item.set("complete",
-                 Json::boolean(
-                     std::all_of(c.assessed.begin(), c.assessed.end(), [](auto x) { return x; }) &&
-                     std::all_of(c.support.begin(), c.support.end(), [](auto x) { return x; })));
-        result_sections.push(item);
+        sections.push(item);
     }
-    rfc::storage::TemporalEndpoint endpoint(source);
-    const auto encoded = rfc::storage::encode_native_series(
-        rfc::storage::NativeTemporalSeries(endpoint, 1, source_codec_limits(source_byte_limit())));
-    out.set(
-        "interface_source_sha256",
-        Json::string("sha256:" + sha256(std::string(reinterpret_cast<const char *>(encoded.data()),
-                                                    encoded.size()))));
+    out.set("interface_source_sha256", Json::string(record.at("interface_source_sha256").text()));
     out.set("interface_grade", Json::integer(1));
-    out.set("interface_chain_verified", Json::boolean(sheaf.is_cochain_complex()));
-    out.set("views", request.at("views"));
-    out.set("interfaces", interfaces);
-    out.set("metric", penalty);
-    out.set("coboundary", sparse_matrix(delta));
-    auto coordinate_map = Json::array(), row_map = Json::array();
-    for (std::size_t v = 0; v < views.size(); ++v)
-        for (std::size_t c = 0; c < views[v].fields.front().ids.size(); ++c) {
-            auto coordinate = Json::object();
-            coordinate.set("view", Json::string(views[v].id));
-            coordinate.set("source_id", views[v].fields.front().ids.at(c));
-            coordinate.set("source_key", views[v].fields.front().keys.at(c));
-            coordinate.set("source_grade", Json::integer(views[v].fields.front().grade));
-            coordinate_map.push(coordinate);
-        }
-    for (std::size_t i = 0; i < interfaces.size(); ++i)
-        for (std::size_t a = 0; a < interfaces.at(i).at("axes").size(); ++a) {
-            auto coordinate = Json::object();
-            coordinate.set("interface", interfaces.at(i).at("id"));
-            coordinate.set("observable", interfaces.at(i).at("axes").at(a));
-            row_map.push(coordinate);
-        }
-    out.set("coordinates", coordinate_map);
-    out.set("constraint_coordinates", row_map);
-    out.set("prepared_groups", prepared);
-    out.set("sections", result_sections);
-    auto receipt = Json::object();
-    receipt.set("owner", Json::string("rfc::local::LinearCellularSheaf"));
-    receipt.set("projection_owner", Json::string("rfc::numeric::PreparedExactSolve"));
-    receipt.set("worker_slots", cardinality(execution.worker_slots));
-    receipt.set("completed_tiles", cardinality(execution.completed_tiles));
-    receipt.set("prepared_solves", cardinality(groups.size()));
-    receipt.set("source_coordinates", cardinality(diagonal.size()));
-    receipt.set("constraint_coordinates", cardinality(delta.rows()));
-    out.set("execution", receipt);
+    out.set("interface_chain_verified", Json::boolean(true));
+    for (const auto *name : {"views", "interfaces", "metric"})
+        out.set(name, render_record_view(request.at(name)));
+    out.set("coboundary", matrix(record.at("coboundary")));
+    for (const auto *name : {"coordinates", "constraint_coordinates", "execution"})
+        out.set(name, render_record_view(record.at(name)));
+    out.set("prepared_groups", groups);
+    out.set("sections", sections);
     return out;
 }
 } // namespace gadget::assay_detail

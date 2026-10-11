@@ -1,16 +1,17 @@
+#include "assay_coverage_detail.hpp"
 #include "assay_detail.hpp"
 #include "assay_field_detail.hpp"
 #include "assay_quality_detail.hpp"
-#include "assay_coverage_detail.hpp"
 #include "genomic_detail.hpp"
+#include "source_grade_fields.hpp"
 #include <algorithm>
 #include <gadget/resources.hpp>
 #include <limits>
 #include <rfc/core/builder.hpp>
 #include <rfc/numeric/exact_matrix.hpp>
 #include <rfc/runtime/work_graph.hpp>
-#include <rfc/storage/native_series_codec.hpp>
 #include <rfc/storage/mapped_file.hpp>
+#include <rfc/storage/native_series_codec.hpp>
 
 namespace gadget {
 namespace {
@@ -1744,6 +1745,10 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
         } else
             resources = CpuResources::local();
     }
+    if (operation == "variant_genotypes" || operation == "chromatin_contrast" ||
+        operation == "assay_sections")
+        return render_record_view(
+            execute_structured(admit_record_view(request), resources, {}, false).at("result"));
     if (operation == "feature_counts" ||
         (operation == "expression_allocations" && !request.has("coupling")))
         return render_record_view(execute_assignment(admit_record_view(request), resources).at("result"));
@@ -2837,9 +2842,180 @@ AssayWorkspace::execute_aggregation(const NativeRecord &request,
         source_namespace.value_or(new_native_record_namespace()),
         std::move(fields.sources), request, std::move(certificate));
 }
+NativeRecord AssayWorkspace::execute_structured(
+    const NativeRecord &request, std::shared_ptr<CpuResources> resources,
+    std::optional<std::uint64_t> source_namespace, bool retain_source,
+    const NativeRecord *selection, std::optional<std::uint64_t> section_namespace) const {
+    using N = NativeRecordValue;
+    const auto query = render_record_view(request);
+    require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
+    if (!resources)
+        resources = CpuResources::local();
+    const auto name = query.at("operation").text();
+    std::optional<AssayFieldsSource> retained;
+    if (name == "assay_sections") {
+        assay_sections(*this, query, resources, &retained);
+    } else {
+        require(name == "variant_genotypes" || name == "chromatin_contrast",
+                "structured assay operation");
+        ResourceImages images;
+        const auto load = [&](const Json &id) {
+            const auto name = text(id);
+            require(state_->physical.contains(name), "unknown physical resource");
+            if (images.contains(name))
+                return;
+            const auto item = state_->physical.at(name);
+            images.emplace(name, ResourceImage{item.at("declaration"),
+                                               state_->artifact(item.at("original")),
+                                               item.has("reference_original")
+                                                   ? state_->artifact(item.at("reference_original"))
+                                                   : std::string{}});
+        };
+        if (query.has("resource"))
+            load(query.at("resource"));
+        if (query.has("samples"))
+            for (std::size_t i = 0; i < query.at("samples").size(); ++i)
+                load(query.at("samples").at(i).at("resource"));
+        genomic_analysis(images, query, resources, &retained);
+    }
+    require(retained.has_value(), "structured native fields missing");
+    auto fields = std::move(*retained);
+    const auto certificate = [&](N result, std::optional<N> workspace = {}) {
+        N::Object value{{{"schema", N(std::string("gadget.assay.result.native.v1"))},
+                         {"query", import_record_view(query)},
+                         {"source_digest", N(digest())},
+                         {"result", std::move(result)},
+                         {"arithmetic", N(std::string("rational"))},
+                         {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+                         {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}};
+        if (workspace)
+            value.members.emplace_back("workspace_publication", std::move(*workspace));
+        return N(std::move(value));
+    };
+    if (selection) {
+        require(name == "assay_sections" && selection->has("view") && selection->has("component"),
+                "section materialization requires a view and component");
+        const auto component = selection->at("component").text(),
+                   view_id = selection->at("view").text();
+        require(component == "input" || component == "compatible" || component == "residual",
+                "section component");
+        std::optional<std::size_t> selected;
+        for (std::size_t v = 0; v < query.at("views").size(); ++v)
+            if (query.at("views").at(v).at("id").text() == view_id)
+                selected = v;
+        require(selected.has_value(), "selected section view not declared");
+        const auto complete = retain_operation(
+            std::move(fields.endpoint), section_namespace.value_or(new_native_record_namespace()),
+            {}, request, certificate(std::move(fields.declaration)));
+        const auto declaration = complete.at("result").at("result");
+        const auto view = query.at("views").at(*selected);
+        const auto original =
+            study(view.at("assay").text(),
+                  count(view.at("partition"), std::numeric_limits<std::size_t>::max(),
+                        "section view partition"));
+        auto endpoint = *original->endpoint();
+        SourceGradeFields store(endpoint);
+        N::Array selected_fields, ids, metrics;
+        const auto sections = declaration.at("sections");
+        const auto first = sections.at(0).at("fields").at(*selected);
+        const auto grade = static_cast<std::uint16_t>(first.at("source_grade").integer().get_ui());
+        require(selection->at("channel").text() == first.at("meaning").at("channel").text(),
+                "section materialization preserves the source channel");
+        const auto carrier =
+            std::find_if(endpoint.carriers.begin(), endpoint.carriers.end(), [&](const auto &c) {
+                return c.kind == TemporalCarrierKind::SourceGrade && c.grade.value == grade;
+            });
+        require(carrier != endpoint.carriers.end(), "selected source grade carrier absent");
+        const auto carrier_key = carrier->key;
+        for (std::size_t s = 0; s < sections.size(); ++s) {
+            const auto field = sections.at(s).at("fields").at(*selected);
+            const auto &actual = retained_tensor(declaration, field.at(component)).tensor;
+            require(actual.domain() == carrier->domain,
+                    "section and original source coordinates disagree");
+            const auto id = sections.at(s).at("id").text();
+            const auto key = store.on_carrier(id, carrier_key, actual);
+            selected_fields.elements.emplace_back(N::Object{
+                {{"id", N(id)},
+                 {"key", key},
+                 {"quantity",
+                  N(component + "_section_of_" + field.at("meaning").at("quantity").text())},
+                 {"units", N(field.at("meaning").at("units").text())},
+                 {"method",
+                  N(std::string("Declared interface restrictions and metric projection"))}}});
+        }
+        for (std::size_t k = 0; k < endpoint.source.grade_count(); ++k) {
+            N::Array names;
+            const auto g = rfc::core::Grade{static_cast<std::uint16_t>(k)};
+            for (std::size_t i = 0; i < endpoint.source.grade(g).cell_count(); ++i)
+                names.elements.emplace_back(original->cell_identifier(g, i));
+            ids.elements.emplace_back(std::move(names));
+            auto form = original->declaration().at("contexts").at(0).at("metrics").at(k);
+            if (k == grade || form.at("kind").text() == "diagonal") {
+                const auto values =
+                    k == grade ? view.at("metric").at("diagonal") : form.at("values");
+                const auto target = std::find_if(
+                    endpoint.carriers.begin(), endpoint.carriers.end(), [&](const auto &c) {
+                        return c.kind == TemporalCarrierKind::SourceGrade && c.grade == g;
+                    });
+                require(target != endpoint.carriers.end(), "metric source grade carrier absent");
+                const auto key = store.on_carrier(
+                    "selected.metric:" + std::to_string(k), target->key,
+                    SourceGradeFields::tensor(
+                        values.size(), [&](auto i) { return exact_rational(values.at(i).text()); },
+                        rfc::numeric::StructuralSupport::full(values.size())));
+                metrics.elements.emplace_back(
+                    N::Object{{{"kind", N(std::string("diagonal_field"))},
+                               {"key", N(std::get<rfc::numeric::Integer>(key.data).get_str())}}});
+            } else
+                metrics.elements.push_back(import_record_view(form));
+        }
+        const auto &base = original->native_publication();
+        std::uint64_t next = 1;
+        for (const auto &source : base.raw_sources())
+            next = std::max(next, rfc::machine::checked_size_add(source.key(), 1));
+        auto section_bytes = complete.archive_source(next);
+        const auto section_size = section_bytes.bytes().size();
+        auto workspace =
+            native_publication().archive_source(rfc::machine::checked_size_add(next, 1));
+        const auto workspace_size = workspace.bytes().size();
+        N selected_declaration(
+            N::Object{{{"schema", N(std::string("gadget.sections.selected.v1"))},
+                       {"fields", N(std::move(selected_fields))},
+                       {"cell_ids", N(std::move(ids))},
+                       {"metrics", N(std::move(metrics))},
+                       {"view", N(view_id)},
+                       {"component", N(component)},
+                       {"sections_publication", N(N::ByteSpan{next, 0, section_size, false})}}});
+        auto result = certificate(std::move(selected_declaration),
+                                  N(N::ByteSpan{next + 1, 0, workspace_size, false}));
+        std::vector<TemporalTensor> additions;
+        const auto original_count = original->endpoint()->tensors.size();
+        additions.insert(additions.end(),
+                         std::make_move_iterator(endpoint.tensors.begin() + original_count),
+                         std::make_move_iterator(endpoint.tensors.end()));
+        const auto published = NativeRecord::publish_fields(
+            base, source_namespace.value_or(new_native_record_namespace()), std::move(additions),
+            std::move(result), {std::move(section_bytes), std::move(workspace)});
+        return retain_operation(published, request, published.unbound_value());
+    }
+    std::optional<N> workspace;
+    if (retain_source) {
+        auto owner = native_publication().archive_source(1);
+        workspace = N(N::ByteSpan{1, 0, owner.bytes().size(), false});
+        fields.sources.push_back(std::move(owner));
+    }
+    return retain_operation(std::move(fields.endpoint),
+                            source_namespace.value_or(new_native_record_namespace()),
+                            std::move(fields.sources), request,
+                            certificate(std::move(fields.declaration), std::move(workspace)));
+}
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
     const auto query = render_record_view(request);
+    if (query.has("operation") && (query.at("operation").text() == "variant_genotypes" ||
+                                   query.at("operation").text() == "chromatin_contrast" ||
+                                   query.at("operation").text() == "assay_sections"))
+        return execute_structured(request, std::move(resources));
     if (query.has("operation") && query.at("operation").text() == "controlled_coverage")
         return execute_coverage(request,std::move(resources));
     if (query.has("operation") && query.at("operation").text() == "spatial_relations")

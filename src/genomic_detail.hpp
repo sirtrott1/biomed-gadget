@@ -38,9 +38,13 @@ Json feature_count_fields_view(const NativeRecord &record);
 Json expression_fields_view(const NativeRecord &record);
 Json aggregation_fields_view(const NativeRecord &record);
 Json allocation_fields_summary_view(const NativeRecord &allocation_fields);
-Json genotype_analysis(const ResourceImage &resource, const Json &request);
+Json genotype_analysis(const ResourceImage &resource, const Json &request,
+                       std::optional<AssayFieldsSource> *retained = nullptr);
+Json genotype_fields_view(const NativeRecord &record);
 Json genomic_analysis(const ResourceImages &resources, const Json &request,
-                      std::shared_ptr<CpuResources> budget);
+                      std::shared_ptr<CpuResources> budget,
+                      std::optional<AssayFieldsSource> *retained = nullptr);
+Json chromatin_fields_view(const NativeRecord &record);
 Json feature_allocation_evidence(const ResourceImages &images, const Json &request,
                                  Vector *native_counts = nullptr);
 Json expression_allocations(const ResourceImages &images, const Json &request,
@@ -61,11 +65,11 @@ struct NativeAssayPartition {
     std::shared_ptr<const ScientificStudy> owner;
 };
 // Native field pins supply source coordinates to the canonical map actions.
-Json native_aggregate_analysis(
-    const Axis &features, const Axis &observations,
-    const std::vector<NativeAssayPartition> &partitions, const Json &declaration,
-    const Json &request, const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
-    std::optional<AssayFieldsSource> *retained = nullptr);
+Json native_aggregate_analysis(const Axis &features, const Axis &observations,
+                               const std::vector<NativeAssayPartition> &partitions,
+                               const Json &declaration, const Json &request,
+                               const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
+                               std::optional<AssayFieldsSource> *retained = nullptr);
 Json design_aggregation(const Matrix &matrix, const Json &declaration, const Json &request,
                         const rfc::runtime::CpuResourceCoordinator::Reservation &reservation,
                         const std::vector<NativeAssayPartition> &partitions = {},

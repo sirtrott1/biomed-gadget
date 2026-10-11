@@ -91,9 +91,10 @@ for a in combined['assays']:
   check(Path(p['path']).suffix=='.rfcxs','Native study binding')
 # Independent six-coordinate before/after projection witnesses from the declaration.
 section=json.loads((root/'pipeline/sections/result.json').read_text())['assays'][0]
-# Full numerical certificate is retained in the published assay provenance.
-derived_root=root/'pipeline/sections/workspace';derived=json.loads((derived_root/'workspace.json').read_text())
-proof=json.loads((derived_root/derived['assays'][0]['originals']['provenance-0']['path']).read_text())['result']
+# The selected original carrier retains the complete native interface result.
+derived_root=root/'pipeline/sections/workspace'
+proof=run('record-view','--input',derived_root/'workspace.rfcxs','--assay','rna-compatible')['result']
+check(not (derived_root/'workspace.json').exists())
 check(Q(proof['sections'][0]['residual_quadrance'])==Q(1420,51))
 check([Q(v) for f in proof['sections'][0]['fields'] for v in f['compatible']]==[Q(3),Q(84,17),Q(3),Q(191,51),Q(382,51),Q(443,51)])
 check(proof['sections'][1]['residual_quadrance']=='0' and proof['sections'][1]['complete'])
@@ -122,7 +123,7 @@ shutil.copytree(bound,root/'portable-bound');shutil.copytree(derived_root,root/'
 shutil.move(root/'pipeline',root/'removed-pipeline');shutil.move(root/'source',root/'removed-source')
 run('native-workspace','--workspace',root/'portable-bound/workspace.rfcxs','--out',root/'bound-reopened.rfcxs')
 check((root/'bound-reopened.rfcxs').read_bytes()==(root/'portable-bound/workspace.rfcxs').read_bytes(),'Complete bound archive reencoding')
-run('replay-derivation','--workspace',root/'portable-derived/workspace.json','--assay','rna-compatible','--out',root/'replayed')
+run('replay-derivation','--workspace',root/'portable-derived/workspace.rfcxs','--assay','rna-compatible','--out',root/'replayed')
 # Each grouped branch remains reproducible from its nested original source files.
 for name in ['rna','atac']:
  run('replay-derivation','--workspace',root/'portable-bound/workspace.rfcxs','--assay',name,'--out',root/('replayed-'+name))

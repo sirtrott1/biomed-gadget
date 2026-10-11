@@ -318,6 +318,88 @@ NativeRecord quantitative_study(const NativeRecord &producer, const NativeRecord
                        {"field_sets", N(N::Array{})}}});
     return ScientificStudy::publish_annotations(producer, std::move(study), N(std::move(raw_docs)));
 }
+NativeRecord structured_study(const NativeRecord &producer, const NativeRecord &request) {
+    const auto source = producer.at("result").at("result");
+    const auto schema = source.at("schema").text();
+    require(schema == "gadget.genotype.fields.v1" || schema == "gadget.chromatin.fields.v1" ||
+                schema == "gadget.sections.selected.v1",
+            "unsupported structured native producer");
+    N::Array docs, raw_docs, evidence, document_names, bindings, metrics, fields;
+    const auto document = [&](std::string id, const NativeRecord &original) {
+        const auto bytes = original.bytes();
+        docs.elements.emplace_back(N::Object{
+            {{"id", N(id)},
+             {"path", N(id)},
+             {"sha256",
+              N("sha256:" + sha256(std::string_view(reinterpret_cast<const char *>(bytes.data()),
+                                                    bytes.size())))},
+             {"format", string("binary")}}});
+        raw_docs.elements.emplace_back(
+            N::Object{{{"id", N(id)}, {"bytes", original.materialize_value()}}});
+        if (!bytes.empty()) {
+            evidence.elements.push_back(span_reference(id, bytes.size()));
+            document_names.elements.emplace_back(id);
+        }
+    };
+    document("source_workspace", producer.at("result").at("workspace_publication"));
+    document("analysis_protocol", producer.at("request_publication"));
+    if (source.has("sections_publication"))
+        document("interface_sections", source.at("sections_publication"));
+    for (std::size_t k = 0; k < producer.endpoint()->source.grade_count(); ++k) {
+        N::Object binding{{{"grade", N(rfc::numeric::Integer(std::to_string(k)))},
+                           {"id_prefix", N("grade" + std::to_string(k) + ":")},
+                           {"label_prefix", N("Grade " + std::to_string(k) + " cell ")},
+                           {"kind", string("retained_source_cell")},
+                           {"evidence", N(N::Object{{{"kind", string("documents")},
+                                                     {"documents", N(document_names)}}})}}};
+        if (source.has("cell_ids") &&
+            source.at("cell_ids").at(k).kind() != NativeRecordKind::Null) {
+            binding.members.emplace_back("ids", source.at("cell_ids").at(k).unbound_value());
+            binding.members.emplace_back("labels", source.at("cell_ids").at(k).unbound_value());
+        }
+        bindings.elements.emplace_back(std::move(binding));
+        metrics.elements.push_back(source.has("metrics")
+                                       ? source.at("metrics").at(k).unbound_value()
+                                       : N(N::Object{{{"kind", string("identity")}}}));
+    }
+    const auto channel = request.at("channel").text();
+    require(channel == "G" || channel == "E" || channel == "T" || channel == "observation",
+            "derived field channel");
+    std::set<std::string> ids;
+    const auto declarations = source.at("fields");
+    for (std::size_t f = 0; f < declarations.size(); ++f) {
+        const auto declaration = declarations.at(f);
+        const auto id = declaration.at("id").text();
+        require(ids.insert(id).second, "derived field identity is ambiguous");
+        fields.elements.emplace_back(
+            N::Object{{{"id", N("all." + id)},
+                       {"key", N(declaration.at("key").integer().get_str())},
+                       {"context", string("all")},
+                       {"channel", N(channel)},
+                       {"quantity", N(declaration.at("quantity").text())},
+                       {"units", N(declaration.at("units").text())},
+                       {"method", N(declaration.at("method").text())},
+                       {"value_type", string("quantitative")},
+                       {"evidence", N(evidence)}}});
+    }
+    auto design = request.at("design").unbound_value(retained_request_sources(producer, request));
+    require(!request.at("design").has("covariates"), "derived design uses study field bindings");
+    std::get<N::Object>(design.data).members.emplace_back("covariates", N(N::Array{}));
+    N study(N::Object{{{"schema", string("gadget.scientific.study.v3")},
+                       {"id", N(request.at("id").text())},
+                       {"design", std::move(design)},
+                       {"documents", N(std::move(docs))},
+                       {"cell_bindings", N(std::move(bindings))},
+                       {"occurrence_evidence", string("parent_cell")},
+                       {"contexts", N(N::Array{{N(N::Object{{{"id", string("all")},
+                                                             {"block", N{}},
+                                                             {"metrics", N(std::move(metrics))},
+                                                             {"time", N{}}}})}})},
+                       {"fields", N(std::move(fields))},
+                       {"field_sets", N(N::Array{})}}});
+    return ScientificStudy::publish_annotations(producer, std::move(study), N(std::move(raw_docs)));
+}
+void equal_source(const NativeRecord &expected, const NativeRecord &actual);
 void equal_record_content(const NativeRecord &expected, const NativeRecord &actual,
                           bool software_receipt = false) {
     require(expected.kind() == actual.kind(), "replayed declaration constructor differs");
@@ -347,7 +429,14 @@ void equal_record_content(const NativeRecord &expected, const NativeRecord &actu
                 continue;
             const bool identity = name == "allocation_identity" && expected.has("schema") &&
                 expected.at("schema").text() == "gadget.feature.count.fields.v1";
-            equal_record_content(expected.at(name), actual.at(name), identity);
+            if (name == "sections_publication") {
+                const auto old = NativeRecord::decode(expected.at(name).bytes());
+                const auto now = NativeRecord::decode(actual.at(name).bytes());
+                require(old.source_namespace() == now.source_namespace(),
+                        "replayed section namespace differs");
+                equal_source(old, now);
+            } else
+                equal_record_content(expected.at(name), actual.at(name), identity);
         }
         return;
     case NativeRecordKind::Array:
@@ -386,7 +475,8 @@ void equal_source(const NativeRecord &expected, const NativeRecord &actual) {
         require(x.key == y.key && x.role == y.role && x.input == y.input && x.output == y.output &&
                     x.interpretation == y.interpretation &&
                     temporal_endpoint_detail::tensor_equal(x, y),
-                "replayed field/support differs");
+                "replayed field/support differs for tensor " + std::to_string(x.key) + " (" +
+                    x.interpretation + ")");
     }
     const auto old = expected.at("result").at("result"), now = actual.at("result").at("result");
     require(old.at("schema").text() == now.at("schema").text(),
@@ -486,7 +576,9 @@ Json AssayWorkspace::materialize_record(const NativeRecord &request, const fs::p
 bool AssayWorkspace::supports_native_materialization(std::string_view operation) {
     return operation == "controlled_coverage" || operation == "spatial_relations" ||
            operation == "feature_counts" || operation == "expression_allocations" ||
-           operation == "aggregate_assay" || operation == "design_aggregation";
+           operation == "aggregate_assay" || operation == "design_aggregation" ||
+           operation == "variant_genotypes" || operation == "chromatin_contrast" ||
+           operation == "assay_sections";
 }
 bool AssayWorkspace::supports_native_materialization(const NativeRecord &recipe) {
     const auto operation = recipe.at("operation").text();
@@ -502,9 +594,15 @@ AssayWorkspace::materialize_workspace(const NativeRecord &request, const fs::pat
 }
 std::shared_ptr<const AssayWorkspace>
 AssayWorkspace::materialize_native_fields(const NativeRecord &request, const fs::path &destination,
-                                          std::shared_ptr<CpuResources> resources) const {
+                                          std::shared_ptr<CpuResources> resources,
+                                          std::optional<std::uint64_t> section_namespace) const {
     const auto view = render_record_view(request);
-    members(view, {"schema", "id", "source_namespace", "design", "recipe", "channel"});
+    members(view, {"schema", "id", "source_namespace", "design", "recipe", "channel"},
+            {"view", "component"});
+    const bool section = request.at("recipe").at("operation").text() == "assay_sections";
+    require(section ? request.has("view") && request.has("component")
+                    : !request.has("view") && !request.has("component"),
+            "section selection scope");
     require(request.at("schema").text() == "gadget.assays.materialize.v1",
             "materialization schema");
     require(!fs::exists(destination), "derived assay destination exists");
@@ -515,16 +613,19 @@ AssayWorkspace::materialize_native_fields(const NativeRecord &request, const fs:
     const bool coverage = request.at("recipe").at("operation").text() == "controlled_coverage";
     const auto name = request.at("recipe").at("operation").text();
     const bool aggregation = name == "aggregate_assay" || name == "design_aggregation";
-    const auto operation = spatial ? execute_spatial(request.at("recipe"), std::move(resources), ns)
-                           : coverage
-                               ? execute_coverage(request.at("recipe"), std::move(resources), ns)
-                           : aggregation
-                               ? execute_aggregation(request.at("recipe"), std::move(resources), ns)
-                               : execute_assignment(request.at("recipe"), std::move(resources), ns);
-    auto admitted =
-        std::make_shared<const ScientificStudy>(spatial    ? spatial_study(operation, request)
-                                                : coverage ? coverage_study(operation, request)
-                                                           : quantitative_study(operation, request));
+    const bool structured = section || name == "variant_genotypes" || name == "chromatin_contrast";
+    const auto operation =
+        structured    ? execute_structured(request.at("recipe"), std::move(resources), ns, true,
+                                           section ? &request : nullptr, section_namespace)
+        : spatial     ? execute_spatial(request.at("recipe"), std::move(resources), ns)
+        : coverage    ? execute_coverage(request.at("recipe"), std::move(resources), ns)
+        : aggregation ? execute_aggregation(request.at("recipe"), std::move(resources), ns)
+                      : execute_assignment(request.at("recipe"), std::move(resources), ns);
+    auto admitted = std::make_shared<const ScientificStudy>(
+        structured ? structured_study(operation, request)
+        : spatial  ? spatial_study(operation, request)
+        : coverage ? coverage_study(operation, request)
+                   : quantitative_study(operation, request));
     const auto collection =
         publish_studies(request, request.at("id").text(), {{request.at("id").text(), admitted}});
     fs::create_directories(fs::absolute(destination).parent_path());
@@ -570,8 +671,14 @@ Json AssayWorkspace::replay_native_derivation(const std::string &id, const fs::p
     AssayWorkspace generating(stage / "original-workspace.rfcxs");
     require(generating.digest() == producer.at("result").at("source_digest").text(),
             "generating workspace binding differs");
-    const auto regenerated_workspace = generating.materialize_workspace(
-        request, stage / "replayed", std::move(resources));
+    std::optional<std::uint64_t> section_namespace;
+    const auto generated_fields = producer.at("result").at("result");
+    if (generated_fields.has("sections_publication"))
+        section_namespace =
+            NativeRecord::decode(generated_fields.at("sections_publication").bytes())
+                .source_namespace();
+    const auto regenerated_workspace = generating.materialize_native_fields(
+        request, stage / "replayed", std::move(resources), section_namespace);
     const auto regenerated = regenerated_workspace->study(request.at("id").text());
     const auto actual = regenerated->producer_publication();
     equal_source(producer, actual);
@@ -598,10 +705,14 @@ Json AssayWorkspace::derivation_certificate(const std::string &id) const {
     const bool assignment = coverage.at("schema").text() == "gadget.feature.count.fields.v1" ||
                             coverage.at("schema").text() == "gadget.expression.fields.v1" ||
                             coverage.at("schema").text() == "gadget.aggregation.fields.v1";
-    require(spatial || assignment || coverage.at("schema").text() == "gadget.coverage.fields.v1",
+    const auto schema = coverage.at("schema").text();
+    const bool structured = schema == "gadget.genotype.fields.v1" ||
+                            schema == "gadget.chromatin.fields.v1" ||
+                            schema == "gadget.sections.selected.v1";
+    require(spatial || assignment || structured || schema == "gadget.coverage.fields.v1",
             "unsupported native generating result");
-    auto result = assignment ? render_record_view(coverage) : Json::object();
-    if (!assignment) {
+    auto result = (assignment || structured) ? render_record_view(coverage) : Json::object();
+    if (!assignment && !structured) {
         result.set("schema", Json::string(spatial ? "gadget.spatial.fields.reference.v1"
                                                   : "gadget.coverage.fields.reference.v1"));
         result.set("native", source->declaration().at("native"));

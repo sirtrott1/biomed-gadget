@@ -233,8 +233,13 @@ def main():
         save(name+'-derive.json',request)
         destination = root/('derived-'+name)
         admitted = run('derive-assays','--workspace',workspace,'--request',root/(name+'-derive.json'),'--out',destination)
-        if name not in ('spatial', 'counts-sam', 'aggregate'):
+        if name not in ('spatial', 'counts-sam', 'aggregate', 'chromatin', 'genotypes-calls.vcf'):
             check(len(admitted['assays'][0]['declaration']['provenance']) >= 3,'derived source lineage')
+        if name in ('chromatin', 'genotypes-calls.vcf'):
+            check(admitted['schema'] == 'gadget.assays.workspace.v2', 'native structured publication')
+            check(not (destination/'workspace.json').exists(), 'no numerical workspace authority')
+            reference = run('record-view', '--input', destination/'workspace.rfcxs', '--assay', 'derived-'+name)['result']
+            check(reference == results[name], 'actual native fields retain the complete optional result')
         if name == 'aggregate':
             check(admitted['schema'] == 'gadget.assays.workspace.v2','native aggregation publication')
             reference = run('record-view','--input',destination/'workspace.rfcxs','--assay','derived-aggregate')['result']
@@ -283,7 +288,7 @@ def main():
         moved = root/('relocated '+name)
         shutil.copytree(destination,moved)
         reimported = root/('reimported-'+name)
-        if name in ('spatial', 'counts-sam', 'aggregate'):
+        if name in ('spatial', 'counts-sam', 'aggregate', 'chromatin', 'genotypes-calls.vcf'):
             check((moved/'workspace.rfcxs').read_bytes() == (destination/'workspace.rfcxs').read_bytes(),
                   'complete portable native spatial publication')
         else:
@@ -292,7 +297,7 @@ def main():
         original_location = root/'workspace unavailable during generation replay'
         (root/'workspace').rename(original_location)
         try:
-            replay = run('replay-derivation','--workspace',moved/('workspace.rfcxs' if name in ('spatial', 'counts-sam', 'aggregate') else 'workspace.json'),'--assay','derived-'+name,'--out',root/('regenerated-'+name))
+            replay = run('replay-derivation','--workspace',moved/('workspace.rfcxs' if name in ('spatial', 'counts-sam', 'aggregate', 'chromatin', 'genotypes-calls.vcf') else 'workspace.json'),'--assay','derived-'+name,'--out',root/('regenerated-'+name))
             check(replay['status'] == 'PASS','original generating method re-executed from relocated lineage alone')
             save(name+'-generation-replay.json',replay)
         finally:

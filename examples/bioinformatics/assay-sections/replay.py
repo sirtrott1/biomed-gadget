@@ -33,7 +33,7 @@ derived = out/'pipeline/sections/workspace'
 shutil.copytree(derived, out/'portable')
 # Remove access to the generating workspace. Replay consumes retained lineage alone.
 shutil.move(out/'workspace', out/'generating-workspace')
-replayed = run('replay', 'replay-derivation', '--workspace', out/'portable/workspace.json',
+replayed = run('replay', 'replay-derivation', '--workspace', out/'portable/workspace.rfcxs',
                '--assay', 'rna-compatible', '--out', out/'replayed')
 if replayed['status'] != 'PASS':
     raise RuntimeError('portable derivation replay failed')

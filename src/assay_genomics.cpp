@@ -1,6 +1,8 @@
 #include "genomic_detail.hpp"
 #include "interval_detail.hpp"
+#include "source_grade_fields.hpp"
 #include <algorithm>
+#include <gadget/record_view.hpp>
 #include <rfc/core/builder.hpp>
 #include <rfc/machine/checked_size.hpp>
 #include <rfc/numeric/exact_matrix.hpp>
@@ -421,7 +423,8 @@ Json feature_counts(const ResourceImages &images, const Json &request,
     return out;
 }
 
-Json chromatin_contrast(const ResourceImages &images, const Json &request) {
+Json chromatin_contrast(const ResourceImages &images, const Json &request,
+                        std::optional<AssayFieldsSource> *retained) {
     members(request, {"schema", "operation", "samples", "contrasts", "strand_policy", "thresholds",
                       "absence_policy"});
     require(request.at("absence_policy").text() == "measured_zero_within_union",
@@ -463,6 +466,7 @@ Json chromatin_contrast(const ResourceImages &images, const Json &request) {
     rfc::core::RelationSignature signature;
     const auto type = signature.add_type("joint.physical.coverage.membership");
     rfc::core::RelationalComplexBuilder builder(signature);
+    builder.declare_grade(rfc::core::Grade{1});
     for (std::size_t i = 0; i < records.size(); ++i) {
         builder.declare_witness_identity(i + 1);
         weights.set(i, records[i].sample, records[i].interval.weight);
@@ -476,22 +480,52 @@ Json chromatin_contrast(const ResourceImages &images, const Json &request) {
         for (auto j : a.records) {
             participants.push_back(
                 {j + 1, true, false, Rational{1}, {}, rfc::core::OccurrenceKey{++occurrence}});
-            auto item = Json::object();
-            item.set("sample", samples.at(records[j].sample).at("id"));
-            item.set("source_record_index", cardinality(records[j].index));
-            source.push(item);
+            if (!retained) {
+                auto item = Json::object();
+                item.set("sample", samples.at(records[j].sample).at("id"));
+                item.set("source_record_index", cardinality(records[j].index));
+                source.push(item);
+            }
         }
-        builder.add_grade_one(rfc::core::RelationKey{1000000 + i}, type, participants);
+        builder.add_grade_one(rfc::core::RelationKey{rfc::machine::checked_size_add(1000000, i)},
+                              type, participants);
         lengths.push_back(exact_rational(std::to_string(a.end - a.start)));
-        auto item = Json::object();
-        item.set("contig", Json::string(a.frame.first));
-        item.set("strand", Json::string(a.frame.second));
-        item.set("start", cardinality(a.start));
-        item.set("end", cardinality(a.end));
-        item.set("memberships", source);
-        segments.push(item);
+        if (!retained) {
+            auto item = Json::object();
+            item.set("contig", Json::string(a.frame.first));
+            item.set("strand", Json::string(a.frame.second));
+            item.set("start", cardinality(a.start));
+            item.set("end", cardinality(a.end));
+            item.set("memberships", source);
+            segments.push(item);
+        }
     }
     const auto measured = coverage.multiply(weights);
+    using N = NativeRecordValue;
+    rfc::storage::TemporalEndpoint endpoint(builder.freeze());
+    for (std::size_t k = 0; k < endpoint.source.grade_count(); ++k)
+        endpoint.carriers.push_back(
+            {k + 1,
+             rfc::storage::TemporalCarrierKind::SourceGrade,
+             {static_cast<std::uint16_t>(k)},
+             {},
+             0,
+             rfc::numeric::IndexDomain::linear(
+                 endpoint.source.grade({static_cast<std::uint16_t>(k)}).cell_count())});
+    SourceGradeFields store{endpoint};
+    N::Array native_samples, native_contrasts, field_declarations;
+    const auto field = [&](std::string id, const Vector &values, bool contrast = true) {
+        auto key = store.field(id, 1, values);
+        field_declarations.elements.emplace_back(N::Object{
+            {{"id", N(id)},
+             {"key", key},
+             {"quantity",
+              N(std::string(contrast ? "scaled_coverage_contrast" : "scaled_coverage"))},
+             {"units",
+              N(std::string("declared interval weights divided by declared sample scale"))},
+             {"method", N(std::string("Declared coverage overlay and sample scales"))}}});
+        return key;
+    };
     auto sample_fields = Json::array();
     std::vector<Vector> fields;
     for (std::size_t s = 0; s < samples.size(); ++s) {
@@ -501,11 +535,17 @@ Json chromatin_contrast(const ResourceImages &images, const Json &request) {
         v = rfc::numeric::scale(Rational{1} / scales[s], v);
         fields.push_back(v);
         auto item = Json::object(), values = Json::array();
-        for (const auto &x : v)
-            values.push(Json::string(x.get_str()));
+        if (!retained)
+            for (const auto &x : v)
+                values.push(Json::string(x.get_str()));
         item.set("sample", samples.at(s).at("id"));
-        item.set("values", values);
+        if (!retained)
+            item.set("values", values);
         item.set("integral", Json::string(rfc::numeric::dot(lengths, v).get_str()));
+        if (retained)
+            native_samples.elements.emplace_back(
+                N::Object{{{"field", field("sample:" + std::to_string(s), v, false)},
+                           {"summary", import_record_view(item)}}});
         sample_fields.push(item);
     }
     const auto contrasts = request.at("contrasts");
@@ -524,8 +564,9 @@ Json chromatin_contrast(const ResourceImages &images, const Json &request) {
         const auto v = rfc::numeric::sub(fields.at(ids.at(contrast.at("treated").text())),
                                          fields.at(ids.at(contrast.at("control").text())));
         auto item = Json::object(), values = Json::array(), components = Json::array();
-        for (const auto &x : v)
-            values.push(Json::string(x.get_str()));
+        if (!retained)
+            for (const auto &x : v)
+                values.push(Json::string(x.get_str()));
         std::set<Rational> unique;
         for (std::size_t t = 0; t < thresholds.size(); ++t) {
             const auto threshold = exact_rational(text(thresholds.at(t), source_byte_limit()));
@@ -534,18 +575,24 @@ Json chromatin_contrast(const ResourceImages &images, const Json &request) {
             components.push(component);
         }
         item.set("id", contrast.at("id"));
-        item.set("values", values);
+        if (!retained)
+            item.set("values", values);
         item.set("integral", Json::string(rfc::numeric::dot(lengths, v).get_str()));
         item.set("quadrance", Json::string(rfc::numeric::dot(v, v).get_str()));
         item.set("threshold_components", components);
+        if (retained)
+            native_contrasts.elements.emplace_back(
+                N::Object{{{"field", field(contrast.at("id").text(), v)},
+                           {"summary", import_record_view(item)}}});
         results.push(item);
     }
     auto out = Json::object();
-    out.set("segments", segments);
+    if (!retained)
+        out.set("segments", segments);
     out.set("sample_fields", sample_fields);
     out.set("contrasts", results);
     out.set("reference", reference->declaration.at("reference"));
-    out.set("native_complex", complex_receipt(builder.freeze()));
+    out.set("native_complex", complex_receipt(endpoint.source));
     out.set("quantity", Json::string("scaled_coverage_contrast"));
     out.set("units", Json::string("declared interval weights divided by declared sample scale"));
     out.set(
@@ -553,6 +600,63 @@ Json chromatin_contrast(const ResourceImages &images, const Json &request) {
         Json::string("Complete coordinate fields on the union of retained physical intervals, with "
                      "caller-declared measured zeros. Thresholds are observed coverage criteria; "
                      "no statistical peak null or region outside the union is supplied."));
+    if (retained) {
+        endpoint.carriers.push_back({3,
+                                     rfc::storage::TemporalCarrierKind::Explicit,
+                                     {},
+                                     {},
+                                     1,
+                                     rfc::numeric::IndexDomain::linear(samples.size())});
+        const auto length_key = store.field("segment.length", 1, lengths);
+        const auto coverage_key = store.map("coverage_map", 1, 2, coverage);
+        const auto weights_key = store.map("source_weights", 3, 1, weights);
+        const auto scales_key =
+            store.on_carrier("sample.scales", 3,
+                             SourceGradeFields::tensor(
+                                 scales.size(), [&](auto i) { return scales[i]; },
+                                 rfc::numeric::StructuralSupport::full(scales.size())),
+                             rfc::storage::TemporalTensorRole::Field);
+        N::Object records_value, segments_value;
+        const auto record_column = [&](std::string name, auto value) {
+            records_value.members.emplace_back(
+                name, store.column("record." + name, 0, records.size(), value));
+        };
+        record_column("sample", [&](auto i) { return Rational(records[i].sample); });
+        record_column("record", [&](auto i) { return Rational(records[i].index); });
+        record_column("source_start",
+                      [&](auto i) { return Rational(records[i].interval.source_start); });
+        record_column("source_end",
+                      [&](auto i) { return Rational(records[i].interval.source_end); });
+        std::map<std::pair<std::string, std::string>, std::size_t> frames;
+        N::Array frame_values;
+        for (const auto &atom : atoms)
+            if (!frames.contains(atom.frame)) {
+                frames.emplace(atom.frame, frame_values.elements.size());
+                frame_values.elements.emplace_back(
+                    N::Object{{{"contig", N(atom.frame.first)}, {"strand", N(atom.frame.second)}}});
+            }
+        const auto segment_column = [&](std::string name, auto value) {
+            segments_value.members.emplace_back(
+                name, store.column("segment." + name, 1, atoms.size(), value));
+        };
+        segment_column("frame", [&](auto i) { return Rational(frames.at(atoms[i].frame)); });
+        segment_column("start", [&](auto i) { return Rational(atoms[i].start); });
+        segment_column("end", [&](auto i) { return Rational(atoms[i].end); });
+        N declaration(N::Object{{{"schema", N(std::string("gadget.chromatin.fields.v1"))},
+                                 {"fields", N(std::move(field_declarations))},
+                                 {"sample_fields", N(std::move(native_samples))},
+                                 {"contrasts", N(std::move(native_contrasts))},
+                                 {"coverage_map", coverage_key},
+                                 {"source_weights", weights_key},
+                                 {"sample_scales", scales_key},
+                                 {"segment_lengths", length_key},
+                                 {"segments", N(std::move(segments_value))},
+                                 {"frames", N(std::move(frame_values))},
+                                 {"records", N(std::move(records_value))},
+                                 {"request", import_record_view(request)},
+                                 {"summary", import_record_view(out)}}});
+        retained->emplace(AssayFieldsSource{std::move(endpoint), std::move(declaration), {}});
+    }
     return out;
 }
 } // namespace
@@ -561,7 +665,8 @@ Json feature_allocation_evidence(const ResourceImages &images, const Json &reque
     return feature_evidence(images, request, native_counts);
 }
 Json genomic_analysis(const ResourceImages &images, const Json &request,
-                      std::shared_ptr<CpuResources> budget) {
+                      std::shared_ptr<CpuResources> budget,
+                      std::optional<AssayFieldsSource> *retained) {
     const auto op = request.at("operation").text();
     if (op == "feature_counts")
         return feature_counts(images, request, budget);
@@ -583,13 +688,13 @@ Json genomic_analysis(const ResourceImages &images, const Json &request,
     if (op == "alignment_evidence")
         return alignment_evidence(*image(images, request.at("resource")), request);
     if (op == "variant_genotypes")
-        return genotype_analysis(*image(images, request.at("resource")), request);
+        return genotype_analysis(*image(images, request.at("resource")), request, retained);
     if (op == "read_quality")
         return quality_analysis(*image(images, request.at("resource")), request);
     if (op == "controlled_coverage")
         return controlled_coverage(images, request);
     if (op == "chromatin_contrast")
-        return chromatin_contrast(images, request);
+        return chromatin_contrast(images, request, retained);
     if (op == "annotation_features") {
         members(request, {"schema", "operation", "resource", "feature_type", "group_attribute"});
         const auto &r = *image(images, request.at("resource"));
@@ -601,5 +706,57 @@ Json genomic_analysis(const ResourceImages &images, const Json &request,
         return out;
     }
     throw std::invalid_argument("unsupported genomic query");
+}
+Json chromatin_fields_view(const NativeRecord &record) {
+    auto out = render_record_view(record.at("summary"));
+    const auto coordinate = [&](const NativeRecord &key, std::size_t i) {
+        const auto value = retained_tensor(record, key).tensor.state(i).value();
+        require(value >= 0 && value.get_den() == 1, "chromatin source coordinate column");
+        return value.get_num().get_ui();
+    };
+    auto segments = Json::array();
+    const auto columns = record.at("segments"), rows = record.at("records");
+    const auto endpoint = record.endpoint();
+    const auto &arena = endpoint->source.grade(rfc::core::Grade{1});
+    for (std::size_t i = 0; i < arena.cell_count(); ++i) {
+        auto segment =
+            render_record_view(record.at("frames").at(coordinate(columns.at("frame"), i)));
+        segment.set("start", cardinality(coordinate(columns.at("start"), i)));
+        segment.set("end", cardinality(coordinate(columns.at("end"), i)));
+        auto memberships = Json::array();
+        const auto range = arena.incidence_range(i);
+        for (std::size_t slot = range.first; slot < range.second; ++slot) {
+            const auto lower = arena.lower_index.at(slot);
+            auto member = Json::object();
+            member.set("sample", render_record_view(record.at("request")
+                                                        .at("samples")
+                                                        .at(coordinate(rows.at("sample"), lower))
+                                                        .at("id")));
+            member.set("source_record_index", cardinality(coordinate(rows.at("record"), lower)));
+            memberships.push(member);
+        }
+        segment.set("memberships", memberships);
+        segments.push(segment);
+    }
+    out.set("segments", segments);
+    for (const auto *name : {"sample_fields", "contrasts"}) {
+        auto array = Json::array();
+        const auto entries = record.at(name);
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            auto value = render_record_view(entries.at(i).at("summary"));
+            const auto key = std::stoull(entries.at(i).at("field").integer().get_str());
+            const auto endpoint = record.endpoint();
+            const auto tensor = std::find_if(endpoint->tensors.begin(), endpoint->tensors.end(),
+                                             [&](const auto &field) { return field.key == key; });
+            require(tensor != endpoint->tensors.end(), "chromatin field owner absent");
+            auto values = Json::array();
+            for (std::size_t j = 0; j < tensor->tensor.domain().logical_size(); ++j)
+                values.push(Json::string(tensor->tensor.state(j).value().get_str()));
+            value.set("values", values);
+            array.push(value);
+        }
+        out.set(name, array);
+    }
+    return out;
 }
 } // namespace gadget::assay_detail

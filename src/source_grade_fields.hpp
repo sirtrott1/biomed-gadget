@@ -1,11 +1,60 @@
 #pragma once
+#include <algorithm>
+#include <cstdint>
 #include <gadget/native_record.hpp>
 #include <rfc/machine/checked_size.hpp>
 #include <rfc/numeric/exact_matrix.hpp>
 
 namespace gadget::assay_detail {
+inline const rfc::storage::TemporalTensor &retained_tensor(const NativeRecord &record,
+                                                           const NativeRecord &key) {
+    const auto integer = key.integer();
+    if (integer <= 0 || !mpz_fits_ulong_p(integer.get_mpz_t()))
+        throw std::invalid_argument("invalid retained tensor key");
+    const auto id = integer.get_ui();
+    for (const auto &tensor : record.endpoint()->tensors)
+        if (tensor.key == id)
+            return tensor;
+    throw std::invalid_argument("retained tensor key is absent");
+}
 struct SourceGradeFields {
     rfc::storage::TemporalEndpoint &endpoint;
+    std::uint64_t next_key{1};
+    explicit SourceGradeFields(rfc::storage::TemporalEndpoint &source) : endpoint(source) {
+        for (const auto &tensor : endpoint.tensors)
+            next_key = std::max(next_key, rfc::machine::checked_size_add(tensor.key, 1));
+    }
+    NativeRecordValue insert(rfc::storage::TemporalTensor tensor) {
+        const auto key = next_key;
+        next_key = rfc::machine::checked_size_add(next_key, 1);
+        tensor.key = key;
+        endpoint.tensors.push_back(std::move(tensor));
+        return NativeRecordValue(rfc::numeric::Integer(std::to_string(key)));
+    }
+    NativeRecordValue
+    on_carrier(std::string name, std::uint64_t carrier, rfc::numeric::SparseRationalTensor value,
+               rfc::storage::TemporalTensorRole role = rfc::storage::TemporalTensorRole::Field) {
+        rfc::storage::TemporalTensor field;
+        field.role = role;
+        field.output = carrier;
+        field.interpretation = std::move(name);
+        field.tensor = std::move(value);
+        return insert(std::move(field));
+    }
+    NativeRecordValue
+    map(std::string name, std::uint64_t input, std::uint64_t output,
+        const rfc::numeric::ExactMatrix &value,
+        rfc::storage::TemporalTensorRole role = rfc::storage::TemporalTensorRole::Observation,
+        rfc::storage::TemporalTensorOwner owner = {}) {
+        rfc::storage::TemporalTensor field;
+        field.role = role;
+        field.owner = owner;
+        field.input = input;
+        field.output = output;
+        field.interpretation = std::move(name);
+        field.tensor = rfc::storage::temporal_matrix_tensor(value);
+        return insert(std::move(field));
+    }
     template <class Value>
     NativeRecordValue column(std::string name, std::uint16_t grade, std::size_t size, Value value) {
         return column(std::move(name), grade, size, std::move(value),
@@ -15,15 +64,7 @@ struct SourceGradeFields {
     NativeRecordValue column(std::string name, std::uint16_t grade, std::size_t size, Value value,
                              rfc::numeric::StructuralSupport support) {
         auto tensor_value = tensor(size, std::move(value), std::move(support));
-        rfc::storage::TemporalTensor tensor;
-        tensor.key = rfc::machine::checked_size_add(endpoint.tensors.size(), 1);
-        tensor.role = rfc::storage::TemporalTensorRole::Field;
-        tensor.output = grade + 1;
-        tensor.interpretation = std::move(name);
-        tensor.tensor = std::move(tensor_value);
-        const auto key = tensor.key;
-        endpoint.tensors.push_back(std::move(tensor));
-        return NativeRecordValue(rfc::numeric::Integer(std::to_string(key)));
+        return on_carrier(std::move(name), grade + 1, std::move(tensor_value));
     }
     template <class Value>
     static rfc::numeric::SparseRationalTensor tensor(std::size_t size, Value value,

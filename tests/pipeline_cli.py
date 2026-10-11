@@ -49,7 +49,7 @@ recipe_schemas=json.loads((schema_root/'pipeline-default.schema.json').read_text
 recipe_schemas={entry['properties']['method']['const']:entry for entry in recipe_schemas}
 assert set(recipe_schemas)=={recipe['method'] for recipe in profiles['recipes']}
 for recipe in profiles['recipes']:
-    assert recipe['native_materialization'] == (recipe['operation'] in ['controlled_coverage','spatial_relations','feature_counts','expression_allocations','aggregate_assay','design_aggregation'])
+    assert recipe['native_materialization'] == (recipe['operation'] in ['controlled_coverage','spatial_relations','feature_counts','expression_allocations','aggregate_assay','design_aggregation','variant_genotypes','chromatin_contrast','assay_sections'])
     parameters=recipe_schemas[recipe['method']]['properties']['parameters']
     refs=[value['$ref'] for value in parameters.get('properties',{}).values() if '$ref' in value]
     for ref in refs:
@@ -241,10 +241,13 @@ run('import-assays','--spec',save('chromatin-import.json',{**spec,'resources':ch
 chromatin=dict(schema='gadget.pipeline.default.v1',profile='atac_seq',question='Retain scaled treated-minus-control interval fields',goals=[dict(id='contrast',method='chromatin_contrast',parameters=dict(samples=[dict(id=n,resource=n,scale='1',scale_provenance='Declared identity scale') for n in ['treated.bed','control.bed']],contrasts=[dict(id='pair',treated='treated.bed',control='control.bed')],strand_policy='separate',thresholds=['0','1','2'],absence_policy='measured_zero_within_union'),output=dict(id='contrast',source_namespace='889500',design=design,channel='observation')),dict(method='coverage',input='contrast',parameters=dict(fields=['all.pair']))])
 prepared,index=recipe_run('chromatin-recipe',chromatin,chromatin_workspace/'workspace.json')
 result=json.loads((root/'chromatin-recipe/contrast/result.json').read_text())
-# The materialization certificate nests the original generating certificate.
-source_matrix=(root/'chromatin-recipe/contrast/workspace/assays/0/source-matrix').read_text().splitlines()
+# Read the retained contrast on its original physical membership complex.
+contrast_archive=root/'chromatin-recipe/contrast/workspace/workspace.rfcxs'
+assert contrast_archive.exists()
+assert not (contrast_archive.parent/'workspace.json').exists()
+contrast_result=run('record-view','--input',contrast_archive,'--assay','contrast')['result']
 expected=[Fraction(2),Fraction(1),Fraction(2),Fraction(0),Fraction(1)]
-assert [Fraction(line.split('\t')[1]) for line in source_matrix[1:]]==expected
+assert [Fraction(value) for value in contrast_result['contrasts'][0]['values']]==expected
 
 # Matched-unit counts are bounded by the admitted data, not a 32-pair constant.
 pair_count=65

@@ -106,9 +106,10 @@ from that archive after the generating workspace has moved.
 `materialize.json` can instead publish this view directly with `derive-assays`.
 Its `view` and `component` select one original view and `input`, `compatible` or
 `residual`. The published quantity records the derivation, preserves the source
-units and channel, and inherits the declared view metric. Its grade-zero axis is
-an explicit derived coordinate dictionary; it does not claim to transport the
-original source topology.
+units and channel, and inherits the declared view metric. It preserves the
+original assay complex, source grade, cell names and occurrence identities. The
+complete interface complex, stalk restrictions and projection results remain in
+a separate native publication inside the archive.
 
 ## Selecting the protocol
 

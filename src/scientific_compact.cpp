@@ -235,10 +235,7 @@ void ScientificStudy::State::admit_compact(NativeRecord publication,
                 const auto value = text(item.at(name).at(i));
                 if (std::string_view(name) != "ids")
                     continue;
-                require(cell_ids
-                            .emplace(value, StableCellKey{{static_cast<std::uint16_t>(k)},
-                                                          arena.identities.at(i)})
-                            .second,
+                require(cell_ids.emplace(value, coordinate(k, i)).second,
                         "duplicate explicit native cell id");
             }
         }

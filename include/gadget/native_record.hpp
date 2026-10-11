@@ -69,6 +69,12 @@ class NativeRecord {
     static NativeRecord create_from_endpoint(NativeRecordValue &&value,
         std::uint64_t source_namespace, std::vector<RawByteSource> sources,
         rfc::storage::TemporalEndpoint endpoint, const NativeRecordObserver &observer = {});
+    // Publish added fields on the source's unchanged complex and carriers under
+    // a new namespace. Retain its declarations and immutable original bytes.
+    static NativeRecord publish_fields(const NativeRecord &source, std::uint64_t source_namespace,
+                                       std::vector<rfc::storage::TemporalTensor> fields,
+                                       NativeRecordValue value,
+                                       std::vector<RawByteSource> added_sources = {});
     // Publish declarations after an actual owning history. Unchanged source
     // fields stay in its original base; the canonical frame retains the update.
     static NativeRecord annotate(const NativeRecordValue &value,

@@ -1,14 +1,15 @@
+#include <cerrno>
+#include <cstring>
 #include <gadget/native_record.hpp>
+#include <iterator>
+#include <mutex>
 #include <rfc/core/builder.hpp>
+#include <rfc/runtime/hardware_inventory.hpp>
 #include <rfc/storage/file_io.hpp>
 #include <rfc/storage/mapped_file.hpp>
 #include <rfc/storage/native_series_prefix.hpp>
-#include <rfc/runtime/hardware_inventory.hpp>
-#include <sys/random.h>
-#include <cerrno>
-#include <cstring>
 #include <set>
-#include <mutex>
+#include <sys/random.h>
 #include <tuple>
 
 namespace gadget {
@@ -694,6 +695,17 @@ NativeRecord NativeRecord::create_from_endpoint(NativeRecordValue &&value,std::u
     std::vector<RawByteSource> sources,storage::TemporalEndpoint endpoint,const NativeRecordObserver &observer) {
     return create_owned(std::move(value),ns,std::move(sources),std::move(endpoint),nullptr,{},observer);
 }
+NativeRecord NativeRecord::publish_fields(const NativeRecord &source, std::uint64_t ns,
+                                          std::vector<storage::TemporalTensor> fields,
+                                          NativeRecordValue value,
+                                          std::vector<RawByteSource> added_sources) {
+    require(ns != source.source_namespace(), "field publication requires a new namespace");
+    auto endpoint = *source.endpoint();
+    endpoint.tensors.insert(endpoint.tensors.end(), std::make_move_iterator(fields.begin()),
+                            std::make_move_iterator(fields.end()));
+    return create_owned(std::move(value), ns, std::move(added_sources), std::move(endpoint),
+                        &source);
+}
 NativeRecord NativeRecord::create_owned(NativeRecordValue value,std::uint64_t ns,
     std::vector<RawByteSource> sources,storage::TemporalEndpoint endpoint,
     const NativeRecord *retained_parent,std::optional<storage::NativeTemporalSeries> history,
@@ -797,7 +809,12 @@ NativeRecord NativeRecord::create_owned(NativeRecordValue value,std::uint64_t ns
             *found = std::move(next);
     };
     const auto version = compiler.packed_values || (previous && previous->format_version() >= 4) ? 4 : 3;
-    replace(header_key,header_type,V::product({number(version),number(ns),number(type.name_space),number(type.key),number(type.version),number(data_key),number(previous?previous->state_->root_value_key:0)}));
+    replace(header_key, header_type,
+            V::product({number(version), number(ns), number(type.name_space), number(type.key),
+                        number(type.version), number(data_key),
+                        number(previous && previous->source_namespace() == ns
+                                   ? previous->state_->root_value_key
+                                   : 0)}));
     replace(data_key,type,std::move(data));
     replace(labels_key,labels_type,V::repeated(std::move(compiler.labels)));
     replace(sources_key,referenced_sources_type,V::repeated(std::move(raw)));

@@ -169,7 +169,7 @@ for name, edit in [
 # Default pipelines and bound local-model recipe selection use the same contract.
 plan = run('pipeline-prepare', '--workspace', manifest, '--request', root/'inputs/pipeline.json')
 run('pipeline', '--workspace', manifest, '--request', save('plan.json', plan), '--out', root/'pipeline')
-derived = root/'pipeline/sections/workspace/workspace.json'
+derived = root/'pipeline/sections/workspace/workspace.rfcxs'
 check(derived.exists())
 run('replay-derivation', '--workspace', derived, '--assay', 'rna-compatible', '--out', root/'replay')
 catalog = run('recipe-catalog', '--workspace', manifest, '--intent', root/'inputs/intent.json')
@@ -196,7 +196,7 @@ for i, section in enumerate(local_result['sections']):
 shutil.copytree(derived.parent, root/'portable')
 (root/'workspace').rename(root/'workspace-unavailable')
 (root/'inputs').rename(root/'inputs-unavailable')
-replayed = run('replay-derivation', '--workspace', root/'portable/workspace.json',
+replayed = run('replay-derivation', '--workspace', root/'portable/workspace.rfcxs',
                '--assay', 'rna-compatible', '--out', root/'detached-replay')
 check(replayed['status'] == 'PASS')
 print(json.dumps(dict(status='PASS', independent_checks=checks, sections=5, source_coordinates=6,
