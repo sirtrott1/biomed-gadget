@@ -3,6 +3,113 @@
 #include <rfc/storage/rfcx.hpp>
 
 namespace gadget::scientific_detail {
+std::uint64_t ResultFields::source_grade(std::size_t grade, std::optional<std::uint64_t> preferred) {
+    if (grade >= endpoint_.source.grade_count())
+        throw std::invalid_argument("scientific source grade absent");
+    const auto k = rfc::core::Grade{static_cast<std::uint16_t>(grade)};
+    const auto domain = rfc::numeric::IndexDomain::linear(endpoint_.source.grade(k).cell_count());
+    const rfc::storage::TemporalCarrier *found = nullptr;
+    for (const auto &carrier : endpoint_.carriers) {
+        if (carrier.kind != rfc::storage::TemporalCarrierKind::SourceGrade || carrier.grade != k ||
+            carrier.domain != domain || (preferred && carrier.key != *preferred)) continue;
+        if (found) throw std::invalid_argument("ambiguous scientific source grade carrier");
+        found = &carrier;
+    }
+    if (found) return found->key;
+    if (preferred) throw std::invalid_argument("scientific input carrier differs from its source grade");
+    const auto key = fields_.explicit_carrier(domain.logical_size());
+    auto &carrier = endpoint_.carriers.back();
+    carrier.kind = rfc::storage::TemporalCarrierKind::SourceGrade;
+    carrier.grade = k;
+    carrier.coordinate_system = 0;
+    return key;
+}
+NativeRecordValue ResultFields::consume_staged(NativeRecordValue value) {
+    if (auto *object = std::get_if<NativeRecordValue::Object>(&value.data)) {
+        const auto member = [&](std::string_view name) -> NativeRecordValue * {
+            for (auto &[key, item] : object->members) if (key == name) return &item;
+            return nullptr;
+        };
+        const auto *schema = member("schema");
+        if (schema && std::get_if<std::string>(&schema->data) &&
+            std::get<std::string>(schema->data) == "gadget.scientific.tensor.stage.v1") {
+            const auto carrier = [&](std::string_view name) {
+                const auto *item = member(name);
+                if (!item) throw std::invalid_argument("staged scientific carrier absent");
+                const auto &key = std::get<rfc::numeric::Integer>(item->data);
+                if (key <= 0 || !mpz_fits_ulong_p(key.get_mpz_t()))
+                    throw std::invalid_argument("staged scientific carrier key");
+                return static_cast<std::uint64_t>(key.get_ui());
+            };
+            rfc::storage::TemporalTensor tensor;
+            tensor.output = carrier("output");
+            tensor.role = rfc::storage::TemporalTensorRole::Field;
+            if (member("input")) {
+                tensor.input = carrier("input");
+                tensor.role = rfc::storage::TemporalTensorRole::Observation;
+            }
+            if (auto *role = member("role")) {
+                const auto &key = std::get<rfc::numeric::Integer>(role->data);
+                if (key < 0 || key > static_cast<unsigned>(rfc::storage::TemporalTensorRole::OpaqueExact))
+                    throw std::invalid_argument("staged scientific tensor role");
+                tensor.role = static_cast<rfc::storage::TemporalTensorRole>(key.get_ui());
+            }
+            tensor.interpretation = "scientific_result";
+            tensor.tensor = std::move(std::get<rfc::numeric::SparseRationalTensor>(member("tensor")->data));
+            std::optional<NativeRecordValue> coordinates;
+            if (auto *item = member("coordinates")) {
+                if (auto *tensor_coordinates = std::get_if<rfc::numeric::SparseRationalTensor>(&item->data)) {
+                    const auto axis = fields_.explicit_carrier(tensor_coordinates->domain().logical_size());
+                    coordinates = fields_.on_carrier("selected_coordinates", axis, std::move(*tensor_coordinates));
+                } else coordinates = std::move(*item);
+            }
+            return std::move(reference(fields_.insert(std::move(tensor)),
+                std::get<std::string>(member("display")->data), std::move(coordinates))).release();
+        }
+        for (auto &[key, item] : object->members) {
+            (void)key;
+            item = consume_staged(std::move(item));
+        }
+    } else if (auto *array = std::get_if<NativeRecordValue::Array>(&value.data)) {
+        for (auto &item : array->elements) item = consume_staged(std::move(item));
+    }
+    return value;
+}
+ResultFieldContext::ResultFieldContext(ResultFields &fields, const NativeRecord &source,
+    const std::vector<std::vector<std::uint32_t>> &coordinates,
+    std::optional<std::pair<std::size_t, std::uint64_t>> field_carrier) : publication(fields) {
+    const auto endpoint = source.endpoint();
+    for (std::size_t k = 0; k < coordinates.size(); ++k) {
+        const auto carrier = publication.source_grade(k,
+            field_carrier && field_carrier->first == k ? std::optional(field_carrier->second) : std::nullopt);
+        Grade grade{carrier, publication.axis(coordinates[k].size()),
+            endpoint->source.grade({static_cast<std::uint16_t>(k)}).cell_count(), {}, {}};
+        grade.coordinates.assign(coordinates[k].begin(), coordinates[k].end());
+        grade.coordinate_field = publication.coordinates(grade.coordinates, grade.rows);
+        rfc::numeric::ExactMatrix lift(grade.size, grade.coordinates.size());
+        for (std::size_t i = 0; i < grade.coordinates.size(); ++i) lift.set(grade.coordinates[i], i, 1);
+        auto binding = ResultValue::object();
+        binding.set("grade", ResultValue::count(k));
+        binding.set("source_carrier", ResultValue::count(grade.source));
+        binding.set("row_carrier", ResultValue::count(grade.rows));
+        binding.set("row_coordinates", ResultValue(grade.coordinate_field));
+        binding.set("source_lift", publication.matrix(lift, grade.rows, grade.source));
+        publication.bind(std::move(binding));
+        grades.push_back(std::move(grade));
+    }
+}
+ResultValue ResultFieldContext::field(const Vector &value, std::size_t k) const {
+    const auto &grade = grades.at(k);
+    if (value.size() != grade.coordinates.size())
+        throw std::invalid_argument("staged scientific source field shape");
+    std::vector<rfc::numeric::SparseRationalEntry> entries;
+    for (std::size_t i = 0; i < value.size(); ++i)
+        if (value[i] != 0) entries.push_back({grade.coordinates[i], value[i]});
+    rfc::numeric::SparseRationalTensor tensor(rfc::numeric::IndexDomain::linear(grade.size),
+        rfc::numeric::StructuralSupport::sparse(grade.size, grade.coordinates),
+        rfc::numeric::SparseRationalVector(grade.size, std::move(entries)));
+    return ResultFields::staged(std::move(tensor), {}, grade.source, "vector", grade.coordinate_field);
+}
 Json result_fields_view(const NativeRecord &record) {
     std::map<std::pair<const void *, std::uint64_t>, NativeRecord> owners;
     const auto render = [&](const auto &self, const NativeRecord &value) -> Json {

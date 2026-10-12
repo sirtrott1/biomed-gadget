@@ -27,6 +27,15 @@ current resident bytes and the process peak resident bytes observed after that
 phase. Memory observations come from `/proc/self/status` on Linux; other systems
 report `unavailable`. The peak is cumulative for the process. Phase times exclude
 the subsequent resource accounting unless the phase is named `account`.
+`release` measures destruction of all selected record, study and history owners;
+`total` includes the complete workload and reporting.
+
+Each measured phase also reports a `value` row named
+`phase.cpu.N.NAME.ticks`. `N` identifies its reporting position, including repeated
+stage names. Divide the value by `process.cpu_ticks_per_second` for process CPU
+seconds across its threads. CPU rows are omitted if the platform clock is
+unavailable or wraps during that phase. These clocks measure the current process;
+they do not account for separate compiler, model or external decoder processes.
 
 `value` rows contain a measurement name and integer value. History measurements
 count encoded component vectors once by actual owner. Source measurements count
@@ -86,6 +95,29 @@ rows report the workspace digest. The public `AssayWorkspace` and `ScientificStu
 constructors accept `ScientificAdmissionObserver` callbacks for these completed
 stages. Observer exceptions abort construction without changing input files.
 
+`account_owners` counts original byte owners across the collection and its admitted
+studies once by shared ownership. It also counts distinct mathematical endpoints,
+complete cell/occurrence and field/support totals, and distinct retained history
+component vectors. Byte owners and encoded history components are separate
+allocations. These counts exclude declaration and index allocation overhead.
+
+An optional request measures complete native execution and publication on the
+admitted workspace:
+
+```sh
+gadget_workspace_load_profile --input workspace.rfcxs \
+  --request query.rfcxs --result new-result.rfcxs > query-load.tsv
+```
+
+`request_admission`, `execute_record`, `account_result`, `publication`,
+`release_result` and `release_request` report their respective costs. Execution
+retains the same owners and output contract as `AssayWorkspace::execute_record`;
+the profiler does not select fields or render a numerical result. Original JSON
+control requests remain accepted by the existing compatibility reader. Both
+request and result options are required together, and publication destinations
+must be new and distinct. Validate the complete mathematical result against the
+request's independent oracle before interpreting its execution measurements.
+
 ## Raw import profiling
 
 The same build option supplies `gadget_raw_import_profile`. It imports a complete
@@ -103,6 +135,8 @@ stage names in execution order. A stage time starts after the preceding report;
 cumulative and cannot be attributed to one stage's retained allocations.
 Resource-only workspaces have no matrix stages. Imports retain all original
 records, axes, support and coefficients; profiling does not select a subset.
+`import` includes the complete import and admission; `release` then destroys the
+returned workspace before `total` is reported.
 
 Specifications use the native record format; JSON specifications remain accepted
 through the compatibility reader. Original specification bytes are retained in
