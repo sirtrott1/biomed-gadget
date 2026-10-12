@@ -18,7 +18,7 @@
 
 namespace {
 using namespace rfc;
-using gadget::profiling::Clock;
+using Clock = gadget::profiling::ProcessClock;
 using gadget::profiling::process_memory;
 using gadget::profiling::phase;
 void require(bool value, const char *message) {
@@ -139,7 +139,10 @@ int main(int argc, char **argv) {
             }
         }
         require(!input.empty(), "native profile requires --input");
-        auto start = Clock::now();
+        gadget::profiling::cpu_clock();
+        const auto total = Clock::now();
+        auto start = total;
+        {
         auto history = [&] {
             const storage::ReadOnlyMappedFile image(input);
             std::cout << "value\tinput.bytes\t" << image.size() << std::endl;
@@ -213,6 +216,10 @@ int main(int argc, char **argv) {
             add(counts, "history.verified_bytes", original.size());
         }
         for (const auto &[key, value] : counts) std::cout << "value\t" << key << '\t' << value << '\n';
+        start = Clock::now();
+        }
+        phase("release", start);
+        phase("total", total);
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;
