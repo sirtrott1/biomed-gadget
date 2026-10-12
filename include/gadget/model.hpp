@@ -5,6 +5,7 @@
 namespace gadget {
 class AssayWorkspace;
 class ScientificFacts;
+class EvidenceStore;
 struct LocalModelOptions {
     fs::path model;
     std::uint32_t context_tokens{4096}, output_tokens{256}, threads{8};
@@ -33,6 +34,8 @@ class LocalAgent {
     LocalAgent(std::shared_ptr<const AssayWorkspace> workspace, const Json &intent,
                LocalModelOptions options);
     LocalAgent(std::shared_ptr<const ScientificFacts> facts, LocalModelOptions options);
+    LocalAgent(std::shared_ptr<const EvidenceStore> evidence, const NativeRecord &context_request,
+               LocalModelOptions options);
     ~LocalAgent();
     LocalAgent(const LocalAgent &) = delete;
     LocalAgent &operator=(const LocalAgent &) = delete;
@@ -47,6 +50,9 @@ class LocalAgent {
     Json ask(const std::string &prompt, const std::vector<fs::path> &images);
     Json ask_assigned(const std::string &prompt, const std::vector<fs::path> &images,
                       std::shared_ptr<CpuResources> resources);
+    // Latest admitted evidence proposal, retaining its actual source and request.
+    // A rejected generation does not replace a previously admitted publication.
+    std::optional<NativeRecord> prospective_publication() const;
 };
 #endif
 } // namespace gadget

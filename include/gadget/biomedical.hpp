@@ -27,6 +27,7 @@ class EvidenceStore {
                                const NativeRecord &proposal,
                                const std::string &question) const;
     void validate(const Json &query) const;
+    NativeRecord execute_record(const NativeRecord &query) const;
     Json execute(const Json &query) const;
 };
 // Non-numerical model observations retain input identities and remain prospective.

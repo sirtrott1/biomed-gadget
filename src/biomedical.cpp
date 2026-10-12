@@ -1,4 +1,6 @@
 #include "scientific_detail.hpp"
+#include "scientific_result_fields.hpp"
+#include <cmath>
 #include <gadget/biomedical.hpp>
 #include <gadget/table.hpp>
 #include <rfc/database/interpretation_codec.hpp>
@@ -584,10 +586,21 @@ struct EvidenceStore::State {
         for(const auto &entry:native.lineage().assertions)records.emplace(entry.native_key,by_id.at(entry.origin.token));
         for(const auto &entry:native.lineage().subjects)entities.emplace(entry.native_key,publication.at("entities").at(entry.origin.token));
     }
-    Json record(std::uint64_t k) const {
-        auto j = Json::parse(records.at(k).dump());
-        j.set("native_assertion_key", Json::string(std::to_string(k)));
-        return j;
+    static ResultValue selected_value(const NativeRecord &record, const std::string &key_name,
+                                      std::uint64_t k,
+                                      const std::optional<std::string> &criterion = {}) {
+        using N = NativeRecordValue;
+        auto value = record.materialize_value();
+        auto *owner = std::get_if<N::Owned>(&value.data);
+        auto payload = owner ? ResultValue(*owner->payload) : ResultValue(value);
+        payload.set(key_name, ResultValue::string(std::to_string(k)));
+        if (criterion) payload.set("criterion", ResultValue::string(*criterion));
+        if (!owner) return payload;
+        owner->payload = std::make_shared<const N>(std::move(payload).release());
+        return ResultValue(std::move(value));
+    }
+    ResultValue record(std::uint64_t k, const std::optional<std::string> &criterion = {}) const {
+        return selected_value(records.at(k).native(), "native_assertion_key", k, criterion);
     }
 };
 EvidenceStore::EvidenceStore(const fs::path &directory)
@@ -803,23 +816,26 @@ void EvidenceStore::validate(const Json &query) const {
     } else
         throw std::invalid_argument("unknown biomedical evidence query");
 }
-Json EvidenceStore::execute(const Json &input) const {
-    const auto query = Json::parse(input.dump());
+NativeRecord EvidenceStore::execute_record(const NativeRecord &input) const {
+    using R = ResultValue;
+    using N = NativeRecordValue;
+    const auto number = [](Rational value) {
+        const bool finite = std::isfinite(value.get_d());
+        return R(N(N::ExactNumber{std::move(value), finite}));
+    };
+    const auto query = render_record_view(input);
     validate(query);
     const auto op = query.at("operation").text();
-    auto result = Json::object();
+    auto result = R::object();
     if (op == "inspect") {
         members(query, {"operation"});
-        result.set("assertions", cardinality(state_->records.size()));
-        result.set("selected", cardinality(state_->records.size()));
-        auto entities = Json::array();
-        for (const auto &[k, j] : state_->entities) {
-            auto e = Json::parse(j.dump());
-            e.set("native_subject_key", Json::string(std::to_string(k)));
-            entities.push(e);
-        }
+        result.set("assertions", R::count(state_->records.size()));
+        result.set("selected", R::count(state_->records.size()));
+        auto entities = R::array();
+        for (const auto &[k, j] : state_->entities)
+            entities.push(State::selected_value(j.native(), "native_subject_key", k));
         result.set("entities", entities);
-        result.set("database_snapshot", state_->manifest);
+        result.set("database_snapshot", R(state_->manifest.native().materialize_value()));
     } else if (op == "select") {
         members(query, {"operation", "field", "comparison", "value"});
         const auto field = query.at("field").text();
@@ -851,28 +867,31 @@ Json EvidenceStore::execute(const Json &input) const {
                 "this query selects declared categories only");
         const auto selected =
             select_exact(state_->native, 10, p, state_->native.assertions(10).size());
-        auto rows = Json::array();
+        auto rows = R::array();
         for (const auto k : selected)
             rows.push(state_->record(k));
-        result.set("selected", cardinality(selected.size()));
+        result.set("selected", R::count(selected.size()));
         result.set("records", rows);
     } else if (op == "neighbors") {
         members(query, {"operation", "subject_key"});
         const auto subject = key(query.at("subject_key"));
         require(state_->entities.contains(subject), "unknown native biomedical subject");
-        auto rows = Json::array();
+        auto rows = R::array();
+        std::size_t selected = 0;
         for (const auto kind : {10u, 20u})
             for (const auto assertion : state_->native.assertions(kind)) {
                 bool found = false;
                 for (const auto role : {11u, 12u, 13u, 14u, 15u})
                     for (const auto &occurrence : state_->native.participants(assertion, role))
                         found = found || occurrence.participant().key == subject;
-                if (found)
+                if (found) {
                     rows.push(state_->record(assertion));
+                    ++selected;
+                }
             }
-        result.set("selected", cardinality(rows.size()));
+        result.set("selected", R::count(selected));
         result.set("records", rows);
-        result.set("subject", state_->entities.at(subject));
+        result.set("subject", R(state_->entities.at(subject).native().materialize_value()));
     } else if (op == "coverage") {
         members(query, {"operation"});
         const auto missing = select_exact(state_->native, 10, {{1}, ExactPredicateKind::IsNull, {}},
@@ -881,13 +900,13 @@ Json EvidenceStore::execute(const Json &input) const {
             select_exact(state_->native, 10, {{2}, ExactPredicateKind::Equal, V::symbol(1)},
                          state_->native.assertions(10).size());
         const auto all = state_->native.assertions(10).size();
-        result.set("reported", cardinality(all - missing.size()));
-        result.set("missing", cardinality(missing.size()));
-        result.set("equality_relation_records", cardinality(points.size()));
-        result.set("binding_records", cardinality(all));
+        result.set("reported", R::count(all - missing.size()));
+        result.set("missing", R::count(missing.size()));
+        result.set("equality_relation_records", R::count(points.size()));
+        result.set("binding_records", R::count(all));
         result.set(
             "scope",
-            Json::string(
+            R::string(
                 "Reported numerical tokens include censored bounds; equality count is a relation "
                 "count and does not imply comparable assays or a present numeric value."));
     } else if (op == "affinity_evidence") {
@@ -918,7 +937,7 @@ Json EvidenceStore::execute(const Json &input) const {
             as_set(select_exact(state_->native, 10, {{1}, ExactPredicateKind::IsNull, {}},
                                 state_->native.assertions(10).size()));
         std::size_t yes = 0, no = 0, unknown = 0;
-        auto rows = Json::array();
+        auto rows = R::array();
         for (const auto k : state_->native.assertions(10))
             if (endpoint.contains(k) && unit.contains(k)) {
                 const auto relation = state_->records.at(k).at("relation").text();
@@ -938,21 +957,19 @@ Json EvidenceStore::execute(const Json &input) const {
                     ++no;
                 else
                     ++unknown;
-                auto row = state_->record(k);
-                row.set("criterion", Json::string(classification));
-                rows.push(row);
+                rows.push(state_->record(k, classification));
             }
-        result.set("selected", cardinality(yes));
-        result.set("contradicted", cardinality(no));
-        result.set("indeterminate", cardinality(unknown));
-        result.set("eligible", cardinality(rows.size()));
+        result.set("selected", R::count(yes));
+        result.set("contradicted", R::count(no));
+        result.set("indeterminate", R::count(unknown));
+        result.set("eligible", R::count(yes + no + unknown));
         result.set("other_endpoint_or_units",
-                   cardinality(state_->native.assertions(10).size() - rows.size()));
-        result.set("maximum", exact_number(maximum));
+                   R::count(state_->native.assertions(10).size() - (yes + no + unknown)));
+        result.set("maximum", number(maximum));
         result.set("records", rows);
         result.set(
             "scope",
-            Json::string("Per-record reported interval entails, contradicts or leaves unknown x <= "
+            R::string("Per-record reported interval entails, contradicts or leaves unknown x <= "
                          "maximum under the explicit endpoint/unit. No pooled selectivity, "
                          "biological affinity certainty, efficacy or assay-comparability claim."));
     } else if (op == "compare") {
@@ -974,32 +991,36 @@ Json EvidenceStore::execute(const Json &input) const {
                    y = std::get<Rational>(std::get<V::Optional>(bv->data).element.at(0).data);
         result.set("left", state_->record(l));
         result.set("right", state_->record(r));
-        result.set("reported_difference", exact_number(Rational{x - y}));
-        result.set("reported_ratio", y == 0 ? Json{} : exact_number(Rational{x / y}));
+        result.set("reported_difference", number(Rational{x - y}));
+        result.set("reported_ratio", y == 0 ? R{} : number(Rational{x / y}));
         result.set("scope",
-                   Json::string("Exact arithmetic on two reported standard point tokens; shared "
+                   R::string("Exact arithmetic on two reported standard point tokens; shared "
                                 "assay ID does not establish independent experiments, full "
                                 "construct/condition comparability or biological disagreement."));
     } else
         throw std::invalid_argument("unknown biomedical evidence query");
-    auto cert = Json::object();
-    cert.set("schema", Json::string("gadget.biomedical.certificate.v1"));
-    cert.set("source_digest", Json::string(digest()));
-    cert.set("snapshot_sha256", state_->receipt.at("snapshot_sha256"));
-    cert.set("native_sha256", state_->receipt.at("native_sha256"));
-    auto execution = Json::object();
-    execution.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
-    execution.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
+    auto cert = R::object();
+    cert.set("schema", R::string("gadget.biomedical.certificate.v1"));
+    cert.set("source_digest", R::string(digest()));
+    cert.set("snapshot_sha256", R(state_->receipt.native().at("snapshot_sha256").materialize_value()));
+    cert.set("native_sha256", R(state_->receipt.native().at("native_sha256").materialize_value()));
+    auto execution = R::object();
+    execution.set("gadget_sources_sha256", R::string(GADGET_SOURCE_SHA256));
+    execution.set("rexgraph_headers_sha256", R::string(GADGET_REXGRAPH_SHA256));
     cert.set("compiled_sources", execution);
-    cert.set("query", query);
+    cert.set("query", R(query));
     cert.set("result", result);
     cert.set("arithmetic",
-             Json::string("RexGraph native role traversal, three-valued exact predicates and GMP "
+             R::string("RexGraph native role traversal, three-valued exact predicates and GMP "
                           "rationals; no inference or identity coercion"));
     cert.set("interpretation_limits",
-             Json::string("Source assertions and explicit cross-references only. Mapping is not "
+             R::string("Source assertions and explicit cross-references only. Mapping is not "
                           "identity equivalence, binding is not efficacy, omitted edges are not "
                           "negative evidence. API arrival is not biological time."));
-    return seal(cert, "certificate_sha256");
+    return retain_operation(state_->publication, input, std::move(cert).release());
+}
+Json EvidenceStore::execute(const Json &query) const {
+    const auto operation = execute_record(admit_record_view(query));
+    return seal(render_record_view(operation.at("result")), "certificate_sha256");
 }
 } // namespace gadget

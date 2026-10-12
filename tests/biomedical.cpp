@@ -221,6 +221,11 @@ int main() {
         rejects([&] { import_evidence(root / "snapshot", root / "unsupported", 3); });
         EvidenceStore store(root / "store");
         auto coverage = store.execute(parse(R"({"operation":"coverage"})")).at("result");
+        const auto native_coverage = store.execute_record(admit_record_view(parse(R"({"operation":"coverage"})")));
+        check(native_coverage.at("result").at("result").at("binding_records").kind() ==
+                  NativeRecordKind::Integer &&
+                  native_coverage.at("result").at("result").at("binding_records").integer() == 8,
+              "native coverage did not retain exact provider counts");
         check(coverage.at("binding_records").integer() == 8 &&
                   coverage.at("reported").integer() == 7 && coverage.at("missing").integer() == 1,
               "missing/censoring/duplicates lost");
@@ -283,6 +288,21 @@ int main() {
         compare.set("left", points.at(0).at("native_assertion_key"));
         compare.set("right", points.at(5).at("native_assertion_key"));
         const auto difference = store.execute(compare).at("result");
+        const auto native_difference = store.execute_record(admit_record_view(compare));
+        check(native_difference.at("result").at("result").at("reported_difference").rational() ==
+                  rfc::numeric::Rational(-1, 4), "native comparison reparsed a numerical view");
+        check(native_difference.at("result").at("result").at("reported_ratio").rational() ==
+                  rfc::numeric::Rational(5, 6), "native ratio differs from original point tokens");
+        native_difference.write(root / "native-comparison.rfcxs");
+        check(NativeRecord::read(root / "native-comparison.rfcxs").at("result").at("result")
+                  .at("reported_difference").rational() == rfc::numeric::Rational(-1, 4),
+              "native comparison replay lost exact value");
+        compare.set("right", points.at(3).at("native_assertion_key"));
+        const auto zero_denominator = store.execute_record(admit_record_view(compare));
+        check(zero_denominator.at("result").at("result").at("reported_ratio").kind() ==
+                  NativeRecordKind::Null &&
+                  zero_denominator.at("result").at("result").at("right").at("value_token").text() == "0",
+              "undefined ratio lost its supported zero input");
         check(difference.at("reported_difference").at("rational").text() == "-1/4" &&
                   difference.at("reported_ratio").at("rational").text() == "5/6",
               "reported exact arithmetic");
