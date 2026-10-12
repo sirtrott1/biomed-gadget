@@ -144,6 +144,23 @@ int main(int argc,char **argv) {
           selected.state(2)==numeric::Rational{-5,13} && read_stats.decoded_coefficients==1,
           "encoded field changed support or coefficient state");
     check(!retained_field.materialized_entries(),"selected operation expanded the publication field");
+    auto changed_field_history = annotation_history;
+    const auto changed_field_base = changed_field_history.tail();
+    auto changed_field_endpoint = changed_field_base.endpoint();
+    const auto &old_tensor = changed_field_endpoint.tensors.front().tensor;
+    changed_field_endpoint.tensors.front().tensor = numeric::SparseRationalTensor(
+        old_tensor.domain(), old_tensor.support(), numeric::SparseRationalVector(3, {{2, numeric::Rational{3,11}}}));
+    ++changed_field_endpoint.sequence;
+    changed_field_history.append(storage::make_temporal_segment(
+        changed_field_base.endpoint(), changed_field_endpoint));
+    const auto changed_field_record = NativeRecord::from_history(changed_field_history);
+    check(!changed_field_record.encoded_tensor(888) &&
+              changed_field_record.endpoint()->tensors.front().tensor.state(0) == numeric::Rational{0} &&
+              !changed_field_record.endpoint()->tensors.front().tensor.state(1) &&
+              changed_field_record.endpoint()->tensors.front().tensor.state(2) == numeric::Rational{3,11} &&
+              annotated_restart.endpoint()->tensors.front().tensor.state(2) == numeric::Rational{-5,13},
+          "changed field reused a stale encoding or changed its previous publication");
+    changed_field_record.write(directory / "unencoded-field.bin");
     rejects([&]{(void)annotated_restart.encoded_tensor(999);});
     check(annotated_restart.encode()==annotated.encode() &&
           annotated_restart.at("observation").rational()==numeric::Rational{"2/7"},

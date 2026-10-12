@@ -67,9 +67,46 @@ def main():
     assert values["fields.support_capacity_bytes"] == 0
     assert values["fields.entry_capacity_bytes"] == 0 and values["fields.limb_capacity_bytes"] == 0
     assert values["fields.retained_value_fields"] == 2 and values["fields.materialized_value_fields"] == 0
+    for source in [data / "glued.dat", raw / "data.bin", raw / "annotated.bin"]:
+        phases, values = observations(run([profile, "--input", source, "--fields"]).stdout)
+        assert {"accessions", "accessions_reused", "field_access", "fields_reused",
+                "fields_lifetime", "release_fields"} <= set(phases)
+        assert values["field_access.pins"] == values["fields.tensors"]
+        assert values["field_access.lifetime_verified_pins"] == values["fields.tensors"]
+        assert values["field_access.materialized_value_fields_after"] == 0
+        for name in ["logical_coordinates", "supported_coordinates", "nonzero_entries"]:
+            assert values["field_access." + name] == values["fields." + name]
+        assert values["fields.materialized_value_fields"] == 0
+        if source.parent == raw:
+            assert values["publication.source_namespace"] == 811
+    for source in [raw / "data.bin", raw / "annotated.bin"]:
+        phases, values = observations(run([profile, "--input", source, "--fields",
+                                           "--encoded-tensor", "888"]).stdout)
+        assert {"encoded_select", "encoded_verify", "fields_lifetime", "release_fields"} <= set(phases)
+        assert values["encoded.available"] == 1 and values["encoded.key"] == 888
+        assert values["encoded.verified_nonzeros"] == values["encoded.lifetime_verified_nonzeros"] == 1
+        assert values["encoded.supported_coordinates"] == 2
+        assert values["encoded.encoding_sequence"] == 4
+        assert values["encoded.materialized_field_after"] == 0
+        assert values["fields.materialized_value_fields"] == 0
+    phases, values = observations(run([profile, "--input", data / "changed-history.payload",
+                                       "--fields"]).stdout)
+    assert values["field_access.pins"] == values["field_access.lifetime_verified_pins"] == 0
+    assert "fields_lifetime" in phases
+    phases, values = observations(run([profile, "--input", raw / "unencoded-field.bin",
+                                       "--fields", "--encoded-tensor", "888"]).stdout)
+    assert values["encoded.available"] == 0 and values["encoded.key"] == 888
+    assert "encoded_select" in phases and "encoded_verify" not in phases
+    assert values["field_access.pins"] == values["field_access.lifetime_verified_pins"] == 3
+    assert values["field_access.logical_coordinates"] == 5
+    assert values["field_access.supported_coordinates"] == 4
+    assert values["field_access.nonzero_entries"] == 2
     for extra in [["--cutoff", "3"], ["--cutoff", "6"], ["--cutoff", "-1"],
                   ["--cutoff", "18446744073709551616"], ["--record"],
-                  ["--accessions", "--accessions"], ["--unknown"]]:
+                  ["--accessions", "--accessions"], ["--unknown"], ["--fields", "--fields"],
+                  ["--encoded-tensor", "-1"], ["--encoded-tensor", "18446744073709551616"],
+                  ["--encoded-tensor", "888", "--encoded-tensor", "888"],
+                  ["--encoded-tensor"], ["--encoded-tensor", "888"]]:
         run([profile, "--input", data / "changed-history.payload", *extra], succeeds=False)
     run([profile, "--input", data / "corrupt.payload"], succeeds=False)
     run([profile, "--input", data / "source.payload"], succeeds=False)
