@@ -595,6 +595,165 @@ EvidenceStore::EvidenceStore(const fs::path &directory)
 EvidenceStore::~EvidenceStore() = default;
 const NativeRecord &EvidenceStore::native_publication() const {return state_->publication;}
 std::string EvidenceStore::digest() const { return state_->receipt.at("source_digest").text(); }
+NativeRecord EvidenceStore::source_context(const NativeRecord &request) const {
+    using N = NativeRecordValue;
+    const auto control = render_record_view(request);
+    members(control, {"schema", "source_digest", "snapshot_sha256", "question", "assertion_keys"});
+    require(control.at("schema").text() == "gadget.biomedical.context.v1" &&
+                text(control.at("source_digest")) == digest() &&
+                text(control.at("snapshot_sha256")) == state_->manifest.at("snapshot_sha256").text(),
+            "biomedical context source/snapshot/schema mismatch");
+    const auto question = text(control.at("question"));
+    const auto keys = control.at("assertion_keys");
+    source_array(keys, "biomedical assertion selection");
+    require(keys.size() > 0, "biomedical context requires selected assertions");
+    N::Array records;
+    std::set<std::uint64_t> selected;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        const auto k = key(keys.at(i));
+        require(selected.insert(k).second && state_->records.contains(k),
+                "biomedical context assertion is unknown or repeated");
+        records.elements.emplace_back(N::Object{
+            {{"assertion_key", N(std::to_string(k))},
+             {"record", state_->records.at(k).native().materialize_value()}}});
+    }
+    N::Object context{{{"schema", N(std::string("gadget.biomedical.context.catalog.v1"))},
+        {"source_digest", N(digest())},
+        {"snapshot_sha256", state_->manifest.native().at("snapshot_sha256").materialize_value()},
+        {"question", N(question)},
+        {"question_sha256", N("sha256:" + sha256(question))},
+        {"context_sha256", N("sha256:" + sha256(digest() + "\n" + native_declaration_digest(request)))},
+        {"availability", N(N::Object{{{"kind", N(std::string("frozen_snapshot"))},
+            {"historical_availability_established", N(false)}}})},
+        {"records", N(std::move(records))}}};
+    return retain_operation(state_->publication, request, N(std::move(context)));
+}
+NativeRecord EvidenceStore::admit_proposal(const NativeRecord &context_request,
+                                         const NativeRecord &input,
+                                         const std::string &question) const {
+    using N = NativeRecordValue;
+    const auto context = source_context(context_request);
+    const auto catalog = context.at("result");
+    require(question == catalog.at("question").text(), "biomedical proposal question mismatch");
+    const auto proposal = render_record_view(input);
+    members(proposal, {"schema", "source_digest", "context_sha256", "question_sha256", "action"},
+            {"query", "mentions", "reason"});
+    require(proposal.at("schema").text() == "gadget.biomedical.proposal.v1" &&
+                text(proposal.at("source_digest")) == digest() &&
+                text(proposal.at("context_sha256")) == catalog.at("context_sha256").text() &&
+                text(proposal.at("question_sha256")) == catalog.at("question_sha256").text(),
+            "biomedical proposal source/context/question/schema mismatch");
+    std::set<std::uint64_t> selected;
+    for (std::size_t i = 0; i < catalog.at("records").size(); ++i)
+        selected.insert(key(render_record_view(catalog.at("records").at(i).at("assertion_key"))));
+    const auto action = text(proposal.at("action"));
+    auto mentions = Json::array();
+    if (action == "clarify") {
+        require(proposal.has("reason") && !proposal.has("query") && !proposal.has("mentions"),
+                "biomedical clarification requires only a reason");
+        (void)text(proposal.at("reason"));
+    } else if (action == "query") {
+        require(proposal.has("query") && !proposal.has("reason") && !proposal.has("mentions"),
+                "biomedical query proposal requires only a query");
+        const auto query = proposal.at("query");
+        validate(query);
+        const auto operation = query.at("operation").text();
+        if (operation == "compare")
+            require(selected.contains(key(query.at("left"))) &&
+                        selected.contains(key(query.at("right"))),
+                    "biomedical comparison lies outside the selected context");
+        if (operation == "neighbors") {
+            const auto subject = key(query.at("subject_key"));
+            const auto id = state_->entities.at(subject).at("id").text();
+            bool found = false;
+            for (const auto k : selected)
+                for (const auto *role : {"compound", "target", "assay", "document", "response"})
+                    found = found || state_->records.at(k).at(role).text() == id;
+            require(found, "biomedical subject lies outside the selected context");
+        }
+        if (operation == "affinity_evidence" || operation == "select") {
+            bool found = false;
+            for (const auto k : selected) {
+                const auto &record = state_->records.at(k);
+                if (operation == "affinity_evidence")
+                    found = found || (record.at("endpoint").text() == query.at("endpoint").text() &&
+                                      record.at("units").text() == query.at("units").text());
+                else
+                    found = found || record.at(query.at("field").text()).text() ==
+                                         query.at("value").text();
+            }
+            require(found, "biomedical query predicates lack selected source evidence");
+        }
+    } else {
+        require(action == "annotate" && proposal.has("mentions") && !proposal.has("query") &&
+                    !proposal.has("reason"), "unknown biomedical proposal action");
+        source_array(proposal.at("mentions"), "biomedical annotation mentions");
+        require(proposal.at("mentions").size() > 0, "biomedical annotation requires mentions");
+        const auto database = NativeRecord::decode(state_->publication.at("source_database").bytes());
+        std::map<std::string, Document> documents;
+        for (std::size_t i = 0; i < database.at("snapshot").at("records").size(); ++i) {
+            const auto record = database.at("snapshot").at("records").at(i);
+            const auto artifacts = database.at("artifacts");
+            for (std::size_t j = 0; j < artifacts.size(); ++j)
+                if (artifacts.at(j).at("path").text() == record.at("path").text()) {
+                    const auto bytes = artifacts.at(j).at("bytes").bytes();
+                    auto metadata = Json::object();
+                    metadata.set("format", Json::string("utf8"));
+                    metadata.set("sha256", render_record_view(record.at("sha256")));
+                    documents.emplace(record.at("request").at("id").text(), Document{
+                        metadata, {reinterpret_cast<const char *>(bytes.data()), bytes.size()}});
+                }
+        }
+        std::set<std::string> ids;
+        for (std::size_t i = 0; i < proposal.at("mentions").size(); ++i) {
+            auto mention = Json::parse(proposal.at("mentions").at(i).dump());
+            members(mention, {"id", "kind", "assertion_key", "polarity", "interpretation", "evidence"},
+                    {"role", "entity", "endpoint", "units", "relation", "value_token"});
+            require(ids.insert(text(mention.at("id"))).second, "duplicate biomedical mention");
+            const auto k = key(mention.at("assertion_key"));
+            require(selected.contains(k), "annotation assertion lies outside the selected context");
+            const auto &record = state_->records.at(k);
+            const auto kind = text(mention.at("kind"));
+            if (kind == "entity") {
+                require(mention.has("role") && mention.has("entity") && !mention.has("endpoint") &&
+                            !mention.has("units") && !mention.has("relation") && !mention.has("value_token"),
+                        "entity annotation requires only a role and identifier");
+                const auto role = text(mention.at("role"));
+                require(role == "compound" || role == "target" || role == "assay" ||
+                            role == "document" || role == "response", "unknown biomedical entity role");
+                require(text(mention.at("entity")) == record.at(role).text(),
+                        "biomedical annotation identifier differs from the original assertion role");
+            } else {
+                require(kind == "measurement" && record.at("kind").integer() == 10 &&
+                            !mention.has("role") && !mention.has("entity"),
+                        "measurement annotation requires a binding observation");
+                for (const auto *name : {"endpoint", "units", "relation", "value_token"})
+                    require(mention.has(name) && mention.at(name).text() == record.at(name).text(),
+                            "measurement annotation changes original endpoint/units/relation/value");
+            }
+            const auto polarity = text(mention.at("polarity"));
+            require(polarity == "asserted" || polarity == "negated" || polarity == "uncertain",
+                    "biomedical annotation polarity must be explicit");
+            (void)text(mention.at("interpretation"));
+            const auto evidence = source_evidence(mention.at("evidence"), documents, true);
+            for (std::size_t j = 0; j < evidence.size(); ++j)
+                require(evidence.at(j).at("document").text() ==
+                            record.at("source_receipt").at("request").at("id").text(),
+                        "biomedical annotation quote belongs to another response");
+            mention.set("evidence", evidence);
+            mention.set("interpretation_verified", Json::boolean(false));
+            mentions.push(mention);
+        }
+    }
+    N::Object receipt{{{"schema", N(std::string("gadget.biomedical.proposal.receipt.v1"))},
+        {"status", N(std::string(action == "clarify" ? "clarification" : "prospective"))},
+        {"context", catalog.materialize_value()},
+        {"mentions", import_record_view(mentions)},
+        {"scope", N(std::string("Source, question, identifiers, literal measurements and quotes admitted. "
+            "Interpretations remain unverified; queries require separate execution. "
+            "This snapshot establishes no historical availability or biological observation time."))}}};
+    return retain_operation(context, input, N(std::move(receipt)));
+}
 void EvidenceStore::validate(const Json &query) const {
     const auto op = query.at("operation").text();
     if (op == "inspect" || op == "coverage")

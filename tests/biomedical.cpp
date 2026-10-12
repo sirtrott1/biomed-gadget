@@ -19,6 +19,118 @@ template <class F> void rejects(F f) {
     check(failed, "invalid evidence admitted");
 }
 Json parse(const char *s) { return Json::parse(s); }
+void proposal_contracts(const EvidenceStore &store, const fs::path &root, const Json &points) {
+    auto request = parse(R"({"schema":"gadget.biomedical.context.v1","source_digest":"", "snapshot_sha256":"", "question":"Which original Kd observations support this threshold?", "assertion_keys":[]})");
+    request.set("source_digest", Json::string(store.digest()));
+    request.set("snapshot_sha256", render_record_view(store.native_publication().at("snapshot").at("snapshot_sha256")));
+    for (std::size_t i = 0; i < points.size(); ++i)
+        request.at("assertion_keys").push(points.at(i).at("native_assertion_key"));
+    const auto native_request = admit_record_view(request);
+    const auto context = store.source_context(native_request);
+    const auto catalog = context.at("result");
+    check(!catalog.at("availability").at("historical_availability_established").boolean(),
+          "snapshot acquisition became historical availability");
+    check(catalog.at("records").size() == points.size(), "context selection dropped assertions");
+    for (std::size_t i = 0; i < points.size(); ++i)
+        check(catalog.at("records").at(i).at("record").at("value_token").text() ==
+                  points.at(i).at("value_token").text(), "context changed original source token");
+    auto proposal = parse(R"({"schema":"gadget.biomedical.proposal.v1","source_digest":"", "context_sha256":"", "question_sha256":"", "action":"query", "query":{"operation":"affinity_evidence","endpoint":"Kd","units":"nM","maximum":"1"}})");
+    for (const auto *name : {"source_digest", "context_sha256", "question_sha256"})
+        proposal.set(name, render_record_view(catalog.at(name)));
+    const auto question = request.at("question").text();
+    const auto admit = [&](const Json &input) {
+        return store.admit_proposal(native_request, admit_record_view(input), question);
+    };
+    check(admit(proposal).at("result").at("status").text() == "prospective",
+          "prospective query executed or rejected");
+    for (const auto *name : {"source_digest", "context_sha256", "question_sha256"}) {
+        auto bad = Json::parse(proposal.dump());
+        bad.set(name, Json::string("sha256:" + std::string(64, '0')));
+        rejects([&] { admit(bad); });
+    }
+    for (const auto *name : {"units", "endpoint", "operation"}) {
+        auto bad = Json::parse(proposal.dump());
+        bad.at("query").set(name, Json::string(name == std::string("endpoint") ? "Ki" : "invented"));
+        rejects([&] { admit(bad); });
+    }
+    auto bad = Json::parse(proposal.dump());
+    bad.set("available_at", Json::integer(0));
+    rejects([&] { admit(bad); });
+    rejects([&] { store.admit_proposal(native_request, admit_record_view(proposal), "changed question"); });
+    for (const auto *name : {"snapshot_sha256", "source_digest"}) {
+        auto invalid_request = Json::parse(request.dump());
+        invalid_request.set(name, Json::string("sha256:" + std::string(64, '0')));
+        rejects([&] { store.source_context(admit_record_view(invalid_request)); });
+    }
+    auto invalid_request = Json::parse(request.dump());
+    invalid_request.at("assertion_keys").push(points.at(0).at("native_assertion_key"));
+    rejects([&] { store.source_context(admit_record_view(invalid_request)); });
+    invalid_request = Json::parse(request.dump());
+    invalid_request.set("cutoff", Json::integer(0));
+    rejects([&] { store.source_context(admit_record_view(invalid_request)); });
+    const auto bytes = read_text(root / "snapshot/activity.json");
+    auto span = Json::object();
+    span.set("document", Json::string("activity"));
+    span.set("start", Json::integer(0));
+    span.set("end", Json::integer(bytes.size()));
+    span.set("text", Json::string(bytes));
+    auto evidence = Json::array();
+    evidence.push(span);
+    auto mention = parse(R"({"id":"Kd-bound","kind":"measurement","assertion_key":"", "polarity":"asserted","interpretation":"Original censored observation, without point conversion.","evidence":[],"endpoint":"Kd","units":"nM","relation":"<","value_token":"2.5"})");
+    mention.set("assertion_key", points.at(1).at("native_assertion_key"));
+    mention.set("evidence", evidence);
+    json_object_object_del(proposal.raw(), "query");
+    proposal.set("action", Json::string("annotate"));
+    auto mentions = Json::array();
+    mentions.push(mention);
+    proposal.set("mentions", mentions);
+    const auto admitted = admit(proposal);
+    check(!admitted.at("result").at("mentions").at(0).at("interpretation_verified").boolean(),
+          "annotation interpretation was promoted to evidence");
+    for (const auto *name : {"units", "endpoint", "relation", "value_token", "polarity"}) {
+        bad = Json::parse(proposal.dump());
+        bad.at("mentions").at(0).set(name, Json::string("invented"));
+        rejects([&] { admit(bad); });
+    }
+    for (const auto *name : {"text", "document"}) {
+        bad = Json::parse(proposal.dump());
+        bad.at("mentions").at(0).at("evidence").at(0).set(name, Json::string("invented"));
+        rejects([&] { admit(bad); });
+    }
+    const auto position = bytes.find("β");
+    check(position != std::string::npos, "missing UTF-8 evidence control");
+    bad = Json::parse(proposal.dump());
+    auto split = bad.at("mentions").at(0).at("evidence").at(0);
+    split.set("start", Json::integer(position));
+    split.set("end", Json::integer(position + 1));
+    split.set("text", Json::string(bytes.substr(position, 1)));
+    rejects([&] { admit(bad); });
+    mention = parse(R"({"id":"compound","kind":"entity","assertion_key":"", "role":"compound","entity":"chembl:CHEMBL941", "polarity":"uncertain","interpretation":"Reported compound identifier.","evidence":[]})");
+    mention.set("assertion_key", points.at(0).at("native_assertion_key"));
+    mention.set("evidence", evidence);
+    proposal.at("mentions").push(mention);
+    check(admit(proposal).at("result").at("mentions").size() == 2, "entity annotation dropped");
+    bad = Json::parse(proposal.dump());
+    bad.at("mentions").at(1).set("entity", Json::string("pubchem:cid:100"));
+    rejects([&] { admit(bad); });
+    bad = Json::parse(proposal.dump());
+    bad.at("mentions").push(bad.at("mentions").at(1));
+    rejects([&] { admit(bad); });
+    admitted.write(root / "proposal.rfcxs");
+    const auto restored = NativeRecord::read(root / "proposal.rfcxs");
+    check(restored.at("result").at("context").at("context_sha256").text() ==
+              catalog.at("context_sha256").text(), "proposal replay changed context");
+    check(restored.at("result").at("context").at("records").at(1).at("record").at("relation").text() == "<",
+          "proposal replay lost original censoring");
+    const auto original = store.native_publication().raw_sources();
+    const auto retained = restored.raw_sources();
+    for (const auto &source : original) {
+        const auto found = std::find_if(retained.begin(), retained.end(),
+                                       [&](const auto &row) { return row.key() == source.key(); });
+        check(found != retained.end() && std::ranges::equal(found->bytes(), source.bytes()),
+              "proposal replay changed original provider bytes");
+    }
+}
 int main() {
     try {
         const fs::path root = GADGET_BIOMEDICAL_TEST_BUILD;
@@ -66,6 +178,7 @@ int main() {
             rows.push(row);
         }
         activities.set("activities", rows);
+        activities.set("description", Json::string("β source quote control"));
         add("activity", "chembl", "activity", activities);
         add("binding", "bindingdb", "uniprot",
             parse(
@@ -166,6 +279,7 @@ int main() {
                 .at("result")
                 .at("records");
         auto compare = parse(R"({"operation":"compare","left":"1","right":"2"})");
+        proposal_contracts(store, root, points);
         compare.set("left", points.at(0).at("native_assertion_key"));
         compare.set("right", points.at(5).at("native_assertion_key"));
         const auto difference = store.execute(compare).at("result");

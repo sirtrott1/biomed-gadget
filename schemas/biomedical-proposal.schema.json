@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.biomedical.proposal.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "source_digest", "context_sha256", "question_sha256", "action"],
+  "properties": {
+    "schema": {"const": "gadget.biomedical.proposal.v1"},
+    "source_digest": {"$ref": "#/$defs/digest"},
+    "context_sha256": {"$ref": "#/$defs/digest"},
+    "question_sha256": {"$ref": "#/$defs/digest"},
+    "action": {"enum": ["query", "annotate", "clarify"]},
+    "query": {"$ref": "biomedical-query.schema.json"},
+    "reason": {"type": "string", "minLength": 1},
+    "mentions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/mention"}}
+  },
+  "oneOf": [
+    {"properties": {"action": {"const": "query"}}, "required": ["query"], "not": {"anyOf": [{"required": ["reason"]}, {"required": ["mentions"]}]}},
+    {"properties": {"action": {"const": "annotate"}}, "required": ["mentions"], "not": {"anyOf": [{"required": ["query"]}, {"required": ["reason"]}]}},
+    {"properties": {"action": {"const": "clarify"}}, "required": ["reason"], "not": {"anyOf": [{"required": ["query"]}, {"required": ["mentions"]}]}}
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "mention": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "kind", "assertion_key", "polarity", "interpretation", "evidence"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["entity", "measurement"]},
+        "assertion_key": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "polarity": {"enum": ["asserted", "negated", "uncertain"]},
+        "interpretation": {"type": "string", "minLength": 1},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "semantic-proposal.schema.json#/$defs/span"}},
+        "role": {"enum": ["compound", "target", "assay", "document", "response"]},
+        "entity": {"type": "string", "minLength": 1},
+        "endpoint": {"type": "string"}, "units": {"type": "string"},
+        "relation": {"type": "string"}, "value_token": {"type": "string"}
+      },
+      "oneOf": [
+        {"properties": {"kind": {"const": "entity"}}, "required": ["role", "entity"], "not": {"anyOf": [{"required": ["endpoint"]}, {"required": ["units"]}, {"required": ["relation"]}, {"required": ["value_token"]}]}},
+        {"properties": {"kind": {"const": "measurement"}}, "required": ["endpoint", "units", "relation", "value_token"], "not": {"anyOf": [{"required": ["role"]}, {"required": ["entity"]}]}}
+      ]
+    }
+  }
+}
