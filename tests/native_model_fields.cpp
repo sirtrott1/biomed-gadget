@@ -2,6 +2,7 @@
 #include <gadget/record_view.hpp>
 #include <gadget/scientific.hpp>
 #include <gadget/resources.hpp>
+#include <gadget/workflow.hpp>
 #include <rfc/storage/rfcx.hpp>
 #include <iostream>
 
@@ -474,6 +475,48 @@ void verify_replay(const NativeRecord &expected, const NativeRecord &actual) {
           "replay changed or extended the original study archive");
     check(expected.raw_sources().size() == actual.raw_sources().size(), "replay retained extra byte owners");
 }
+void verify_workflow(const std::shared_ptr<const ScientificStudy> &study,
+                     const NativeRecord &query, const fs::path &output, bool sections) {
+    auto declaration = Json::parse(R"({"schema":"gadget.scientific.workflow.v1","id":"native-producers","source_digest":"","limits":{"depth":4,"nodes":3,"model_calls":0,"parallel_workers":2},"definitions":[],"entry":{"id":"two-owners","type":"parallel","workers":2,"steps":[]}})");
+    declaration.set("source_digest", Json::string(study->digest()));
+    for (const auto *id : {"first", "second"}) {
+        auto leaf = Json::object();
+        leaf.set("id", Json::string(id)); leaf.set("type", Json::string("query"));
+        leaf.set("query", render_record_view(query));
+        declaration.at("entry").at("steps").push(leaf);
+    }
+    const auto request = admit_record_view(declaration);
+    const auto workflow = execute_workflow_record(study, request);
+    const auto receipt = workflow.at("result");
+    check(receipt.at("native_execution").boolean() && receipt.at("status").text() == "complete",
+          "accepted producer refused native workflow execution");
+    check(receipt.at("result").size() == 2, "parallel workflow omitted a native owner");
+    const auto first = NativeRecord::decode(receipt.at("result").at(0).at("publication").bytes());
+    const auto second = NativeRecord::decode(receipt.at("result").at(1).at("publication").bytes());
+    check(first.source_namespace() != second.source_namespace(), "independent results merged by dimension");
+    for (const auto &owner : {first, second}) {
+        check(NativeRecord::decode(owner.at("request_publication").bytes()).encode() == request.encode(),
+              "leaf lost complete original workflow request");
+        check(NativeRecord::decode(owner.at("result").at("source_study_publication").bytes()).encode() ==
+                  study->native_publication().encode(), "workflow leaf changed original study bytes");
+        if (sections) verify_sections(owner); else verify_structural(owner);
+    }
+    request.write(output / "workflow-request.rfcxs");
+    workflow.write(output / "owning-workflow.rfcxs");
+    const auto reopened = NativeRecord::read(output / "owning-workflow.rfcxs");
+    check(NativeRecord::decode(reopened.at("result").at("result").at(0).at("publication").bytes()).encode() ==
+              first.encode(), "workflow reopening changed complete native fields");
+    write_text(output / "workflow-display.json", workflow_record_view(reopened).dump());
+    auto unsupported = Json::object();
+    unsupported.set("operation", Json::string("field_summary"));
+    declaration.at("entry").at("steps").at(1).set("query", unsupported);
+    bool refused = false;
+    try { (void)execute_workflow_record(study, admit_record_view(declaration)); }
+    catch (const std::invalid_argument &error) {
+        refused = std::string(error.what()).find("native result publisher") != std::string::npos;
+    }
+    check(refused, "unconverted publisher passed strict admission");
+}
 }
 int main(int argc, char **argv) try {
     if (argc != 5) throw std::invalid_argument("workspace, queries, output and mode required");
@@ -490,9 +533,13 @@ int main(int argc, char **argv) try {
     const auto original = study->native_publication();
     ScientificSession session(study);
     const auto queries = admit_record_view(Json::parse(read_text(queries_path)));
+    check(!has_native_scientific_publisher("field_summary") && !has_native_scientific_publisher("unknown"),
+          "unconverted producer reported native availability");
     std::vector<NativeRecord> results;
     for (const auto &name : queries.names()) {
         const auto query = queries.at(name);
+        check(has_native_scientific_publisher(query.at("operation").text()),
+              "implemented producer missing from native inventory");
         const auto result = session.execute_record(query);
         if (std::string(argv[4]) == "response") verify_response(result, original);
         else if (std::string(argv[4]) == "ensemble") verify_ensemble(result, original);
@@ -512,6 +559,8 @@ int main(int argc, char **argv) try {
         result.write(output / (name + ".rfcxs"));
         results.push_back(NativeRecord::read(output / (name + ".rfcxs")));
     }
+    if (std::string(argv[4]) == "sections" || std::string(argv[4]) == "structural")
+        verify_workflow(study, queries.at(queries.names().front()), output, std::string(argv[4]) == "sections");
     auto plan = Json::object(), steps = Json::array();
     plan.set("schema", Json::string("gadget.scientific.plan.v1"));
     plan.set("id", Json::string("native-models")); plan.set("question", Json::string("Retain declared model fields"));

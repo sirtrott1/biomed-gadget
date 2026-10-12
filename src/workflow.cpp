@@ -206,11 +206,7 @@ struct Runner {
         if (kind == "query") {
             members(node, {"id", "type", "query"});
             if (strict_native) {
-                const std::set<std::string> profile{
-                    "linear_model_comparison", "finite_reference_calibration", "hodge_frame_decomposition",
-                    "linear_response_observation", "declared_response_transition", "metric_relative_novelty",
-                    "observed_response_model", "constrained_response_model", "relational_field_ensemble"};
-                require(profile.contains(node.at("query").at("operation").text()),
+                require(has_native_scientific_publisher(node.at("query").at("operation").text()),
                         "workflow query has no admitted native result publisher");
             }
             session.validate(node.at("query"));
@@ -919,10 +915,16 @@ Json workflow_record_view(const NativeRecord &publication) {
     receipt.set("trace", trace);
     return seal(receipt, "receipt_sha256");
 }
+Json execute_workflow(std::shared_ptr<const ScientificStudy> study, const NativeRecord &workflow,
+                      const WorkflowModels &models, std::shared_ptr<CpuResources> resources,
+                      ComputeOptions compute, const EvidenceStore *evidence) {
+    return workflow_record_view(run_workflow(std::move(study), workflow, models,
+        std::move(resources), compute, evidence, false));
+}
 Json execute_workflow(std::shared_ptr<const ScientificStudy> study, const Json &workflow,
                       const WorkflowModels &models, std::shared_ptr<CpuResources> resources,
                       ComputeOptions compute, const EvidenceStore *evidence) {
-    return workflow_record_view(run_workflow(std::move(study), admit_record_view(workflow), models,
-        std::move(resources), compute, evidence, false));
+    return execute_workflow(std::move(study), admit_record_view(workflow), models,
+        std::move(resources), compute, evidence);
 }
 } // namespace gadget

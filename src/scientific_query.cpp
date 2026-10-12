@@ -31,6 +31,14 @@
 #include <rfc/temporal/operation_word.hpp>
 
 namespace gadget {
+bool has_native_scientific_publisher(std::string_view operation) noexcept {
+    return operation == "linear_model_comparison" || operation == "finite_reference_calibration" ||
+           operation == "hodge_frame_decomposition" || operation == "linear_response_observation" ||
+           operation == "declared_response_transition" || operation == "metric_relative_novelty" ||
+           operation == "observed_response_model" || operation == "constrained_response_model" ||
+           operation == "relational_field_ensemble" || operation == "structural_reference_calibration" ||
+           operation == "local_sections";
+}
 namespace {
 using namespace scientific_detail;
 using namespace rfc::storage;
@@ -1911,12 +1919,7 @@ struct ScientificSession::State {
     NativeRecord record(const NativeRecord &query, const Json &admitted) {
         using N = NativeRecordValue;
         const auto operation = admitted.at("operation").text();
-        if (operation != "linear_model_comparison" && operation != "finite_reference_calibration" &&
-            operation != "hodge_frame_decomposition" && operation != "linear_response_observation" &&
-            operation != "declared_response_transition" && operation != "metric_relative_novelty" &&
-            operation != "observed_response_model" && operation != "constrained_response_model" &&
-            operation != "relational_field_ensemble" && operation != "structural_reference_calibration" &&
-            operation != "local_sections")
+        if (!has_native_scientific_publisher(operation))
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
             if (operation == "local_sections") return local_section_fields(admitted);

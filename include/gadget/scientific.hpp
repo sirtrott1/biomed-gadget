@@ -12,6 +12,8 @@
 namespace rfc::storage { class NativeAtlasSource; }
 namespace gadget {
 class CpuResources;
+// Reports producer availability. Source and query admission remain required.
+bool has_native_scientific_publisher(std::string_view operation) noexcept;
 // Recompute a retained model or finite calibration operation from its original
 // study bytes and query, then verify its complete fields, carriers and support.
 NativeRecord replay_scientific_record(const NativeRecord &publication,

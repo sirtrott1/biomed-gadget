@@ -56,6 +56,37 @@ def main(binary, consumer, root):
         if process.returncode:
             raise AssertionError(mode + ': ' + process.stderr)
         receipts.append(dict(case=mode, **json.loads(process.stdout)))
+        results = root / (mode + '-results')
+        workflow = subprocess.run([str(binary), 'workflow', '--workspace',
+                                   str(case / 'workspace.moved/workspace.rfcxs'), '--assay',
+                                   'measurements', '--request', str(results / 'workflow-request.rfcxs'),
+                                   '--out', str(results / 'cli-workflow.rfcxs')],
+                                  capture_output=True, text=True, timeout=300)
+        if workflow.returncode:
+            raise AssertionError(mode + ' workflow CLI: ' + workflow.stderr)
+        view = json.loads(workflow.stdout)
+        expected = json.loads((results / 'workflow-display.json').read_text())
+        assert view['schema'] == 'gadget.scientific.workflow.receipt.v1' and view['status'] == 'complete'
+        assert view['result'] == expected['result']
+        assert len(view['result']) == 2 and (results / 'cli-workflow.rfcxs').is_file()
+        display = subprocess.run(workflow.args[:-2], capture_output=True, text=True, timeout=300)
+        assert display.returncode == 0, display.stderr
+        assert json.loads(display.stdout)['result'] == expected['result']
+        legacy = copy.deepcopy(expected['workflow'])
+        legacy['entry'] = dict(id='legacy-summary', type='query',
+                               query=dict(operation='field_summary', field='all.A', support='reported_only'))
+        legacy_path = results / 'legacy-workflow.json'
+        legacy_path.write_text(json.dumps(legacy))
+        command = [str(binary), 'workflow', '--workspace',
+                   str(case / 'workspace.moved/workspace.rfcxs'), '--assay', 'measurements',
+                   '--request', str(legacy_path)]
+        display = subprocess.run(command, capture_output=True, text=True, timeout=300)
+        assert display.returncode == 0, display.stderr
+        assert json.loads(display.stdout)['result']['result']['reported'] > 0
+        target = results / 'unconverted-workflow.rfcxs'
+        refused = subprocess.run([*command, '--out', str(target)], capture_output=True, text=True)
+        assert refused.returncode != 0 and 'native result publisher' in refused.stderr
+        assert not target.exists()
 
     verify(structural, queries, 'structural')
     sections = root / 'sections'

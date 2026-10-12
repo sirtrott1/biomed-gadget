@@ -34,6 +34,11 @@ Json execute_workflow(std::shared_ptr<const ScientificStudy> study, const Json &
                       const WorkflowModels &models = {},
                       std::shared_ptr<CpuResources> resources = {}, ComputeOptions compute = {},
                       const EvidenceStore *evidence = nullptr);
+// Compatibility display from the original typed declaration and byte owner.
+Json execute_workflow(std::shared_ptr<const ScientificStudy> study, const NativeRecord &workflow,
+                      const WorkflowModels &models = {},
+                      std::shared_ptr<CpuResources> resources = {}, ComputeOptions compute = {},
+                      const EvidenceStore *evidence = nullptr);
 NativeRecord execute_workflow_record(std::shared_ptr<const ScientificStudy> study,
     const NativeRecord &workflow,const WorkflowModels &models = {},
     std::shared_ptr<CpuResources> resources = {},ComputeOptions compute = {},
