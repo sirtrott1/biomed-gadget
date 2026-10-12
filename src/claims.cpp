@@ -76,7 +76,10 @@ bool compare_claim(const Json &actual, const Json &expected, const std::string &
     return ordering <= 0;
 }
 void admit_condition(const Json &condition) {
-    members(condition, {"path", "value_type", "comparison", "value"});
+    members(condition, {"path", "value_type", "comparison", "value"}, {"coordinate"});
+    if (condition.has("coordinate"))
+        (void)count(condition.at("coordinate"), std::numeric_limits<std::size_t>::max(),
+                    "native claim original coordinate");
     const auto path = condition.at("path");
     source_array(path, "condition path");
     require(path.size(), "condition path requires components");
@@ -93,6 +96,7 @@ void admit_condition(const Json &condition) {
 }
 Json check_literal_claim(const Json &value, const Json &claim) {
     admit_condition(claim);
+    require(!claim.has("coordinate"), "tensor coordinates require an actual native claim owner");
     const auto actual = member_path(value, claim.at("path"));
     const bool agrees = compare_claim(actual, claim.at("value"), claim.at("value_type").text(),
                                       claim.at("comparison").text());
@@ -203,11 +207,13 @@ NativeRecord check_certificate_claims_record(const NativeRecord &certificate, co
     require(cutoff == history->last_sequence(), "native claims publication cutoff mismatch");
     const auto result = certificate.at("result");
     const auto schema = result.at("schema").text();
-    require(schema == "gadget.scientific.result.fields.v1" || schema == "gadget.biomedical.certificate.v1",
+    require(schema == "gadget.scientific.result.fields.v1" || schema == "gadget.biomedical.certificate.v1" ||
+                schema == "gadget.claims.native.receipt.v1",
             "native claims refuse an unmigrated numerical certificate");
     const bool scientific = schema == "gadget.scientific.result.fields.v1";
     const auto metadata = scientific ? result.at("certificate") : result;
-    const auto values = scientific ? result.at("fields").at("view") : result.at("result");
+    const auto values = scientific ? result.at("fields").at("view") :
+        schema == "gadget.claims.native.receipt.v1" ? result : result.at("result");
     if (scientific)
         require(result.at("fields").at("schema").text() == "gadget.scientific.fields.v1",
                 "native claims require actual scientific fields");
