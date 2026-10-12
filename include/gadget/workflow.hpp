@@ -7,8 +7,10 @@
 namespace gadget {
 class EvidenceStore;
 struct WorkflowModel {
+    using NativeInvoke = std::function<NativeRecord(const std::string &, std::shared_ptr<CpuResources>)>;
     std::size_t workers{1};
     std::function<Json(const std::string &, std::shared_ptr<CpuResources>)> invoke;
+    NativeInvoke invoke_native;
     template <class F>
         requires std::invocable<F, const std::string &>
     WorkflowModel(F f)
@@ -16,6 +18,7 @@ struct WorkflowModel {
               return f(s);
           }) {}
     WorkflowModel(std::size_t n, decltype(invoke) f) : workers(n), invoke(std::move(f)) {}
+    WorkflowModel(std::size_t n, NativeInvoke f) : workers(n), invoke_native(std::move(f)) {}
 };
 Json check_certificate_claims(const Json &certificate, const Json &claims);
 // Compare control literals with an actual native operation's values. The
@@ -35,4 +38,7 @@ NativeRecord execute_workflow_record(std::shared_ptr<const ScientificStudy> stud
     const NativeRecord &workflow,const WorkflowModels &models = {},
     std::shared_ptr<CpuResources> resources = {},ComputeOptions compute = {},
     const EvidenceStore *evidence = nullptr);
+// Optional presentation of retained publications; never used to execute a leaf
+// or select an actual tensor coefficient.
+Json workflow_record_view(const NativeRecord &publication);
 } // namespace gadget

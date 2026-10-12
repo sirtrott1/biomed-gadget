@@ -345,6 +345,11 @@
                       "pattern": "^-?[0-9]+(/[1-9][0-9]*)?$"
                     }
                   ]
+                },
+                "coordinate": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Original flat coordinate in the selected native tensor; required for nonscalar tensor comparisons."
                 }
               },
               "required": [
@@ -491,6 +496,11 @@
                         "pattern": "^-?[0-9]+(/[1-9][0-9]*)?$"
                       }
                     ]
+                  },
+                  "coordinate": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Original flat coordinate in the selected native tensor."
                   }
                 },
                 "required": [

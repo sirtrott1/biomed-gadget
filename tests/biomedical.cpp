@@ -339,8 +339,13 @@ int main() {
         const auto receipt =
             execute_workflow(study, workflow, {}, CpuResources::local(), {}, &store);
         check(receipt.at("status").text() == "complete", "native delegated evidence/math workflow");
+        auto native_workflow = Json::parse(workflow.dump());
+        native_workflow.at("entry").at("steps").at(1).set("query", parse(
+            R"({"operation":"linear_model_comparison","responses":["all.Kd_nM"],"terms":[],"controls":[],"selection":[],"support":"joint_reported","metric":"identity","intercept":true})"));
         const auto operation = execute_workflow_record(
-            study, admit_record_view(workflow), {}, CpuResources::local(), {}, &store);
+            study, admit_record_view(native_workflow), {}, CpuResources::local(), {}, &store);
+        check(workflow_record_view(operation).at("status").text() == "complete",
+              "owning native workflow did not preserve its actual query results");
         operation.write(root / "complete-operation.rfcxs");
         fs::rename(root / "store", root / "unavailable-store");
         fs::rename(root / "snapshot", root / "unavailable-snapshot");
