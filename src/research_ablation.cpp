@@ -26,9 +26,6 @@ M boundary(const core::RelationalComplex &c, std::size_t k) {
         return M(c.grade(core::Grade{static_cast<std::uint16_t>(k - 1)}).cell_count(), 0);
     return field::materialize_boundary_matrix(c, core::Grade{static_cast<std::uint16_t>(k)});
 }
-ResultValue cell_record(const ResultValue &witness, core::CellId c) {
-    return witness.at("cells").at(c.grade.value).at(c.index);
-}
 struct SectionResult {
     LocalSectionAnalysis analysis;
     NativeRecord publication;
@@ -201,6 +198,12 @@ ResultValue source_structure_ablation(const NativeStudy &base, const Json &query
     (void)text(interpretation.at("population"), source_byte_limit());
     (void)text(interpretation.at("meaning"), source_byte_limit());
     const auto &source = base.source();
+    const auto native_cells = std::move(witness.at("cells")).release();
+    const auto cell_record = [&](const ResultValue &, core::CellId cell) {
+        const auto &grades = std::get<NativeRecordValue::Array>(native_cells.data).elements;
+        const auto &cells = std::get<NativeRecordValue::Array>(grades.at(cell.grade.value).data).elements;
+        return ResultValue(cells.at(cell.index));
+    };
     (void)PreparedRelationalField::chain(base);
     auto cpu = resources ? resources : CpuResources::local();
     const auto workers =

@@ -1,5 +1,6 @@
 #include "research_ablation.hpp"
 #include "scientific_ablation_fields.hpp"
+#include "scientific_source_snapshot.hpp"
 #include "research_ensemble.hpp"
 #include "research_factored.hpp"
 #include "research_prepared.hpp"
@@ -38,7 +39,9 @@ bool has_native_scientific_publisher(std::string_view operation) noexcept {
            operation == "declared_response_transition" || operation == "metric_relative_novelty" ||
            operation == "observed_response_model" || operation == "constrained_response_model" ||
            operation == "relational_field_ensemble" || operation == "structural_reference_calibration" ||
-           operation == "local_sections" || operation == "source_structure_ablation";
+           operation == "local_sections" || operation == "source_structure_ablation" ||
+           operation == "field_summary" || operation == "boundary" || operation == "adjoint" ||
+           operation == "hodge" || operation == "green_action";
 }
 namespace {
 using namespace scientific_detail;
@@ -670,6 +673,121 @@ struct ScientificSession::State {
         const auto result = publication.finish(std::move(view));
         if (native) { *native = result; return Json{}; }
         return scientific_detail::result_fields_view(result);
+    }
+    NativeRecord field_summary_fields(const Json &query) {
+        using namespace scientific_detail;
+        auto reservation = cpu().reserve(1);
+        const auto id = query.at("field").text();
+        const auto &input_field = tensor(id);
+        ResultFields publication(owner->native_publication());
+        Vector values;
+        std::vector<std::size_t> coordinates;
+        input_field.tensor.support().for_each_active([&](std::size_t i) {
+            coordinates.push_back(i); values.push_back(*input_field.tensor.state(i));
+        });
+        check_values(values);
+        const Vector ones(values.size(), Rational{1});
+        const auto sum = rfc::numeric::dot(ones, values);
+        const auto squares = rfc::numeric::dot(values, values);
+        const auto row_axis = publication.axis(coordinates.size());
+        const auto scalar_view = [&](const Rational &value) {
+            auto field = publication.stage_scalar(value); field.set("display", ResultValue::string("rational_object")); return field;
+        };
+        auto view = ResultValue::object();
+        view.set("reported", ResultValue::count(coordinates.size()));
+        view.set("missing", ResultValue::count(input_field.tensor.domain().logical_size() - coordinates.size()));
+        view.set("coordinates", publication.indices(coordinates, row_axis));
+        view.set("sum", scalar_view(sum));
+        view.set("sum_of_squares", scalar_view(squares));
+        if (values.empty()) {
+            rfc::numeric::SparseRationalTensor absent(rfc::numeric::IndexDomain::linear(1),
+                rfc::numeric::StructuralSupport::sparse(1, {}), rfc::numeric::SparseRationalVector(1));
+            view.set("mean", ResultFields::staged(std::move(absent), {}, publication.axis(1), "rational_object"));
+        } else view.set("mean", scalar_view(sum / Rational(values.size())));
+        view.set("units", ResultValue(source.fields.at(id).declaration.at("units").native().unbound_value()));
+        auto binding = ResultValue::object();
+        binding.set("kind", ResultValue::string("actual_reported_field_summary"));
+        binding.set("id", ResultValue::string(id));
+        binding.set("source_field", publication.stored(input_field.key, "vector"));
+        binding.set("row_carrier", ResultValue::count(row_axis));
+        binding.set("row_coordinates", view.at("coordinates"));
+        binding.set("reported_values", ResultFields::stage_vector(values, row_axis));
+        binding.set("weights", ResultFields::stage_vector(ones, row_axis));
+        publication.bind(std::move(binding));
+        return publication.finish(std::move(view));
+    }
+    NativeRecord direct_action_fields(const Json &query) {
+        using namespace scientific_detail;
+        const auto operation = query.at("operation").text();
+        const auto name = query.at("context").text(), id = query.at("field").text();
+        auto &prepared = context(name);
+        const auto [values, grade] = input(name, id, false);
+        auto reservation = cpu().reserve(1);
+        const auto lease = source_execution_lease("scientific-direct-source-action");
+        lease.check_cancelled();
+        const auto snapshot = source_snapshot_publication(*prepared.study, owner->native_publication(), prepared.to_ambient);
+        ResultFields publication(snapshot.publication);
+        auto output_grade = grade;
+        rfc::field::OperatorRequest request;
+        request.grade = rfc::core::Grade{grade}; request.kind = rfc::field::OperatorKind::Hodge;
+        if (operation == "boundary") {request.kind = rfc::field::OperatorKind::Boundary; --output_grade;}
+        if (operation == "adjoint") {request.kind = rfc::field::OperatorKind::Adjoint; ++request.grade.value; ++output_grade;}
+        Vector output;
+        std::optional<rfc::field::ExactGreenResult> green;
+        if (operation == "green_action") {
+            const auto lambda = exact_rational(query.at("lambda").text());
+            green = prepared.study->green_action(rfc::core::Grade{grade}, lambda, values);
+            require(green->exact && rfc::numeric::is_zero(rfc::numeric::sub(
+                rfc::numeric::add(green->value, rfc::numeric::scale(lambda,
+                    prepared.study->hodge(rfc::core::Grade{grade}).apply(green->value))), values)),
+                "native direct Green reconstruction residual");
+            output = green->value;
+        } else output = prepared.study->execute(request, values);
+        lease.check_cancelled();
+        const auto output_field = publication.vector(output, snapshot.grade_axes.at(output_grade));
+        auto view = ResultValue::object(), result = ResultValue::array();
+        for (std::size_t i = 0; i < output.size(); ++i) {
+            const auto ambient = prepared.to_ambient.at(output_grade).at(i);
+            const auto cell = source.coordinate(output_grade, ambient);
+            auto record = ResultValue::object();
+            record.set("coordinate", ResultValue::count(i));
+            record.set("native_key", ResultValue::string(std::to_string(cell.key)));
+            record.set("entity", ResultValue(source.cell_record(cell).at("id")));
+            auto value = output_field;
+            value.set("display", ResultValue::string("rational_object"));
+            value.set("index", ResultValue::count(i));
+            record.set("value", std::move(value)); result.push(std::move(record));
+        }
+        view.set("schema", ResultValue::string("gadget.scientific.direct.result.v1"));
+        view.set("result", std::move(result)); view.set("output_grade", ResultValue::count(output_grade));
+        if (green) {
+            view.set("green_iterations", ResultValue::count(green->iterations));
+            view.set("green_execution", ResultValue::string("rfc::field::exact_green_apply; factored boundary and metric actions"));
+            view.set("residual_verified", ResultValue::boolean(true));
+        }
+        auto binding = ResultValue::object();
+        const auto &input_tensor = tensor(id);
+        binding.set("kind", ResultValue::string("actual_direct_source_action"));
+        binding.set("operation", ResultValue::string(operation));
+        binding.set("field", ResultValue::string(id));
+        binding.set("input_grade", ResultValue::count(grade));
+        binding.set("output_grade", ResultValue::count(output_grade));
+        binding.set("original_study_publication", ResultValue(snapshot.publication.at("bindings").at(0)
+            .at("original_study_publication").unbound_value()));
+        binding.set("input_source_namespace", ResultValue::string(std::to_string(source.field_pins.at(input_tensor.key).source_namespace())));
+        binding.set("input_cutoff", ResultValue::count(source.field_pins.at(input_tensor.key).sequence()));
+        binding.set("input_tensor", ResultValue::count(input_tensor.key));
+        binding.set("input_carrier", ResultValue::count(*input_tensor.output));
+        const auto input_axis = publication.axis(input_tensor.tensor.domain().logical_size());
+        binding.set("input_coordinate_carrier", ResultValue::count(input_axis));
+        rfc::numeric::ExactMatrix realization(values.size(), input_tensor.tensor.domain().logical_size());
+        for (std::size_t i = 0; i < values.size(); ++i) realization.set(i, prepared.to_ambient.at(grade).at(i), Rational{1});
+        binding.set("input_realization", ResultFields::stage_matrix(realization, input_axis, snapshot.grade_axes.at(grade)));
+        binding.set("context_input", ResultFields::stage_vector(values, snapshot.grade_axes.at(grade)));
+        binding.set("output", output_field);
+        binding.set("execution_scope", ResultValue::string("Canonical one shot action; CPU reservation and cancellation before and after the action"));
+        publication.bind(std::move(binding));
+        return publication.finish(std::move(view));
     }
     Json response_query(const Json &query, bool validate, std::optional<NativeRecord> *native = nullptr) {
         const auto name = query.at("context").text();
@@ -1954,6 +2072,9 @@ struct ScientificSession::State {
         if (!has_native_scientific_publisher(operation))
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
+            if (operation == "field_summary") return field_summary_fields(admitted);
+            if (operation == "boundary" || operation == "adjoint" || operation == "hodge" || operation == "green_action")
+                return direct_action_fields(admitted);
             if (operation == "local_sections") return local_section_fields(admitted);
             if (operation == "source_structure_ablation") {
                 std::optional<NativeRecord> result;
@@ -2010,7 +2131,9 @@ struct ScientificSession::State {
         auto result = certificate(query);
         const auto operation = query.at("operation").text();
         std::optional<rfc::runtime::CpuResourceCoordinator::Reservation> serial;
-        if (resources && operation != "native_boundary" && operation != "support_mask" &&
+        if (resources && operation != "field_summary" && operation != "boundary" &&
+            operation != "adjoint" && operation != "hodge" && operation != "green_action" &&
+            operation != "native_boundary" && operation != "support_mask" &&
             operation != "paired_field_contrasts" && operation != "controlled_pairings" &&
             operation != "linear_model_comparison" && operation != "finite_reference_calibration" &&
             operation != "relational_field_ensemble" &&
@@ -2052,6 +2175,27 @@ struct ScientificSession::State {
                            native_lease.value_or(scientific_detail::source_execution_lease(
                                "gadget-native-hodge-machine-addressable-v1")),
                            cpu()));
+            return seal(result, "certificate_sha256");
+        }
+        if (operation == "field_summary") {
+            result.set("result", result_fields_view(field_summary_fields(query)));
+            result.set("mathematical_definition", Json::string(
+                "exact canonical dot(1,x), dot(x,x), and dot(1,x)/reported_count on explicit native reported support; descriptive observed rows, no population estimator or imputation"));
+            return seal(result, "certificate_sha256");
+        }
+        if (operation == "boundary" || operation == "adjoint" || operation == "hodge" || operation == "green_action") {
+            const auto display = result_fields_view(direct_action_fields(query));
+            result.set("result", display.at("result"));
+            result.set("output_grade", display.at("output_grade"));
+            if (operation == "green_action") {
+                result.set("green_iterations", display.at("green_iterations"));
+                result.set("green_execution", display.at("green_execution"));
+                result.set("residual_verified", display.at("residual_verified"));
+            }
+            result.set("mathematical_definition", Json::string(
+                operation == "green_action" ? "(I + lambda L_k) x = j; exact operator action with complete output field"
+                : operation == "hodge" ? "L_k x = (B_k^dagger B_k + B_(k+1) B_(k+1)^dagger) x"
+                : operation == "boundary" ? "B_k x" : "M_(k+1)^-1 B_(k+1)^T M_k x"));
             return seal(result, "certificate_sha256");
         }
         if (operation == "temporal_field_history") {
@@ -2239,34 +2383,6 @@ struct ScientificSession::State {
             result.set("result", provenance(source.resolve_cell(query.at("entity").text())));
         else if (operation == "coverage") {
             result.set("result", coverage(query.at("field").text()));
-        } else if (operation == "field_summary") {
-            const auto &t = tensor(query.at("field").text());
-            Vector values;
-            auto coordinates = Json::array();
-            t.tensor.support().for_each_active([&](std::size_t i) {
-                values.push_back(*t.tensor.state(i));
-                coordinates.push(cardinality(i));
-            });
-            check_values(values);
-            const Vector ones(values.size(), Rational{1});
-            const Rational sum = rfc::numeric::dot(ones, values);
-            const Rational square_sum = rfc::numeric::dot(values, values);
-            auto summary = Json::object();
-            summary.set("reported", cardinality(values.size()));
-            summary.set("missing", cardinality(t.tensor.domain().logical_size() - values.size()));
-            summary.set("coordinates", coordinates);
-            summary.set("sum", rational(sum));
-            summary.set("sum_of_squares", rational(square_sum));
-            summary.set("mean", values.empty() ? Json{}
-                                               : rational(Rational(sum / Rational(values.size()))));
-            summary.set("units",
-                        source.fields.at(query.at("field").text()).declaration.at("units"));
-            result.set(
-                "mathematical_definition",
-                Json::string("exact canonical dot(1,x), dot(x,x), and dot(1,x)/reported_count on "
-                             "explicit native reported support; descriptive observed rows, no "
-                             "population estimator or imputation"));
-            result.set("result", summary);
         } else if (operation == "support_mask") {
             using namespace rfc::composite;
             const auto fields = query.at("fields");
@@ -2601,54 +2717,7 @@ struct ScientificSession::State {
                         "complete finite cross-moment change with form, left/right innovation and "
                         "interaction; declared or established native correspondence"));
                 result.set("result", terms);
-            } else {
-                rfc::field::OperatorRequest request;
-                request.grade = rfc::core::Grade{grade};
-                request.kind = rfc::field::OperatorKind::Hodge;
-                auto output_grade = grade;
-                if (operation == "boundary") {
-                    request.kind = rfc::field::OperatorKind::Boundary;
-                    --output_grade;
-                }
-                if (operation == "adjoint") {
-                    request.kind = rfc::field::OperatorKind::Adjoint;
-                    ++request.grade.value;
-                    ++output_grade;
-                }
-                Vector output;
-                if (operation == "green_action") {
-                    const auto lambda = exact_rational(query.at("lambda").text());
-                    const auto answer =
-                        prepared.study->green_action(rfc::core::Grade{grade}, lambda, values);
-                    require(answer.exact &&
-                                rfc::numeric::is_zero(rfc::numeric::sub(
-                                    rfc::numeric::add(
-                                        answer.value,
-                                        rfc::numeric::scale(
-                                            lambda, prepared.study->hodge(rfc::core::Grade{grade})
-                                                        .apply(answer.value))),
-                                    values)),
-                            "native Green action reconstruction residual");
-                    output = answer.value;
-                    result.set("green_iterations", cardinality(answer.iterations));
-                    result.set(
-                        "green_execution",
-                        Json::string(
-                            "rfc::field::exact_green_apply; factored boundary and metric actions"));
-                    result.set("residual_verified", Json::boolean(true));
-                } else
-                    output = prepared.study->execute(request, values);
-                result.set(
-                    "mathematical_definition",
-                    Json::string(
-                        operation == "green_action" ? "(I + lambda L_k) x = j; exact operator "
-                                                      "action with complete output field"
-                        : operation == "hodge"
-                            ? "L_k x = (B_k^dagger B_k + B_(k+1) B_(k+1)^dagger) x"
-                            : (operation == "boundary" ? "B_k x" : "M_(k+1)^-1 B_(k+1)^T M_k x")));
-                result.set("output_grade", cardinality(output_grade));
-                result.set("result", coordinates(prepared, output_grade, output));
-            }
+            } else throw std::invalid_argument("direct scientific action dispatch mismatch");
         }
         return seal(result, "certificate_sha256");
     }

@@ -179,7 +179,16 @@ Json render_record_view(const NativeRecord &record) {
             const auto schema = record.at("schema").text();
             if (schema == "gadget.scientific.result.fields.v1") {
                 auto out = render_record_view(record.at("certificate"));
-                out.set("result", render_record_view(record.at("fields")));
+                const auto fields = record.at("fields");
+                const auto view = fields.at("view");
+                const auto rendered = render_record_view(fields);
+                if (view.kind() == NativeRecordKind::Object && view.has("schema") &&
+                    view.at("schema").text() == "gadget.scientific.direct.result.v1") {
+                    out.set("result", rendered.at("result"));
+                    out.set("output_grade", rendered.at("output_grade"));
+                    for (const auto &name : {"green_iterations", "green_execution", "residual_verified"})
+                        if (rendered.has(name)) out.set(name, rendered.at(name));
+                } else out.set("result", rendered);
                 return scientific_detail::seal(out, "certificate_sha256");
             }
             if (schema == "gadget.scientific.plan.fields.v1") {

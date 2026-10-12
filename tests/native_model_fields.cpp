@@ -280,6 +280,7 @@ void verify_green(const std::shared_ptr<const ScientificStudy> &study) {
     check(refused, "Green did not identify exhausted buffer resource");
 }
 Rational scalar(const NativeRecord &owner, const NativeRecord &descriptor) {
+    if (descriptor.has("index")) return state(field(owner,descriptor)->tensor,descriptor.at("index").integer().get_ui());
     const auto coefficients = values(owner, descriptor);
     check(coefficients.size() == 1, "native scalar shape differs");
     return coefficients.front();
@@ -574,6 +575,70 @@ void verify_ablation(const NativeRecord &publication) {
         check(refused, "invalid archived or overlay path accepted");
     }
 }
+void verify_direct(const NativeRecord &publication, const NativeRecord &original) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner, view); audit_fields(owner, owner.at("bindings"));
+    const auto binding = owner.at("bindings").at(0);
+    if (binding.at("kind").text() == "actual_reported_field_summary") {
+        const auto &input = *field(owner, binding.at("source_field"));
+        Rational sum{0}, squares{0}; std::size_t count{0};
+        input.tensor.support().for_each_active([&](std::size_t i) {
+            const auto x = *input.tensor.state(i); sum += x; squares += x*x; ++count;
+        });
+        check(view.at("reported").integer() == count &&
+              view.at("missing").integer() == input.tensor.domain().logical_size()-count,
+              "summary changed original supported versus missing coordinates");
+        check(scalar(owner,view.at("sum")) == sum && scalar(owner,view.at("sum_of_squares")) == squares,
+              "summary differs from original complete supported field");
+        const auto &mean = field(owner,view.at("mean"))->tensor;
+        check(mean.support().count() == (count ? 1u : 0u), "empty mean became supported zero");
+        if (count) check(state(mean,0) == sum/Rational(count), "native mean differs");
+        auto request = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[{"path":["mean"],"value_type":"rational","comparison":"equal","value":"0"}]})");
+        request.set("source_namespace", Json::string(std::to_string(publication.source_namespace())));
+        request.set("cutoff", Json::integer(static_cast<std::int64_t>(publication.publication_history()->last_sequence())));
+        if (count) {
+            request.at("items").at(0).set("value", Json::string(Rational(sum/Rational(count)).get_str()));
+            check(check_certificate_claims_record(publication,admit_record_view(request)).at("result").at("matched").integer()==1,
+                  "rational object native claim lost actual mean owner");
+        } else {
+            bool refused=false;
+            try {(void)check_certificate_claims_record(publication,admit_record_view(request));}
+            catch(const std::invalid_argument &e){refused=std::string(e.what()).find("missing")!=std::string::npos;}
+            check(refused,"unsupported empty mean accepted as supported zero claim");
+        }
+        check(field(owner,binding.at("reported_values"))->output == field(owner,binding.at("weights"))->output,
+              "summary rows and weights lost actual reported coordinate axis");
+    } else {
+        check(binding.at("kind").text() == "actual_direct_source_action", "direct action owner absent");
+        const auto &input = *field(original,binding.at("input_tensor"));
+        check(binding.at("input_carrier").integer() == *input.output, "original direct input carrier differs");
+        check(NativeRecord::decode(binding.at("original_study_publication").bytes()).encode() == original.encode(),
+              "direct action lost exact original study archive");
+        const auto context_input = values(owner,binding.at("context_input"));
+        const auto &map = field(owner,binding.at("input_realization"))->tensor;
+        const auto shape = map.domain().extents();
+        check(shape.size()==2 && shape[0]==context_input.size() && shape[1]==input.tensor.domain().logical_size(),
+              "direct context realization shape differs");
+        for (std::size_t i=0;i<shape[0];++i) {
+            Rational value{0};
+            for (std::size_t j=0;j<shape[1];++j) {
+                const auto coefficient=state(map,i*shape[1]+j);
+                if(coefficient!=0)value+=coefficient*state(input.tensor,j);
+            }
+            check(value==context_input[i], "context input differs from original tensor and actual lift");
+        }
+        const auto output=values(owner,binding.at("output"));
+        check(output.size()==view.at("result").size(), "direct result lost complete coordinates");
+        for(std::size_t i=0;i<output.size();++i) {
+            const auto coordinate=view.at("result").at(i);
+            check(coordinate.at("coordinate").integer()==i && scalar(owner,coordinate.at("value"))==output[i],
+                  "direct native coordinate view changed actual output field");
+        }
+        std::size_t metrics{};
+        for(const auto &t:owner.endpoint()->tensors)if(t.role==rfc::storage::TemporalTensorRole::Metric)++metrics;
+        check(metrics==owner.endpoint()->source.grade_count(), "direct source lacks complete declared metrics");
+    }
+}
 void verify_replay(const NativeRecord &expected, const NativeRecord &actual) {
     const auto a = expected.endpoint(), b = actual.endpoint();
     check(a->tensors.size() == b->tensors.size(), "replay field family differs");
@@ -620,7 +685,7 @@ void verify_workflow(const std::shared_ptr<const ScientificStudy> &study,
               first.encode(), "workflow reopening changed complete native fields");
     write_text(output / "workflow-display.json", workflow_record_view(reopened).dump());
     auto unsupported = Json::object();
-    unsupported.set("operation", Json::string("field_summary"));
+    unsupported.set("operation", Json::string("coverage"));
     declaration.at("entry").at("steps").at(1).set("query", unsupported);
     bool refused = false;
     try { (void)execute_workflow_record(study, admit_record_view(declaration)); }
@@ -645,7 +710,7 @@ int main(int argc, char **argv) try {
     const auto original = study->native_publication();
     ScientificSession session(study);
     const auto queries = admit_record_view(Json::parse(read_text(queries_path)));
-    check(!has_native_scientific_publisher("field_summary") && !has_native_scientific_publisher("unknown"),
+    check(!has_native_scientific_publisher("coverage") && !has_native_scientific_publisher("unknown"),
           "unconverted producer reported native availability");
     std::vector<NativeRecord> results;
     for (const auto &name : queries.names()) {
@@ -658,6 +723,7 @@ int main(int argc, char **argv) try {
         else if (std::string(argv[4]) == "structural") verify_structural(result);
         else if (std::string(argv[4]) == "sections") verify_sections(result);
         else if (std::string(argv[4]) == "ablation") verify_ablation(result);
+        else if (std::string(argv[4]) == "direct") verify_direct(result, original);
         else if (std::string(argv[4]) != "finite") verify_model(result, original);
         else {
             const auto fields = result.at("result").at("fields");

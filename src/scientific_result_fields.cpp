@@ -227,7 +227,7 @@ Json result_fields_view(const NativeRecord &record) {
 Json result_tensor_view(const NativeRecord &record) {
     const auto &tensor = assay_detail::retained_tensor(record, record.at("tensor")).tensor;
     const auto display = record.at("display").text();
-    if (display == "rational") {
+    if (display == "rational" || display == "rational_object") {
         const auto position = record.has("index") ? record.at("index").integer() : rfc::numeric::Integer(0);
         if (position < 0 || !mpz_fits_ulong_p(position.get_mpz_t()) ||
             position >= rfc::numeric::Integer(std::to_string(tensor.domain().logical_size())))
@@ -235,7 +235,10 @@ Json result_tensor_view(const NativeRecord &record) {
         const auto index = position.get_ui();
         if (!record.has("index") && tensor.domain().logical_size() != 1)
             throw std::invalid_argument("scientific scalar support");
-        return tensor.support().contains(index) ? Json::string(tensor.state(index)->get_str()) : Json{};
+        if (!tensor.support().contains(index)) return Json{};
+        const auto value = Json::string(tensor.state(index)->get_str());
+        if (display == "rational") return value;
+        auto out = Json::object(); out.set("rational", value); return out;
     }
     if (display == "indices") {
         auto out = Json::array();

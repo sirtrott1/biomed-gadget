@@ -234,7 +234,7 @@ NativeRecord check_certificate_claims_record(const NativeRecord &certificate, co
                 ? native_count(item.at("coordinate"), "native claim field coordinate")
                 : selected.has("index") ? native_count(selected.at("index"), "native scalar coordinate") : 0;
             if (!item.has("coordinate"))
-                require(selected.at("display").text() == "rational" &&
+                require((selected.at("display").text() == "rational" || selected.at("display").text() == "rational_object") &&
                             (selected.has("index") || tensor.domain().logical_size() == 1),
                         "nonscalar native claims require an original flat coordinate");
             require(coordinate < tensor.domain().logical_size(), "native claim coordinate outside field");

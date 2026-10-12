@@ -74,7 +74,7 @@ def main(binary, consumer, root):
         assert json.loads(display.stdout)['result'] == expected['result']
         legacy = copy.deepcopy(expected['workflow'])
         legacy['entry'] = dict(id='legacy-summary', type='query',
-                               query=dict(operation='field_summary', field='all.A', support='reported_only'))
+                               query=dict(operation='coverage', field='all.A'))
         legacy_path = results / 'legacy-workflow.json'
         legacy_path.write_text(json.dumps(legacy))
         command = [str(binary), 'workflow', '--workspace',
