@@ -41,7 +41,7 @@ bool has_native_scientific_publisher(std::string_view operation) noexcept {
            operation == "relational_field_ensemble" || operation == "structural_reference_calibration" ||
            operation == "local_sections" || operation == "source_structure_ablation" ||
            operation == "field_summary" || operation == "boundary" || operation == "adjoint" ||
-           operation == "hodge" || operation == "green_action" || operation == "censored_endpoint_bounds" || operation == "typed_moment" || operation == "temporal_moment_change";
+           operation == "hodge" || operation == "green_action" || operation == "censored_endpoint_bounds" || operation == "typed_moment" || operation == "temporal_moment_change" || operation == "tensor_window" || operation == "support_mask";
 }
 namespace {
 using namespace scientific_detail;
@@ -788,6 +788,178 @@ struct ScientificSession::State {
         binding.set("execution_scope", ResultValue::string("Canonical one shot action; CPU reservation and cancellation before and after the action"));
         publication.bind(std::move(binding));
         return publication.finish(std::move(view));
+    }
+    NativeRecord support_fields(const Json &query) {
+        using namespace scientific_detail;
+            using namespace rfc::composite;
+            const auto fields = query.at("fields");
+            const auto &first = tensor(fields.at(0).text());
+            const auto identity = fields.dump() + ":" + query.at("mode").text();
+            const bool reused = packed.contains(identity);
+            if (!reused) {
+                AspectSchema schema;
+                for (std::size_t i = 0; i < fields.size(); ++i)
+                    schema.add(fields.at(i).text());
+                AspectPlanes planes(schema, first.tensor.domain().logical_size());
+                for (std::size_t i = 0; i < fields.size(); ++i)
+                    tensor(fields.at(i).text())
+                        .tensor.support()
+                        .for_each_active([&](std::size_t coordinate) {
+                            planes.set(static_cast<AspectId>(i), coordinate);
+                        });
+                BinaryProgram program(2);
+                program.append({BinaryOpcode::LoadAspect, 0, 0, 0, 0, 0});
+                for (std::size_t i = 1; i < fields.size(); ++i) {
+                    program.append(
+                        {BinaryOpcode::LoadAspect, 1, 0, 0, 0, static_cast<AspectId>(i)});
+                    program.append({query.at("mode").text() == "all_reported" ? BinaryOpcode::And
+                                                                              : BinaryOpcode::Or,
+                                    0, 0, 1});
+                }
+                if (query.at("mode").text() == "none_reported")
+                    program.append({BinaryOpcode::Not, 0, 0});
+                packed.emplace(
+                    identity,
+                    std::make_unique<PackedOperation>(
+                        rfc::backend::PreparedPackedBinary(program, planes, {0}), compute));
+            }
+        const auto prepared = packed.at(identity)->prepared();
+        auto derived = packed.at(identity)->execute(cpu(), query);
+        derived.execution.set("prepared_operation_reused", Json::boolean(reused));
+        ResultFields publication(owner->native_publication());
+        const auto carrier = *first.output, size = first.tensor.domain().logical_size();
+        const auto bits = [&](const rfc::machine::PackedBits &mask) {
+            require(mask.size() == size, "packed native field domain");
+            std::vector<rfc::numeric::SparseRationalEntry> entries;
+            mask.for_each_set([&](auto i) {entries.push_back({i,Rational{1}});});
+            return ResultFields::staged(rfc::numeric::SparseRationalTensor(
+                rfc::numeric::IndexDomain::linear(size),rfc::numeric::StructuralSupport::full(size),
+                rfc::numeric::SparseRationalVector(size,std::move(entries))),{},carrier,"vector");
+        };
+        const auto words = [](const rfc::machine::PackedBits &mask) {
+            auto values = ResultValue::array();
+            for (const auto word : mask.words()) values.push(ResultValue::count(word));
+            return values;
+        };
+        auto binding = ResultValue::object(), inputs = ResultValue::array();
+        binding.set("kind",ResultValue::string("actual_packed_support_operation"));
+        binding.set("source_carrier",ResultValue::count(carrier));
+        binding.set("mode",ResultValue::string(query.at("mode").text()));
+        binding.set("slots",ResultValue::count(size));
+        binding.set("register_count",ResultValue::count(prepared.program().register_count()));
+        for (std::size_t i = 0; i < fields.size(); ++i) {
+            const auto id = fields.at(i).text();
+            const auto &field = tensor(id); const auto &pin = source.field_pins.at(field.key);
+            auto input = ResultValue::object();
+            input.set("id",ResultValue::string(id)); input.set("tensor",ResultValue::count(field.key));
+            input.set("source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));
+            input.set("cutoff",ResultValue::count(pin.sequence())); input.set("carrier",ResultValue::count(*field.output));
+            input.set("source_field",publication.stored(field.key,"vector"));
+            input.set("support_plane",bits(prepared.planes().plane(static_cast<AspectId>(i))));
+            input.set("packed_words",words(prepared.planes().plane(static_cast<AspectId>(i))));
+            input.set("meaning",ResultValue(source.fields.at(id).declaration)); inputs.push(std::move(input));
+        }
+        binding.set("inputs",std::move(inputs));
+        auto instructions = ResultValue::array(), outputs = ResultValue::array(), masks = ResultValue::array();
+        auto output_words = ResultValue::array();
+        for (const auto &instruction : prepared.program().instructions()) {
+            auto row = ResultValue::object();
+            row.set("opcode",ResultValue::count(static_cast<std::size_t>(instruction.opcode)));
+            row.set("dst",ResultValue::count(instruction.dst)); row.set("a",ResultValue::count(instruction.a));
+            row.set("b",ResultValue::count(instruction.b)); row.set("c",ResultValue::count(instruction.c));
+            row.set("aspect",ResultValue::count(instruction.aspect)); instructions.push(std::move(row));
+        }
+        for (std::size_t i = 0; i < prepared.outputs().size(); ++i) {
+            outputs.push(ResultValue::count(prepared.outputs()[i])); masks.push(bits(derived.outputs.at(i)));
+            output_words.push(words(derived.outputs.at(i)));
+        }
+        binding.set("instructions",std::move(instructions)); binding.set("outputs",std::move(outputs));
+        binding.set("output_masks",std::move(masks)); binding.set("output_words",std::move(output_words));
+        auto view = ResultValue::object(), rows = ResultValue::array();
+        view.set("coordinates",ResultValue::count(size));
+        view.set("selected",ResultValue::count(derived.outputs.at(0).count()));
+        view.set("native_carrier",ResultValue::string(std::to_string(carrier)));
+        const auto source_carrier = temporal_endpoint_detail::carriers(*source.directory->pin_snapshot()).at(carrier);
+        derived.outputs.at(0).for_each_set([&](auto i) {
+            const auto cell = source.coordinate(source_carrier->grade.value,i);
+            auto row = ResultValue::object(); row.set("coordinate",ResultValue::count(i));
+            row.set("entity",ResultValue(source.cell_record(cell).at("id")));
+            row.set("native_key",ResultValue::string(std::to_string(cell.key))); rows.push(std::move(row));
+        });
+        view.set("selection",std::move(rows)); publication.bind(std::move(binding));
+        const auto native = publication.finish(std::move(view));
+        auto retained = native.unbound_value();
+        std::get<NativeRecordValue::Object>(retained.data).members.emplace_back(
+            "execution",import_record_view(derived.execution));
+        return native.derive(std::move(retained));
+    }
+    NativeRecord window_fields(const Json &query,
+                              std::optional<rfc::runtime::ExecutionLease> native_lease = {}) {
+        using namespace scientific_detail;
+        const auto id = query.at("field").text();
+        const auto &input_tensor = tensor(id);
+        const auto pin = source.field_pins.at(input_tensor.key);
+        const rfc::runtime::WorkAvailability availability{pin.source_namespace(),
+            publication_cutoff(query.at("available_sequence"))};
+        auto key_query = Json::parse(query.dump()); key_query.set("preparation", Json::string("reuse"));
+        const auto cache_key = key_query.dump();
+        const bool retain = !query.has("preparation") || query.at("preparation").text() == "reuse";
+        const bool reused = retain && windows.contains(cache_key);
+        const auto lease = native_lease.value_or(source_execution_lease("scientific-tensor-window"));
+        std::optional<rfc::database::NativeTensorWindow> transient;
+        if (!reused) {
+            std::vector<std::size_t> lo, hi;
+            for (std::size_t a = 0; a < query.at("lower").size(); ++a) {
+                lo.push_back(static_cast<std::size_t>(query.at("lower").at(a).integer()));
+                hi.push_back(static_cast<std::size_t>(query.at("upper").at(a).integer()));
+            }
+            auto window = rfc::database::NativeTensorWindow::prepare(pin,lo,hi,availability,lease);
+            if (retain) windows.emplace(cache_key,std::move(window)); else transient.emplace(std::move(window));
+        }
+        const auto &window = retain ? windows.at(cache_key) : *transient;
+        const auto summary = window.summarize(availability,lease);
+        ResultFields publication(owner->native_publication());
+        auto view = ResultValue::object(), observations = ResultValue::array();
+        std::vector<std::size_t> source_coordinates;
+        const auto size = window.domain().logical_size(), window_axis = publication.axis(size);
+        const auto original = publication.stored(input_tensor.key,"vector");
+        for (std::size_t i = 0; i < size; ++i) {
+            lease.check_cancelled(); const auto coordinate = window.source_index(i);
+            source_coordinates.push_back(coordinate);
+            auto row = ResultValue::object(), value = original;
+            row.set("source_coordinate",ResultValue::count(coordinate));
+            row.set("reported",ResultValue::boolean(window.tensor_pin()->state(coordinate).has_value()));
+            value.set("display",ResultValue::string("rational_object")); value.set("index",ResultValue::count(coordinate));
+            row.set("value",std::move(value)); observations.push(std::move(row));
+        }
+        view.set("observations",std::move(observations));
+        view.set("reported",ResultValue::count(window.supported_count()));
+        view.set("missing",ResultValue::count(size-window.supported_count()));
+        ResultValue sum;
+        if (summary.sum()) sum=publication.stage_scalar(*summary.sum());
+        else sum=ResultFields::staged(rfc::numeric::SparseRationalTensor(
+            rfc::numeric::IndexDomain::linear(1),rfc::numeric::StructuralSupport::sparse(1,{}),
+            rfc::numeric::SparseRationalVector(1)),{},publication.axis(1),"rational_object");
+        sum.set("display",ResultValue::string("rational_object")); view.set("sum",std::move(sum));
+        view.set("lower",ResultValue(query.at("lower"))); view.set("upper",ResultValue(query.at("upper")));
+        view.set("source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));
+        view.set("source_sequence",ResultValue::string(std::to_string(pin.sequence())));
+        auto binding=ResultValue::object(); binding.set("kind",ResultValue::string("actual_native_tensor_window"));
+        binding.set("field",ResultValue::string(id)); binding.set("input_tensor",ResultValue::count(input_tensor.key));
+        binding.set("input_carrier",ResultValue::count(*input_tensor.output));
+        binding.set("source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));
+        binding.set("cutoff",ResultValue::count(pin.sequence())); binding.set("availability",ResultValue::count(availability.max_sequence));
+        binding.set("source_field",original); binding.set("window_carrier",ResultValue::count(window_axis));
+        binding.set("source_coordinates",publication.indices(source_coordinates,window_axis));
+        auto domain=ResultValue::array(); for (const auto extent:window.domain().extents()) domain.push(ResultValue::count(extent));
+        binding.set("window_extents",std::move(domain)); publication.bind(std::move(binding));
+        const auto native = publication.finish(std::move(view));
+        auto retained = native.unbound_value();
+        NativeRecordValue metadata(NativeRecordValue::Object{{
+            {"preparation_reused",NativeRecordValue(reused)},
+            {"preparation_retained",NativeRecordValue(retain)}}});
+        std::get<NativeRecordValue::Object>(retained.data).members.emplace_back("view_execution",std::move(metadata));
+        return native.derive(std::move(retained));
     }
     NativeRecord moment_fields(const Json &query) {
         using namespace scientific_detail;
@@ -2265,6 +2437,8 @@ struct ScientificSession::State {
         if (!has_native_scientific_publisher(operation))
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
+            if (operation == "support_mask") return support_fields(admitted);
+            if (operation == "tensor_window") return window_fields(admitted);
             if (operation == "typed_moment" || operation == "temporal_moment_change") return moment_fields(admitted);
             if (operation == "field_summary") return field_summary_fields(admitted);
             if (operation == "boundary" || operation == "adjoint" || operation == "hodge" || operation == "green_action")
@@ -2456,56 +2630,7 @@ struct ScientificSession::State {
         } else if (operation == "local_sections") {
             result.set("result", scientific_detail::result_fields_view(local_section_fields(query)));
         } else if (operation == "tensor_window") {
-            const auto id = query.at("field").text();
-            const auto pin = source.field_pins.at(source.fields.at(id).tensor);
-            const rfc::runtime::WorkAvailability availability{
-                pin.source_namespace(), publication_cutoff(query.at("available_sequence"))};
-            auto key_query = Json::parse(query.dump());
-            key_query.set("preparation", Json::string("reuse"));
-            const auto cache_key = key_query.dump();
-            const bool retain = !query.has("preparation") ||
-                                query.at("preparation").text() == "reuse";
-            const bool reused = retain && windows.contains(cache_key);
-            const auto lease = native_lease.value_or(source_execution_lease("scientific-tensor-window"));
-            std::optional<rfc::database::NativeTensorWindow> transient;
-            if (!reused) {
-                std::vector<std::size_t> lo, hi;
-                for (std::size_t a = 0; a < query.at("lower").size(); ++a) {
-                    lo.push_back(static_cast<std::size_t>(query.at("lower").at(a).integer()));
-                    hi.push_back(static_cast<std::size_t>(query.at("upper").at(a).integer()));
-                }
-                auto prepared = rfc::database::NativeTensorWindow::prepare(
-                    pin, lo, hi, availability, lease);
-                if (retain)
-                    windows.emplace(cache_key, std::move(prepared));
-                else
-                    transient.emplace(std::move(prepared));
-            }
-            const auto &window = retain ? windows.at(cache_key) : *transient;
-            const auto summary = window.summarize(availability, lease);
-            auto out = Json::object(), observations = Json::array();
-            require(window.domain().logical_size() <= coordinate_limit, "window output budget");
-            for (std::size_t i = 0; i < window.domain().logical_size(); ++i) {
-                lease.check_cancelled();
-                auto row = Json::object();
-                row.set("source_coordinate", cardinality(window.source_index(i)));
-                const auto v = window.tensor_pin()->state(window.source_index(i));
-                row.set("reported", Json::boolean(v.has_value()));
-                row.set("value", v ? rational(*v) : Json{});
-                observations.push(row);
-            }
-            out.set("observations", observations);
-            out.set("reported", cardinality(window.supported_count()));
-            out.set("missing",
-                    cardinality(window.domain().logical_size() - window.supported_count()));
-            out.set("sum", summary.sum() ? rational(*summary.sum()) : Json{});
-            out.set("lower", query.at("lower"));
-            out.set("upper", query.at("upper"));
-            out.set("source_namespace", Json::string(std::to_string(pin.source_namespace())));
-            out.set("source_sequence", Json::string(std::to_string(pin.sequence())));
-            out.set("preparation_reused", Json::boolean(reused));
-            out.set("preparation_retained", Json::boolean(retain));
-            result.set("result", out);
+            result.set("result",result_fields_view(window_fields(query, native_lease)));
         } else if (operation == "green_response") {
             const auto name = query.at("context").text();
             const auto [x, grade] = input(name, query.at("field").text(), false);
@@ -2587,66 +2712,11 @@ struct ScientificSession::State {
         else if (operation == "coverage") {
             result.set("result", coverage(query.at("field").text()));
         } else if (operation == "support_mask") {
-            using namespace rfc::composite;
-            const auto fields = query.at("fields");
-            const auto &first = tensor(fields.at(0).text());
-            const auto identity = fields.dump() + ":" + query.at("mode").text();
-            const bool reused = packed.contains(identity);
-            if (!reused) {
-                AspectSchema schema;
-                for (std::size_t i = 0; i < fields.size(); ++i)
-                    schema.add(fields.at(i).text());
-                AspectPlanes planes(schema, first.tensor.domain().logical_size());
-                for (std::size_t i = 0; i < fields.size(); ++i)
-                    tensor(fields.at(i).text())
-                        .tensor.support()
-                        .for_each_active([&](std::size_t coordinate) {
-                            planes.set(static_cast<AspectId>(i), coordinate);
-                        });
-                BinaryProgram program(2);
-                program.append({BinaryOpcode::LoadAspect, 0, 0, 0, 0, 0});
-                for (std::size_t i = 1; i < fields.size(); ++i) {
-                    program.append(
-                        {BinaryOpcode::LoadAspect, 1, 0, 0, 0, static_cast<AspectId>(i)});
-                    program.append({query.at("mode").text() == "all_reported" ? BinaryOpcode::And
-                                                                              : BinaryOpcode::Or,
-                                    0, 0, 1});
-                }
-                if (query.at("mode").text() == "none_reported")
-                    program.append({BinaryOpcode::Not, 0, 0});
-                packed.emplace(
-                    identity,
-                    std::make_unique<PackedOperation>(
-                        rfc::backend::PreparedPackedBinary(program, planes, {0}), compute));
-            }
-            auto derived = packed.at(identity)->execute(cpu(), query);
-            derived.execution.set("prepared_operation_reused", Json::boolean(reused));
-            auto selection = Json::object();
-            selection.set("coordinates", cardinality(first.tensor.domain().logical_size()));
-            selection.set("selected", cardinality(derived.outputs.at(0).count()));
-            selection.set("native_carrier", Json::string(std::to_string(*first.output)));
-            auto rows = Json::array();
-            const auto carrier =
-                temporal_endpoint_detail::carriers(*source.directory->pin_snapshot())
-                    .at(*first.output);
-            derived.outputs.at(0).for_each_set([&](std::size_t i) {
-                auto row = Json::object();
-                row.set("coordinate", cardinality(i));
-                const auto cell = source.coordinate(carrier->grade.value,i);
-                row.set("entity", source.cell_record(cell).at("id"));
-                row.set("native_key", Json::string(std::to_string(cell.key)));
-                rows.push(row);
-            });
-            selection.set("selection", rows);
-            result.set("arithmetic", Json::string("exact packed Boolean program over native "
-                                                  "reported support; supported zero is reported"));
-            result.set(
-                "mathematical_definition",
-                Json::string(
-                    "declared ordered AND, OR, or NOT(OR) of reported-support planes on one "
-                    "identical native carrier; derived eligibility only, source unmodified"));
-            result.set("execution", derived.execution);
-            result.set("result", selection);
+            const auto native = support_fields(query);
+            result.set("result",result_fields_view(native));
+            result.set("execution",render_record_view(native.at("execution")));
+            result.set("arithmetic",Json::string("exact packed Boolean program over native reported support; supported zero is reported"));
+            result.set("mathematical_definition",Json::string("declared ordered AND, OR, or NOT(OR) of reported support planes on one identical native carrier; derived eligibility only, source unmodified"));
         } else if (operation == "native_boundary") {
             const auto name = query.at("field_set").text();
             const auto analysis = native_analysis(name);

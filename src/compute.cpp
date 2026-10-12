@@ -63,6 +63,9 @@ struct PackedOperation::State {
 PackedOperation::PackedOperation(rfc::backend::PreparedPackedBinary p, ComputeOptions o)
     : state_(std::make_unique<State>(std::move(p), o)) {}
 PackedOperation::~PackedOperation() = default;
+rfc::backend::PreparedPackedBinary PackedOperation::prepared() const {
+    return state_->owner;
+}
 PackedResult PackedOperation::execute(CpuResources &resources, const Json &query) {
     return execute(resources, query, {});
 }

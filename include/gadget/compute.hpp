@@ -23,6 +23,7 @@ class PackedOperation {
     explicit PackedOperation(rfc::backend::PreparedPackedBinary prepared,
                              ComputeOptions options = {});
     ~PackedOperation();
+    rfc::backend::PreparedPackedBinary prepared() const;
     PackedResult execute(CpuResources &resources, const Json &query);
     // Host cancellation is checked at canonical CPU word boundaries. A call
     // reserves every output and its complete verification buffer until joined.

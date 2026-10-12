@@ -189,6 +189,8 @@ Json render_record_view(const NativeRecord &record) {
                     for (const auto &name : {"green_iterations", "green_execution", "residual_verified"})
                         if (rendered.has(name)) out.set(name, rendered.at(name));
                 } else out.set("result", rendered);
+                if (fields.has("execution"))
+                    out.set("execution", render_record_view(fields.at("execution")));
                 return scientific_detail::seal(out, "certificate_sha256");
             }
             if (schema == "gadget.scientific.plan.fields.v1") {

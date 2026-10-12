@@ -172,7 +172,19 @@ Json result_fields_view(const NativeRecord &record) {
             if (value.has("schema") && value.at("schema").kind() == NativeRecordKind::Text) {
                 const auto schema = value.at("schema").text();
                 if (schema == "gadget.scientific.tensor.view.v1") return result_tensor_view(value);
-                if (schema == "gadget.scientific.fields.v1") return self(self, value.at("view"));
+                if (schema == "gadget.scientific.fields.v1") {
+                    auto out = self(self, value.at("view"));
+                    if (value.has("view_execution")) {
+                        require(json_object_is_type(out.raw(), json_type_object),
+                                "scientific execution display requires an object");
+                        const auto metadata = value.at("view_execution");
+                        for (const auto &name : metadata.names()) {
+                            require(!out.has(name), "execution display shadows a scientific field");
+                            out.set(name, self(self, metadata.at(name)));
+                        }
+                    }
+                    return out;
+                }
                 if (schema == "gadget.scientific.publication.view.v1") {
                     const auto bytes = value.at("publication");
                     const auto id = std::pair<const void *, std::uint64_t>{
@@ -222,7 +234,7 @@ Json result_fields_view(const NativeRecord &record) {
         }
         return render_record_view(value);
     };
-    return render(render, record.at("view"));
+    return render(render, record);
 }
 Json result_tensor_view(const NativeRecord &record) {
     const auto &tensor = assay_detail::retained_tensor(record, record.at("tensor")).tensor;
