@@ -83,6 +83,29 @@ struct SequenceRecord {
     std::string id, bases;
     Json evidence;
 };
+// Views address original bytes; only a requested record or block is normalized.
+class SequenceSource {
+    struct Segment {
+        std::size_t source, begin, length;
+    };
+    const ResourceImage &resource_;
+    std::vector<SequenceSpan> spans_;
+    std::vector<std::vector<Segment>> segments_;
+    std::string digest_;
+
+  public:
+    explicit SequenceSource(const ResourceImage &resource);
+    SequenceSource(ResourceImage &&) = delete;
+    std::size_t size() const { return spans_.size(); }
+    std::size_t length(std::size_t record) const { return spans_.at(record).length; }
+    const std::string &digest() const { return digest_; }
+    std::string id(std::size_t record) const;
+    Json evidence(std::size_t record) const;
+    std::string bases(std::size_t record, std::size_t begin, std::size_t length) const;
+    SequenceRecord record(std::size_t index) const;
+    void blocks(std::size_t record, std::size_t width,
+                const std::function<void(std::size_t, std::string_view)> &visit) const;
+};
 std::vector<SequenceRecord> sequence_records(const ResourceImage &resource);
 Json reference_matches(const ResourceImages &images, const Json &request);
 Json assembly_graph(const ResourceImage &resource, const Json &request,
@@ -94,7 +117,7 @@ Json read_reconstruction(const ResourceImage &resource, const Json &request);
 Json query_batch(const AssayWorkspace &workspace, const Json &request,
                  const std::shared_ptr<CpuResources> &resources);
 Json constrained_allocations(const Json &request,
-                            std::optional<AssayFieldsSource> *retained = nullptr);
+                             std::optional<AssayFieldsSource> *retained = nullptr);
 Json constraint_fields_view(const NativeRecord &record);
 Json relational_persistence(const ScientificStudy &study, const Json &request);
 } // namespace gadget::assay_detail

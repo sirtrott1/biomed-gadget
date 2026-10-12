@@ -251,3 +251,72 @@ def install_format(*, gadget):
         return _read_publication_file(path, gadget=binary)
 
     return register_format("gadget-native", load=load, extensions=(".rfcxs",))
+
+
+def select_publication_field(publication, request, *, selector, gadget):
+    """Select an exact original field owner with the native C++ field provider."""
+    binary = str(Path(selector).resolve(strict=True))
+    for raw in (publication, request):
+        if type(raw) is not bytes or not raw.startswith(_MAGIC):
+            raise ValueError("GADGET field selection requires RFCXS bytes")
+    with TemporaryDirectory(prefix="gadget-native-field-") as folder:
+        source = Path(folder) / "source.rfcxs"
+        control = Path(folder) / "request.rfcxs"
+        output = Path(folder) / "selection.rfcxs"
+        source.write_bytes(publication)
+        control.write_bytes(request)
+        _validate_publication_file(source, gadget=gadget, expected=publication)
+        _validate_publication_file(control, gadget=gadget, expected=request)
+        process = subprocess.run([binary, "--input", str(source), "--request", str(control),
+                                  "--out", str(output)], capture_output=True)
+        if process.returncode:
+            raise ValueError("GADGET native field selection failed: " +
+                             process.stderr.decode("utf-8", errors="replace").strip())
+        if process.stdout:
+            raise ValueError("GADGET native field selection produced an unexpected display")
+        return _read_publication_file(output, gadget=gadget)
+
+
+def install_rcql_field_selector(*, selector, gadget):
+    """Register original field selection at explicit versions, returning a native owner."""
+    import hashlib
+    from rcql import Domain, Exactness, OperatorSignature, RCType, TypePattern, ValueKind
+    from rcql.types import Effect
+    from rcql.execution_trace import record_method
+    from rcql.operators import register as register_operator
+    from rcql.signatures import catalogued, lookup, register as register_signature
+    binary = str(Path(selector).resolve(strict=True))
+    native_reader = str(Path(gadget).resolve(strict=True))
+    name = "GADGET_NATIVE_FIELD"
+    signature = OperatorSignature(
+        name=name, source_kind=ValueKind.RCDB_STORE,
+        inputs=(TypePattern("publication_id", literal=str),
+                TypePattern("publication_version", literal=int),
+                TypePattern("request_id", literal=str), TypePattern("request_version", literal=int)),
+        result=RCType("GadgetNativeFieldSelectionBytes", kind=ValueKind.BYTES,
+                      domain=Domain.BYTES, exactness=Exactness.STRUCTURAL),
+        implementation_key="gadget.native-field-selection.v1",
+        requires=frozenset({"identity", "records", "files", "gadget_field_select"}),
+        effects=frozenset({Effect.READ, Effect.FILESYSTEM}),
+        source_methods=frozenset({"read_record"}))
+    if name in catalogued():
+        if lookup(name) != signature:
+            raise ValueError("RCQL operator name already has a different declaration")
+        return name
+
+    def select(source, publication_id, publication_version, request_id, request_version):
+        publication = read_publication(source, publication_id, version=publication_version)
+        request = read_publication(source, request_id, version=request_version)
+        result = select_publication_field(publication.value, request.value,
+                                          selector=binary, gadget=native_reader)
+        record_method("gadget-native-field-selection", publication_id=publication.record.id,
+                      publication_version=publication.record.version,
+                      source_state_digest=publication.state_digest,
+                      request_id=request.record.id, request_version=request.record.version,
+                      request_state_digest=request.state_digest,
+                      result_sha256=hashlib.sha256(result).hexdigest())
+        return result
+
+    register_signature(signature)
+    register_operator(name)(select)
+    return name
