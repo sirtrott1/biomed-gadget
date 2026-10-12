@@ -57,3 +57,39 @@ python3 examples/bioinformatics/replay-answers.py \
 `relocated-pipeline/answers.json` locates the full exon, reconstruction and k-mer
 certificates. The replay includes only the declared import, intent and three
 FASTA files. No previous workspace, development archive or model is required.
+
+`read_protocol_evidence` extracts declared segments from every original FASTA or
+four-line FASTQ record. Its query supplies `resource`, `resource_sha256` and a
+`protocol` with `id`, `evidence`, `count_unit: "read_record_occurrence"` and
+`segments`. Each segment declares `id`, `role` (`barcode`, `umi` or `sequence`),
+zero-based half-open `start` and `end`, and `strand` (`+` or `-`). Reverse segments
+use the DNA IUPAC reverse complement. Original source bytes retain case, headers,
+line endings and qualities; extracted tokens use uppercase. A short record keeps
+its occurrence and reports each unavailable segment separately.
+
+The optional `protocol.barcode` declares the barcode `segment`, an original
+FASTA `whitelist_resource` and `whitelist_sha256`,
+`objective: "minimum_substitutions"`, a nonnegative `maximum_substitutions`, and
+`symbol_rule: "literal_iupac_tokens"`. Every whitelist record must have the
+declared segment length. Tokens are compared literally, including ambiguous
+IUPAC symbols. All equally minimizing whitelist occurrences within the budget
+remain candidates in original dictionary order. Distinct identifiers with the
+same sequence remain distinct candidates. The reported minimum remains present
+when it exceeds the budget; an unavailable barcode has no minimum.
+
+UMI segments retain their observed tokens. This operation counts read record
+occurrences and does not combine them into molecules. The supplied coordinates
+and whitelist are protocol evidence; they require the caller's source hashes.
+Every result retains its workspace and original native request owners. Write
+the complete native result with:
+
+```sh
+build/gadget/gadget assay-query \
+  --workspace data/composite-sequences/workspace.rfcxs \
+  --request protocol-query.json \
+  --out-record results/read-protocol.rfcxs
+```
+
+Omitting `--out-record` renders the optional complete view. Record indices and
+original byte spans identify occurrences, while segment coordinates address
+positions within the original read.
