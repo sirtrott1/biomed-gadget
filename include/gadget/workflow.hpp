@@ -18,6 +18,11 @@ struct WorkflowModel {
     WorkflowModel(std::size_t n, decltype(invoke) f) : workers(n), invoke(std::move(f)) {}
 };
 Json check_certificate_claims(const Json &certificate, const Json &claims);
+// Compare control literals with an actual native operation's values. The
+// request names its publication namespace and cutoff; tensor coordinates are
+// original flat coordinates, independent of an optional display order.
+NativeRecord check_certificate_claims_record(const NativeRecord &certificate,
+                                            const NativeRecord &request);
 // Prospective, typed model claims; numerical agreement is checked separately.
 Json admit_certificate_claims(const Json &proposal, const std::string &source_digest);
 using WorkflowModels = std::map<std::string, WorkflowModel>;

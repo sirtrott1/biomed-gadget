@@ -1,15 +1,23 @@
 #include "../examples/scientific/fixture.hpp"
 #include <gadget/resources.hpp>
 #include <gadget/workflow.hpp>
+#include <gadget/record_view.hpp>
 #include <iostream>
+#include <source_location>
 
 namespace {
 using namespace gadget;
 std::size_t checks{};
-void check(bool value) {
+void check(bool value, std::source_location location = std::source_location::current()) {
     if (!value)
-        throw std::runtime_error("workflow source/budget contract " + std::to_string(checks));
+        throw std::runtime_error("workflow source/budget contract " + std::to_string(checks) +
+                                 " at line " + std::to_string(location.line()));
     ++checks;
+}
+template<class F> void rejects(F f) {
+    bool refused = false;
+    try { f(); } catch (const std::invalid_argument &) { refused = true; }
+    check(refused);
 }
 Json leaf(const std::string &id) {
     auto node = Json::parse(
@@ -118,6 +126,66 @@ int main(int argc, char **argv) {
             refused = true;
         }
         check(refused);
+        ScientificSession session(study);
+        const auto model = session.execute_record(admit_record_view(Json::parse(
+            R"({"operation":"linear_model_comparison","responses":["baseline.partial"],"terms":[{"id":"G","factors":["baseline.G"]}],"controls":[],"selection":[],"support":"joint_reported","metric":"identity","intercept":true})")));
+        auto native_claims = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[
+          {"path":["strata",0,"models",1,"responses",0,"residual_quadrance"],"value_type":"rational","comparison":"equal","value":"0"},
+          {"path":["strata",0,"models",1,"responses",0,"represented"],"coordinate":0,"value_type":"rational","comparison":"equal","value":"0"},
+          {"path":["strata",0,"models",1,"responses",0,"represented"],"coordinate":1,"value_type":"rational","comparison":"greater","value":"1"},
+          {"path":["strata",0,"models",1,"rank"],"value_type":"count","comparison":"equal","value":3}
+        ]})");
+        native_claims.set("source_namespace", Json::string(std::to_string(model.source_namespace())));
+        native_claims.set("cutoff", Json::integer(static_cast<std::int64_t>(model.publication_history()->last_sequence())));
+        const auto request = admit_record_view(native_claims);
+        const auto checked = check_certificate_claims_record(model, request);
+        const auto result = checked.at("result");
+        check(result.at("matched").integer() == 3 && result.at("contradicted").integer() == 1);
+        check(result.at("checks").at(1).at("observed").rational() == 0);
+        const auto pin = result.at("checks").at(1).at("binding");
+        check(pin.at("coordinate").integer() == 0 && pin.at("supported").boolean());
+        check(pin.at("source_namespace").text() == std::to_string(model.source_namespace()));
+        check(pin.at("output_carrier").integer() == model.at("result").at("fields").at("bindings")
+            .at(0).at("source_carrier").integer());
+        const auto original = NativeRecord::decode(result.at("source_publication").bytes());
+        check(original.encode() == model.encode());
+        checked.write(root / "native-claims.rfcxs");
+        const auto reopened = NativeRecord::read(root / "native-claims.rfcxs");
+        check(reopened.at("result").at("checks").at(1).at("observed").rational() == 0);
+        check(NativeRecord::decode(reopened.at("request_publication").bytes()).encode() == request.encode());
+        const auto replayed = replay_scientific_record(original);
+        check(check_certificate_claims_record(replayed, admit_record_view([&] {
+            auto q = Json::parse(native_claims.dump());
+            q.set("source_namespace", Json::string(std::to_string(replayed.source_namespace())));
+            q.set("cutoff", Json::integer(static_cast<std::int64_t>(replayed.publication_history()->last_sequence())));
+            return q;
+        }())).at("result").at("matched").integer() == 3);
+        auto changed = Json::parse(native_claims.dump());
+        changed.set("source_namespace", Json::string(std::to_string(study->native_publication().source_namespace())));
+        rejects([&] { (void)check_certificate_claims_record(model, admit_record_view(changed)); });
+        changed = Json::parse(native_claims.dump());
+        changed.set("cutoff", Json::integer(changed.at("cutoff").integer() + 1));
+        rejects([&] { (void)check_certificate_claims_record(model, admit_record_view(changed)); });
+        changed = Json::parse(native_claims.dump());
+        changed.at("items").at(1).set("coordinate", Json::integer(2));
+        rejects([&] { (void)check_certificate_claims_record(model, admit_record_view(changed)); });
+        changed.at("items").at(1).set("coordinate", Json::integer(3));
+        rejects([&] { (void)check_certificate_claims_record(model, admit_record_view(changed)); });
+        changed = Json::parse(native_claims.dump());
+        json_object_object_del(changed.at("items").at(1).raw(), "coordinate");
+        rejects([&] { (void)check_certificate_claims_record(model, admit_record_view(changed)); });
+        changed = Json::parse(native_claims.dump());
+        changed.at("items").at(0).set("value_type", Json::string("text"));
+        rejects([&] { (void)check_certificate_claims_record(model, admit_record_view(changed)); });
+        changed = Json::parse(native_claims.dump());
+        changed.set("items", Json::array());
+        rejects([&] { (void)check_certificate_claims_record(model, admit_record_view(changed)); });
+        const auto legacy = session.execute_record(admit_record_view(Json::parse(
+            R"({"operation":"field_summary","field":"baseline.G","support":"reported_only"})")));
+        changed = Json::parse(native_claims.dump());
+        changed.set("source_namespace", Json::string(std::to_string(legacy.source_namespace())));
+        changed.set("cutoff", Json::integer(static_cast<std::int64_t>(legacy.publication_history()->last_sequence())));
+        rejects([&] { (void)check_certificate_claims_record(legacy, admit_record_view(changed)); });
         std::cout << "{\"status\":\"PASS\",\"checks\":" << checks
                   << ",\"node_leaves\":145,\"model_calls\":130,\"mock_roles\":20,\"dependencies\":"
                      "24,\"recursion_budget\":20,\"workers\":"

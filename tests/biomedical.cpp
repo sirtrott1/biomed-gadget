@@ -294,6 +294,18 @@ int main() {
         check(native_difference.at("result").at("result").at("reported_ratio").rational() ==
                   rfc::numeric::Rational(5, 6), "native ratio differs from original point tokens");
         native_difference.write(root / "native-comparison.rfcxs");
+        auto claims = parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[
+            {"path":["reported_difference"],"value_type":"rational","comparison":"equal","value":"-1/4"},
+            {"path":["reported_ratio"],"value_type":"rational","comparison":"equal","value":"5/6"}
+        ]})");
+        claims.set("source_namespace", Json::string(std::to_string(native_difference.source_namespace())));
+        claims.set("cutoff", Json::integer(static_cast<std::int64_t>(native_difference.publication_history()->last_sequence())));
+        const auto checked_claims = check_certificate_claims_record(native_difference, admit_record_view(claims));
+        check(checked_claims.at("result").at("matched").integer() == 2 &&
+                  checked_claims.at("result").at("checks").at(0).at("observed").rational() == rfc::numeric::Rational(-1, 4),
+              "native evidence claim used a rendered numerical observation");
+        check(NativeRecord::decode(checked_claims.at("result").at("source_publication").bytes()).encode() == native_difference.encode(),
+              "native evidence claim lost its supplying operation");
         check(NativeRecord::read(root / "native-comparison.rfcxs").at("result").at("result")
                   .at("reported_difference").rational() == rfc::numeric::Rational(-1, 4),
               "native comparison replay lost exact value");
