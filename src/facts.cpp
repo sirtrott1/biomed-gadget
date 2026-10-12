@@ -57,6 +57,7 @@ Json reading_view(const Json &catalog) {
         for (const auto *name :
              {"id", "value_type", "value", "meaning", "from", "path", "fact_sha256"})
             shown.set(name, fact.at(name));
+        if (fact.has("coordinate")) shown.set("coordinate", fact.at("coordinate"));
         shown.set("owner_sha256", Json::string(digest));
         selected.push(shown);
     }
@@ -69,6 +70,7 @@ struct ScientificFacts::State {
     std::optional<NativeRecord> publication;
     RetainedRecord catalog, model_view;
     std::map<std::string, RetainedRecord> facts;
+    bool native_literals{};
 };
 ScientificFacts::ScientificFacts(const AssayWorkspace &workspace, const Json &input,
                                  const fs::path &artifact_root)
@@ -273,6 +275,118 @@ ScientificFacts::ScientificFacts(const AssayWorkspace &workspace,const NativeRec
     for(std::size_t i=0;i<selected.size();++i)
         state_->facts.emplace(selected.element(i).at("id").text(),selected.element(i));
 }
+ScientificFacts::ScientificFacts(const NativeRecord &operation, const NativeRecord &request)
+    : state_(std::make_unique<State>()) {
+    using N = NativeRecordValue;
+    require(operation.is_root() && operation.at("schema").text() == "gadget.operation.native.v1",
+            "native facts require an owning native operation");
+    const auto input = render_record_view(request);
+    members(input, {"schema", "source_digest", "source_namespace", "cutoff", "question", "facts"});
+    require(input.at("schema").text() == "gadget.scientific.facts.request.v2" &&
+                input.at("source_namespace").text() == std::to_string(operation.source_namespace()),
+            "native facts request schema/namespace mismatch");
+    const auto history = operation.publication_history();
+    require(history.has_value() && request.at("cutoff").kind() == NativeRecordKind::Integer &&
+                request.at("cutoff").integer() == history->last_sequence(),
+            "native facts request cutoff mismatch");
+    const auto result = operation.at("result");
+    const auto schema = result.at("schema").text();
+    require(schema == "gadget.scientific.result.fields.v1" || schema == "gadget.workflow.native.receipt.v1",
+            "native facts refuse an unmigrated operation");
+    const bool workflow = schema == "gadget.workflow.native.receipt.v1";
+    if (workflow)
+        require(result.at("native_execution").boolean() && result.at("status").text() == "complete",
+                "native facts require a completed native workflow");
+    const auto digest = (workflow ? result : result.at("certificate")).at("source_digest").text();
+    require(input.at("source_digest").text() == digest, "native facts source digest mismatch");
+    const auto question = text(input.at("question"), source_byte_limit());
+    const auto selections = input.at("facts");
+    source_array(selections, "native fact selections");
+    require(selections.size(), "native facts require selected values");
+    std::map<std::string, NativeRecord> owners;
+    std::set<std::string> identities;
+    N::Array facts;
+    for (std::size_t i = 0; i < selections.size(); ++i) {
+        const auto selection = selections.at(i);
+        members(selection, {"id", "meaning", "from", "path", "value_type"}, {"coordinate"});
+        const auto id = text(selection.at("id"), source_byte_limit());
+        require(identities.insert(id).second, "duplicate native fact identity");
+        (void)text(selection.at("meaning"), source_byte_limit());
+        const auto from = selection.at("from");
+        members(from, {"kind", "path"});
+        require(from.at("kind").text() == "native", "native fact source kind");
+        const auto path = from.at("path");
+        source_array(path, "native operation path");
+        const auto key = path.dump();
+        if (!owners.contains(key)) {
+            auto selected = operation;
+            for (std::size_t j = 0; j < path.size(); ++j) {
+                const auto part = path.at(j);
+                if (json_object_is_type(part.raw(), json_type_string))
+                    selected = selected.at(text(part, source_byte_limit()));
+                else
+                    selected = selected.at(count(part, selected.size() ? selected.size()-1 : 0,
+                                                  "native operation path coordinate"));
+            }
+            if (selected.has("schema") && selected.at("schema").text() == "gadget.workflow.publication.v1") {
+                const auto owner = NativeRecord::decode(selected.at("publication").bytes());
+                require(selected.at("source_namespace").text() == std::to_string(owner.source_namespace()) &&
+                            selected.at("cutoff").integer() == owner.publication_history()->last_sequence(),
+                        "native workflow reference owner mismatch");
+                selected = owner;
+            }
+            require(selected.is_root() && selected.at("schema").text() == "gadget.operation.native.v1" &&
+                        selected.at("result").at("schema").text() == "gadget.scientific.result.fields.v1" &&
+                        selected.at("result").at("fields").at("schema").text() == "gadget.scientific.fields.v1" &&
+                        selected.at("result").at("certificate").at("source_digest").text() == digest,
+                    "native fact requires the completed source-bound scientific owner");
+            owners.emplace(key, std::move(selected));
+        }
+        const auto &owner = owners.at(key);
+        const auto view = owner.at("result").at("fields").at("view");
+        const auto selected = select_scientific_result(view, request.at("facts").at(i).at("path"));
+        std::optional<std::size_t> coordinate;
+        if (selection.has("coordinate"))
+            coordinate = count(selection.at("coordinate"), std::numeric_limits<std::size_t>::max(),
+                               "native fact original flat coordinate");
+        auto observed = read_native_literal(selected, selection.at("value_type").text(), coordinate);
+        auto fact = import_record_view(selection);
+        auto &members = std::get<N::Object>(fact.data).members;
+        members.emplace_back("observed", observed.value);
+        members.emplace_back("value", std::move(observed.value));
+        members.emplace_back("owner", N(N::Object{{
+            {"enclosing_namespace", N(std::to_string(operation.source_namespace()))},
+            {"enclosing_cutoff", N(rfc::numeric::Integer(std::to_string(history->last_sequence())))},
+            {"operation_namespace", N(std::to_string(owner.source_namespace()))},
+            {"operation_cutoff", N(rfc::numeric::Integer(std::to_string(owner.publication_history()->last_sequence())))},
+            {"source_digest", N(digest)}, {"binding", std::move(observed.binding)}}}));
+        const auto publication = NativeRecord::create(fact, new_native_record_namespace());
+        const auto shown = render_record_view(publication);
+        members.emplace_back("fact_sha256", N(std::string("sha256:" + sha256(shown.dump()))));
+        facts.elements.push_back(std::move(fact));
+    }
+    auto catalog = import_record_view(input);
+    auto &members = std::get<N::Object>(catalog.data).members;
+    for (auto &[name, value] : members) {
+        if (name == "schema") value = N(std::string("gadget.scientific.facts.catalog.v1"));
+        if (name == "facts") value = N(std::move(facts));
+    }
+    members.emplace_back("request", import_record_view(input));
+    members.emplace_back("certificates", N(N::Array{}));
+    members.emplace_back("question_sha256", N(std::string("sha256:" + sha256(question))));
+    const auto shown = render_record_view(NativeRecord::create(catalog, new_native_record_namespace()));
+    members.emplace_back("facts_sha256", N(std::string("sha256:" + sha256(shown.dump()))));
+    auto source = NativeRecord::annotate(N(N::Object{{
+        {"schema", N(std::string("gadget.scientific.facts.native.v2"))},
+        {"source_operation", operation.materialize_value()}, {"catalog", std::move(catalog)}}}), operation);
+    state_->publication = retain_operation(source, request, source.unbound_value());
+    state_->catalog = state_->publication->at("result").at("catalog");
+    const auto retained = state_->catalog.member("facts");
+    for (std::size_t i = 0; i < retained.size(); ++i)
+        state_->facts.emplace(retained.element(i).at("id").text(), retained.element(i));
+    state_->model_view = reading_view(state_->catalog);
+    state_->native_literals = true;
+}
 ScientificFacts::~ScientificFacts() = default;
 const NativeRecord &ScientificFacts::native_publication() const {return state_->publication.value();}
 Json ScientificFacts::catalog() const { return Json::parse(state_->catalog.dump()); }
@@ -319,7 +433,15 @@ Json ScientificFacts::check(const Json &input) const {
             literal.set("comparison", claim.at("comparison"));
             literal.set("value", claim.at("value"));
             auto check = Json::object();
-            const auto comparison = check_literal_claim(fact, literal);
+            auto comparison = Json::object();
+            if (state_->native_literals) {
+                comparison.set("claim", literal);
+                comparison.set("observed", fact.at("value"));
+                comparison.set("binding", fact.at("owner").at("binding"));
+                comparison.set("agrees", Json::boolean(compare_native_literal(fact.native().at("observed"),
+                    claim.at("value"), fact.at("value_type").text(), claim.at("comparison").text())));
+                comparison = seal(comparison, "check_sha256");
+            } else comparison = check_literal_claim(fact, literal);
             if (comparison.at("agrees").boolean())
                 ++matched;
             check.set("claim", claim);
