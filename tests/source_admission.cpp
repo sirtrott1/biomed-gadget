@@ -22,6 +22,24 @@ void json_admission(const gadget::fs::path &corpus_path) {
     rejects([&] { (void)object.at(name); });
     check(object.at("schema").text() == "original" && object.at("").text() == "empty name",
           "invalid member access changed its C-string prefix or empty name");
+    for (const auto *token : {"9223372036854775808", "18446744073709551615"}) {
+        const auto value = Json::parse(token);
+        bool refused = false;
+        try { (void)value.integer(); } catch (const std::length_error &) { refused = true; }
+        check(refused && value.dump_compact() == token, "signed access saturated or altered original unsigned value");
+        const auto bytes = std::string(token);
+        const auto native = decode_record(std::as_bytes(std::span(bytes.data(), bytes.size()))).native();
+        check(native.integer().get_str() == token, "native unsigned integer value changed");
+    }
+    check(Json::parse("9223372036854775807").integer() == std::numeric_limits<std::int64_t>::max() &&
+              Json::parse("-9223372036854775808").integer() == std::numeric_limits<std::int64_t>::min(),
+          "exact signed integer boundaries refused");
+    for (const auto *token : {"1e400", "-1e400", "1e-400", "-0e400"}) {
+        const auto bytes = std::string(token);
+        const auto native = decode_record(std::as_bytes(std::span(bytes.data(), bytes.size()))).native();
+        check(Json::parse(bytes).dump_compact() == bytes && native.rational() == exact_decimal(bytes),
+              "valid finite exact decimal rejected by its binary64 view");
+    }
     const auto corpus = Json::parse(read_text(corpus_path));
     for (std::size_t i = 0; i < corpus.size(); ++i) {
         const auto item = corpus.at(i);
