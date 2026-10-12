@@ -19,6 +19,51 @@ template <class F> void rejects(F f) {
     check(failed, "invalid evidence admitted");
 }
 Json parse(const char *s) { return Json::parse(s); }
+void original_sources_contracts(const ScientificStudy &study, const fs::path &root) {
+    const std::string bytes("original\0workbook\xff", 18);
+    const auto source = root / "original bytes.bin";
+    write_text(source, bytes);
+    auto request = parse(R"({"schema":"gadget.biomedical.sources.request.v1","source_digest":"","method":"Declared source correspondence; binary provenance remains separate from numerical fields","sources":[{"id":"workbook","path":"","sha256":"","source_url":"offline:authored-original","license":"Authored test input"}]})");
+    request.set("source_digest", Json::string(study.digest()));
+    request.at("sources").at(0).set("path", Json::string(source.string()));
+    request.at("sources").at(0).set("sha256", Json::string("sha256:" + sha256(bytes)));
+    const auto original = study.native_publication().encode();
+    const auto native_request = admit_record_view(request);
+    const auto publication = retain_study_sources(study, native_request);
+    const ScientificStudy retained(publication);
+    check(retained.digest() == study.digest() && study.native_publication().encode() == original,
+          "source provenance changed the original study or digest");
+    const auto before = study.field_accession("all.Kd_nM"), after = retained.field_accession("all.Kd_nM");
+    check(before.source_namespace() == after.source_namespace() && before.sequence() == after.sequence() &&
+              rfc::storage::temporal_endpoint_detail::tensor_equal(
+                  *before.tensor_declaration(), *after.tensor_declaration()) &&
+              before.carrier()->key == after.carrier()->key,
+          "source provenance changed actual numerical field pins");
+    publication.write(root / "original-sources.rfcxs");
+    const auto reopened = NativeRecord::read(root / "original-sources.rfcxs");
+    check(reopened.encode() == publication.encode(), "source provenance archive changed bytes");
+    check(NativeRecord::decode(reopened.at("source_provenance").at("request_publication").bytes()).encode() ==
+              native_request.encode(), "source provenance lost its original request owner");
+    const auto raw = reopened.at("source_provenance").at("sources").at(0).at("bytes").bytes();
+    check(std::string(reinterpret_cast<const char *>(raw.data()), raw.size()) == bytes,
+          "binary source provenance was rendered or altered");
+    rejects([&] { retain_study_sources(retained, admit_record_view(request)); });
+    for (const auto name : {"source_digest", "sha256", "id", "path"}) {
+        auto bad = Json::parse(request.dump());
+        if (std::string(name) == "source_digest") bad.set(name, Json::string("foreign"));
+        else if (std::string(name) == "id") bad.at("sources").push(bad.at("sources").at(0));
+        else bad.at("sources").at(0).set(name, Json::string("foreign"));
+        rejects([&] { retain_study_sources(study, admit_record_view(bad)); });
+    }
+    auto bad = Json::parse(request.dump());
+    bad.set("sources", Json::array());
+    rejects([&] { retain_study_sources(study, admit_record_view(bad)); });
+    const auto link = root / "source-link";
+    fs::create_symlink(source, link);
+    bad = Json::parse(request.dump());
+    bad.at("sources").at(0).set("path", Json::string(link.string()));
+    rejects([&] { retain_study_sources(study, admit_record_view(bad)); });
+}
 void reported_field_contracts(const EvidenceStore &store, const ScientificStudy &study,
                               const fs::path &root) {
     auto request = parse(R"({"schema":"gadget.biomedical.field.request.v1","source_digest":"","study_digest":"","field":"all.Kd_nM","endpoint":"Kd","units":"nM"})");
@@ -391,6 +436,7 @@ int main() {
         rejects([&] { store.execute(compare); });
         auto study = std::make_shared<const ScientificStudy>(root / "store/study/study.json");
         reported_field_contracts(store, *study, root);
+        original_sources_contracts(*study, root);
         ScientificSession session(study);
         const auto summary =
             session

@@ -6,6 +6,10 @@ namespace gadget {
 Json plan_database_fetch(const Json &request);
 Json fetch_databases(const Json &request, const fs::path &destination);
 Json database_capabilities();
+// Retain declared original files beside an unchanged admitted study. The
+// declaration records provenance; measurement correspondence is the adapter's
+// separately checked contract, rather than an inference from matching hashes.
+NativeRecord retain_study_sources(const ScientificStudy &study, const NativeRecord &request);
 NativeRecord capture_database_snapshot(const fs::path &directory);
 void import_evidence(const fs::path &snapshot, const fs::path &destination,
                      std::uint32_t adapter_version = 2);

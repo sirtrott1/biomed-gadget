@@ -7,6 +7,58 @@
 #include <rfc/database/native_query.hpp>
 
 namespace gadget {
+NativeRecord retain_study_sources(const ScientificStudy &study, const NativeRecord &request) {
+    using namespace scientific_detail;
+    using N = NativeRecordValue;
+    const auto declaration = render_record_view(request);
+    members(declaration, {"schema", "source_digest", "method", "sources"});
+    require(declaration.at("schema").text() == "gadget.biomedical.sources.request.v1" &&
+                declaration.at("source_digest").text() == study.digest(),
+            "original source request differs from admitted study");
+    const auto method = text(declaration.at("method"));
+    const auto &original = study.native_publication();
+    require(!original.has("source_provenance"), "study already has declared source provenance");
+    auto value = original.materialize_value();
+    auto &root = std::get<N::Object>(value.data).members;
+    std::uint64_t next = 1;
+    for (const auto key : NativeRecord::source_keys(*original.endpoint()))
+        next = rfc::machine::checked_size_add(std::max(next, key), 1);
+    std::vector<RawByteSource> added;
+    N::Array sources;
+    std::set<std::string> identities;
+    const auto inputs = declaration.at("sources");
+    source_array(inputs, "original source declarations");
+    require(inputs.size() > 0, "original source declarations are empty");
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+        const auto item = inputs.at(i);
+        members(item, {"id", "path", "sha256", "source_url", "license"});
+        const auto id = text(item.at("id"));
+        require(identities.insert(id).second, "duplicate original source identity");
+        const fs::path path(text(item.at("path")));
+        require(fs::is_regular_file(fs::symlink_status(path)), "original source must be regular");
+        auto bytes = RawByteSource::read(next, path);
+        const auto span = bytes.bytes();
+        const auto digest = "sha256:" + sha256(std::string_view(
+            reinterpret_cast<const char *>(span.data()), span.size()));
+        require(item.at("sha256").text() == digest, "original source SHA-256 mismatch");
+        sources.elements.emplace_back(N::Object{{
+            {"id", N(id)}, {"sha256", N(digest)},
+            {"source_url", N(text(item.at("source_url")))},
+            {"license", N(text(item.at("license")))},
+            {"bytes", N(N::ByteSpan{next, 0, span.size(), false})}}});
+        added.push_back(std::move(bytes));
+        next = rfc::machine::checked_size_add(next, 1);
+    }
+    auto archive = request.owning_publication().archive_source(next);
+    const auto archive_size = archive.bytes().size();
+    added.push_back(std::move(archive));
+    root.emplace_back("source_provenance", N(N::Object{{
+        {"schema", N(std::string("gadget.biomedical.sources.v1"))},
+        {"source_digest", N(study.digest())}, {"method", N(method)},
+        {"sources", N(std::move(sources))},
+        {"request_publication", N(N::ByteSpan{next, 0, archive_size, false})}}}));
+    return original.derive(std::move(value), std::move(added));
+}
 namespace {
 using namespace scientific_detail;
 using namespace rfc::database;
