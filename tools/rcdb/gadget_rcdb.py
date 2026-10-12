@@ -1,7 +1,9 @@
 """RCDB storage and RCQL retrieval of canonical GADGET publications."""
 from pathlib import Path
+from contextlib import contextmanager
 import filecmp
 import os
+import stat
 import subprocess
 from tempfile import TemporaryDirectory
 import zlib
@@ -9,6 +11,32 @@ import zlib
 _MAGIC = b"RFCXS\x01\x00\x00"
 _CODEC_NAME = "gadget.native-publication"
 _OPERATOR_NAME = "GADGET_PUBLICATION_BYTES"
+
+
+@contextmanager
+def _open_regular_file(path, *, max_bytes=None, resource="publication"):
+    """Open a regular input and check its measured size before reading."""
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        initial = os.fstat(descriptor)
+        if not stat.S_ISREG(initial.st_mode):
+            raise ValueError(resource + " requires a regular file")
+        size = initial.st_size
+        if max_bytes is not None and size > max_bytes:
+            raise ValueError(resource + " exceeds its declared byte budget")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            yield stream, size
+    finally:
+        os.close(descriptor)
+
+
+def _read_regular_file(path, *, max_bytes=None, resource="publication"):
+    """Capture one opened file within its measured size and declared budget."""
+    with _open_regular_file(path, max_bytes=max_bytes, resource=resource) as (stream, size):
+        raw = stream.read(size)
+        if (len(raw) != size or stream.read(1) or os.fstat(stream.fileno()).st_size != size):
+            raise ValueError(resource + " changed size while reading")
+        return raw
 
 
 def validate_publication_file(path, *, gadget):
@@ -19,7 +47,7 @@ def validate_publication_file(path, *, gadget):
 def _validate_publication_file(path, *, gadget, expected=None):
     source = Path(path).resolve(strict=True)
     binary = str(Path(gadget).resolve(strict=True))
-    with source.open("rb") as stream:
+    with _open_regular_file(source) as (stream, size):
         if stream.read(len(_MAGIC)) != _MAGIC:
             raise ValueError("GADGET publication requires RFCXS bytes")
     with TemporaryDirectory(prefix="gadget-native-admission-") as folder:
@@ -42,7 +70,7 @@ def _validate_publication_file(path, *, gadget, expected=None):
 
 
 def _read_publication_file(path, *, gadget):
-    raw = Path(path).read_bytes()
+    raw = _read_regular_file(path)
     _validate_publication_file(path, gadget=gadget, expected=raw)
     return raw
 
@@ -69,13 +97,8 @@ def read_compressed_publication(path, *, gadget, max_encoded_bytes, max_output_b
         raise ValueError("encoded byte budget must be a positive integer")
     if type(max_output_bytes) is not int or max_output_bytes <= 0:
         raise ValueError("decoded byte budget must be a positive integer")
-    with Path(path).open("rb") as stream:
-        size = os.fstat(stream.fileno()).st_size
-        if size > max_encoded_bytes:
-            raise ValueError("compressed publication exceeds its encoded byte budget")
-        encoded = stream.read(size + 1)
-    if len(encoded) != size:
-        raise ValueError("compressed publication changed size while reading")
+    encoded = _read_regular_file(path, max_bytes=max_encoded_bytes,
+                                 resource="compressed publication")
     try:
         raw = decompress_blob(encoded, max_output_bytes=max_output_bytes)
     except zlib.error as exc:
@@ -132,10 +155,9 @@ def put_publication(store, record_id, path, *, expected_version, **selectors):
     from rcdb.codecs import record_codec
     reference = CodecRef(_CODEC_NAME, 1)
     provider = record_codec(reference)
-    path = Path(path)
-    if path.stat().st_size > provider.max_bytes:
-        raise ValueError("publication exceeds the caller's declared RCDB byte budget")
-    return store.put_record(record_id, path.read_bytes(), codec=reference,
+    raw = _read_regular_file(path, max_bytes=provider.max_bytes,
+                             resource="RCDB publication")
+    return store.put_record(record_id, raw, codec=reference,
                             expected_version=expected_version, **selectors)
 
 

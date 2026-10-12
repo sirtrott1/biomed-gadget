@@ -1,6 +1,7 @@
 """Native RCDB publication, RCQL retrieval and restart contracts."""
 import importlib.util
 from contextlib import closing
+from unittest.mock import patch
 import os
 from pathlib import Path
 import subprocess
@@ -53,6 +54,44 @@ with closing(LocalStore(root/"native.rcdb", record_codecs=(*DEFAULT_RECORD_CODEC
     second = adapter.put_publication(store, "coverage", publication, expected_version=1, tx_time=20.0)
     assert second.version == 2
     rejects(lambda: adapter.put_publication(store, "coverage", publication, expected_version=0))
+    changing = root / "changing-publication.rfcxs"
+    original_put = store.put_record
+    attempts = []
+
+    def track_put(*args, **kwargs):
+        attempts.append(args[0])
+        return original_put(*args, **kwargs)
+
+    store.put_record = track_put
+    original_fstat, original_stat = os.fstat, Path.stat
+    for mutation in ("grow", "truncate"):
+        changing.write_bytes(raw)
+        identity = changing.stat()
+        altered = []
+
+        def change_after_size_check(info):
+            if (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino) and not altered:
+                with changing.open("r+b") as stream:
+                    stream.truncate(len(raw) + 8 * 1024 * 1024 if mutation == "grow" else len(raw) - 1)
+                altered.append(mutation)
+            return info
+
+        def checked_fstat(descriptor):
+            return change_after_size_check(original_fstat(descriptor))
+
+        def checked_stat(path, **kwargs):
+            return change_after_size_check(original_stat(path, **kwargs))
+
+        with patch.object(os, "fstat", checked_fstat), patch.object(Path, "stat", checked_stat):
+            rejects(lambda: adapter.put_publication(store, "coverage", changing,
+                                                     expected_version=2))
+        assert altered == [mutation]
+        assert attempts == [], "changed files must refuse before store publication"
+        assert adapter.read_publication(store, "coverage").record.version == 2
+        assert adapter.read_publication(store, "coverage", version=1).value == raw
+    rejects(lambda: adapter.put_publication(store, "coverage", root, expected_version=2))
+    assert attempts == []
+    store.put_record = original_put
     assert adapter.read_publication(store, "coverage", version=1).value == raw
     assert adapter.read_publication(store, "coverage", as_of=15.0).record.version == 1
     assert adapter.read_publication(store, "coverage").record.version == 2
