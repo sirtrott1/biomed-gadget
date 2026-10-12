@@ -181,7 +181,7 @@ int main(int argc, char **argv) {
         changed.set("items", Json::array());
         rejects([&] { (void)check_certificate_claims_record(model, admit_record_view(changed)); });
         const auto legacy = session.execute_record(admit_record_view(Json::parse(
-            R"({"operation":"field_summary","field":"baseline.G","support":"reported_only"})")));
+            R"({"operation":"coverage","field":"baseline.G"})")));
         changed = Json::parse(native_claims.dump());
         changed.set("source_namespace", Json::string(std::to_string(legacy.source_namespace())));
         changed.set("cutoff", Json::integer(static_cast<std::int64_t>(legacy.publication_history()->last_sequence())));
@@ -253,7 +253,9 @@ int main(int argc, char **argv) {
         const auto missing_operation = execute_workflow_record(study, admit_record_view(coordinate_workflow));
         check(missing_operation.at("result").at("status").text() == "failed" &&
             missing_operation.at("result").at("error").text().find("missing") != std::string::npos);
-        coordinate_workflow.at("entry").at("steps").at(1).set("on_false", leaf("unsupported-untaken"));
+        const auto unsupported_untaken = Json::parse(
+            R"({"id":"unsupported-untaken","type":"query","query":{"operation":"coverage","field":"baseline.G"}})");
+        coordinate_workflow.at("entry").at("steps").at(1).set("on_false", unsupported_untaken);
         rejects([&] { (void)execute_workflow_record(study, admit_record_view(coordinate_workflow)); });
         auto model_node = Json::parse(R"({"id":"native-reader","type":"model","role":"native-reader","prompt":"Read the retained native tool result"})");
         auto native_callback_declaration = declaration(*study, model_node, 1, 1);
