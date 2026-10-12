@@ -41,7 +41,7 @@ bool has_native_scientific_publisher(std::string_view operation) noexcept {
            operation == "relational_field_ensemble" || operation == "structural_reference_calibration" ||
            operation == "local_sections" || operation == "source_structure_ablation" ||
            operation == "field_summary" || operation == "boundary" || operation == "adjoint" ||
-           operation == "hodge" || operation == "green_action";
+           operation == "hodge" || operation == "green_action" || operation == "censored_endpoint_bounds";
 }
 namespace {
 using namespace scientific_detail;
@@ -1439,7 +1439,7 @@ struct ScientificSession::State {
         }
         return research_detail::temporal_field_history(query, readings, maps, validate);
     }
-    Json censor_query(const Json &query, bool validate) {
+    Json censor_query(const Json &query, bool validate, std::optional<NativeRecord> *native = nullptr) {
         auto name = query.at("context").text();
         auto &p = context(name);
         std::set<std::string> ids;
@@ -1486,8 +1486,78 @@ struct ScientificSession::State {
                 for (std::size_t i = 0; i < family.at("constraints").size(); ++i)
                     (void)source.evidence(family.at("constraints").at(i).at("evidence"));
         }
-        return research_detail::censored_endpoint_bounds(
-            *p.study, query, fields, upper_support, meanings, temporal_coordinates(p, 0), validate);
+        if (validate) {
+            (void)research_detail::censored_endpoint_bounds(
+                *p.study, query, fields, upper_support, meanings, temporal_coordinates(p, 0), true);
+            return Json::object();
+        }
+        auto reservation = cpu().reserve(1);
+        const auto lease = source_execution_lease("scientific-censored-endpoint-family");
+        lease.check_cancelled();
+        const auto snapshot = scientific_detail::source_snapshot_publication(
+            *p.study, owner->native_publication(), p.to_ambient);
+        scientific_detail::ResultFields publication(snapshot.publication);
+        using scientific_detail::ResultValue;
+        using scientific_detail::ResultFields;
+        const auto group_axis = publication.axis(1 + query.at("strata").size());
+        const auto contrast_axis = publication.axis(query.has("contrasts") ? query.at("contrasts").size() : 0);
+        const auto input_axis = publication.axis(tensor(*ids.begin()).tensor.domain().logical_size());
+        auto binding = ResultValue::object(), inputs = ResultValue::array();
+        binding.set("kind", ResultValue::string("actual_censored_endpoint_inputs"));
+        binding.set("original_study_publication", ResultValue(snapshot.publication.at("bindings").at(0)
+            .at("original_study_publication").unbound_value()));
+        binding.set("input_carrier", ResultValue::count(*carrier));
+        binding.set("input_coordinate_carrier", ResultValue::count(input_axis));
+        binding.set("source_carrier", ResultValue::count(snapshot.grade_axes.at(0)));
+        rfc::numeric::ExactMatrix realization(p.to_ambient.at(0).size(), tensor(*ids.begin()).tensor.domain().logical_size());
+        for (std::size_t i = 0; i < p.to_ambient.at(0).size(); ++i)
+            realization.set(i, p.to_ambient.at(0).at(i), Rational{1});
+        binding.set("input_realization", ResultFields::stage_matrix(realization, input_axis, snapshot.grade_axes.at(0)));
+        for (const auto &id : ids) {
+            const auto &field = tensor(id);
+            const auto &pin = source.field_pins.at(field.key);
+            auto input = ResultValue::object();
+            input.set("id", ResultValue::string(id));
+            input.set("tensor", ResultValue::count(field.key));
+            input.set("source_namespace", ResultValue::string(std::to_string(pin.source_namespace())));
+            input.set("cutoff", ResultValue::count(pin.sequence()));
+            input.set("carrier", ResultValue::count(*field.output));
+            std::vector<std::size_t> supported;
+            Vector values;
+            for (std::size_t i = 0; i < p.to_ambient.at(0).size(); ++i) {
+                const auto coordinate = p.to_ambient.at(0).at(i);
+                if (field.tensor.support().contains(coordinate)) {
+                    supported.push_back(i); values.push_back(*field.tensor.state(coordinate));
+                }
+            }
+            input.set("context_values", ResultFields::stage_selected(values, snapshot.grade_axes.at(0),
+                p.to_ambient.at(0).size(), supported));
+            input.set("meaning", ResultValue(source.fields.at(id).declaration));
+            inputs.push(std::move(input));
+        }
+        binding.set("inputs", std::move(inputs));
+        auto groups = ResultValue::array(), contrasts = ResultValue::array();
+        groups.push(ResultValue::string("selected_population"));
+        for (std::size_t i = 0; i < query.at("strata").size(); ++i) groups.push(ResultValue(query.at("strata").at(i)));
+        if (query.has("contrasts"))
+            for (std::size_t i = 0; i < query.at("contrasts").size(); ++i) contrasts.push(ResultValue(query.at("contrasts").at(i)));
+        binding.set("group_carrier", ResultValue::count(group_axis)); binding.set("groups", std::move(groups));
+        binding.set("contrast_carrier", ResultValue::count(contrast_axis)); binding.set("contrasts", std::move(contrasts));
+        const auto time_axis = publication.axis(query.at("times").size());
+        Vector times;
+        for (std::size_t i = 0; i < query.at("times").size(); ++i) times.push_back(exact_rational(query.at("times").at(i).text()));
+        binding.set("time_carrier", ResultValue::count(time_axis));
+        binding.set("evaluation_times", ResultFields::stage_vector(times, time_axis));
+        binding.set("origin", publication.stage_scalar(exact_rational(query.at("origin").text())));
+        binding.set("execution_scope", ResultValue::string("Canonical family actions; CPU reservation and cancellation before and after execution"));
+        publication.bind(std::move(binding));
+        research_detail::CensoredResultFields axes{publication, snapshot.grade_axes.at(0), group_axis, contrast_axis};
+        auto result = research_detail::censored_endpoint_bounds(
+            *p.study, query, fields, upper_support, meanings, temporal_coordinates(p, 0), false, &axes);
+        lease.check_cancelled();
+        const auto record = publication.finish(std::move(result));
+        if (native) { *native = record; return Json::object(); }
+        return scientific_detail::result_fields_view(record);
     }
     void admit(const Json &query) {
         const auto operation = query.at("operation").text();
@@ -2076,6 +2146,11 @@ struct ScientificSession::State {
             if (operation == "boundary" || operation == "adjoint" || operation == "hodge" || operation == "green_action")
                 return direct_action_fields(admitted);
             if (operation == "local_sections") return local_section_fields(admitted);
+            if (operation == "censored_endpoint_bounds") {
+                std::optional<NativeRecord> result;
+                (void)censor_query(admitted, false, &result);
+                return *result;
+            }
             if (operation == "source_structure_ablation") {
                 std::optional<NativeRecord> result;
                 (void)ablation_query(admitted, false, &result);
@@ -2131,7 +2206,7 @@ struct ScientificSession::State {
         auto result = certificate(query);
         const auto operation = query.at("operation").text();
         std::optional<rfc::runtime::CpuResourceCoordinator::Reservation> serial;
-        if (resources && operation != "field_summary" && operation != "boundary" &&
+        if (resources && operation != "censored_endpoint_bounds" && operation != "field_summary" && operation != "boundary" &&
             operation != "adjoint" && operation != "hodge" && operation != "green_action" &&
             operation != "native_boundary" && operation != "support_mask" &&
             operation != "paired_field_contrasts" && operation != "controlled_pairings" &&

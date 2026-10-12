@@ -639,6 +639,237 @@ void verify_direct(const NativeRecord &publication, const NativeRecord &original
         check(metrics==owner.endpoint()->source.grade_count(), "direct source lacks complete declared metrics");
     }
 }
+void verify_censored(const NativeRecord &publication, const NativeRecord &original, const NativeRecord &query) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner, view); audit_fields(owner, owner.at("bindings"));
+    const auto binding = owner.at("bindings").at(0);
+    check(binding.at("kind").text() == "actual_censored_endpoint_inputs", "censored actual input binding absent");
+    check(std::ranges::equal(binding.at("original_study_publication").bytes(), original.encode()),
+          "censored original publication changed");
+    const auto source_axis = binding.at("source_carrier").integer().get_ui();
+    const auto group_axis = binding.at("group_carrier").integer().get_ui();
+    const auto contrast_axis = binding.at("contrast_carrier").integer().get_ui();
+    check(source_axis != group_axis && group_axis != contrast_axis && source_axis != contrast_axis,
+          "censored independently declared axes identified by dimension");
+    const auto &lift = *field(owner, binding.at("input_realization"));
+    const auto n = lift.tensor.domain().extents().at(0), ambient = lift.tensor.domain().extents().at(1);
+    std::map<std::string, const rfc::storage::TemporalTensor *> inputs;
+    for (std::size_t f = 0; f < binding.at("inputs").size(); ++f) {
+        const auto input = binding.at("inputs").at(f);
+        const auto &old = *field(original, input.at("tensor"));
+        const auto &context = *field(owner, input.at("context_values"));
+        check(old.output && input.at("carrier").integer() == *old.output && context.output == source_axis,
+              "censored field carrier owner changed");
+        rfc::storage::NativeAccessionRequest request; request.subject = old.key;
+        const auto pin = original.accession_directory()->pin(request);
+        check(input.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
+              input.at("cutoff").integer() == pin.sequence(), "censored original pin/cutoff changed");
+        for (std::size_t i = 0; i < n; ++i) {
+            std::size_t count{}; bool present{}; Rational expected{};
+            for (std::size_t j = 0; j < ambient; ++j) if (state(lift.tensor, i * ambient + j) != 0) {
+                ++count; check(state(lift.tensor, i * ambient + j) == 1, "censored lift not identity selection");
+                present = old.tensor.support().contains(j);
+                if (present) expected = *old.tensor.state(j);
+            }
+            check(count == 1 && context.tensor.support().contains(i) == present,
+                  "censored original upper missing support became zero");
+            if (present) check(state(context.tensor, i) == expected, "censored context field differs from original");
+        }
+        inputs.emplace(input.at("id").text(), &context);
+    }
+    const auto input_values = [&](const std::string &id) {
+        rfc::numeric::RationalVector x(n);
+        for (std::size_t i = 0; i < n; ++i) if (inputs.at(id)->tensor.support().contains(i)) x[i] = state(inputs.at(id)->tensor, i);
+        return x;
+    };
+    const auto lower = input_values(query.at("lower").text()), upper = input_values(query.at("upper").text());
+    const auto closed = input_values(query.at("lower_closed").text()), finite = input_values(query.at("upper_finite").text());
+    rfc::numeric::RationalVector selected(n, Rational{1});
+    for (std::size_t k = 0; k < query.at("selection").size(); ++k) {
+        const auto x = input_values(query.at("selection").at(k).text());
+        for (std::size_t i = 0; i < n; ++i) selected[i] *= x[i];
+    }
+    const auto groups = view.at("groups");
+    const auto &readout = *field(owner, view.at("readout"));
+    check(readout.input == source_axis && readout.output == group_axis, "censored readout axes differ");
+    for (std::size_t g = 0; g < groups.size(); ++g) {
+        auto membership = selected;
+        if (g) {
+            const auto x = input_values(query.at("strata").at(g-1).text());
+            for (std::size_t i = 0; i < n; ++i) membership[i] *= x[i];
+        }
+        Rational mass{}; for (const auto &x : membership) mass += x;
+        check(groups.at(g).at("defined").boolean() == (mass != 0) && scalar(owner, groups.at(g).at("size")) == mass,
+              "censored group support/mass differs");
+        for (std::size_t i = 0; i < n; ++i)
+            check(state(readout.tensor, g*n+i) == (mass != 0 ? Rational(membership[i]/mass) : Rational{0}),
+                  "censored complete original group map differs");
+    }
+    const Rational origin(query.at("origin").text());
+    for (std::size_t t = 0; t < view.at("readings").size(); ++t) {
+        const auto reading = view.at("readings").at(t); const Rational time(query.at("times").at(t).text());
+        rfc::numeric::RationalVector lo(n), hi(n), rlo(n), rhi(n);
+        std::size_t ambiguity{};
+        for (std::size_t i = 0; i < n; ++i) if (selected[i] != 0) {
+            lo[i] = finite[i] != 0 && upper[i] <= time ? 1 : 0;
+            hi[i] = lower[i] < time || (lower[i] == time && closed[i] == 1) ? 1 : 0;
+            rlo[i] = std::min(lower[i], time) - origin;
+            rhi[i] = (finite[i] != 0 ? std::min(upper[i], time) : time) - origin;
+            ambiguity += lo[i] != hi[i];
+        }
+        check(scalar(owner, reading.at("time")) == time && values(owner,reading.at("event_field_lower")) == lo &&
+              values(owner,reading.at("event_field_upper")) == hi && values(owner,reading.at("restricted_time_lower_field")) == rlo &&
+              values(owner,reading.at("restricted_time_upper_field")) == rhi, "censored native marginal fields differ");
+        for (const auto &[name,x] : std::vector<std::pair<std::string,rfc::numeric::RationalVector>>{
+                {"cumulative_event_fraction_lower",lo},{"cumulative_event_fraction_upper",hi},
+                {"restricted_event_free_time_infimum",rlo},{"restricted_event_free_time_supremum",rhi}})
+            check(values(owner,reading.at(name)) == apply(owner,view.at("readout"),x), "censored original aggregate differs");
+        const auto family = reading.at("admissible_event_family"); const auto &frame = *field(owner,family.at("frame"));
+        check(frame.input != frame.output && frame.output == source_axis && frame.tensor.domain().extents().at(1) == ambiguity,
+              "censored full ambiguity frame/carrier differs");
+        const auto sectors = family.at("sectors");
+        for (std::size_t i = 0; i < n; ++i) {
+            Rational reconstructed{};
+            for (const auto *name : {"gradient","curl","harmonic"}) reconstructed += values(owner,sectors.at(name).at("offset")).at(i);
+            check(reconstructed == lo[i], "censored sector offsets fail reconstruction");
+            for (std::size_t j = 0; j < ambiguity; ++j) {
+                Rational column{};
+                for (const auto *name : {"gradient","curl","harmonic"}) column += state(field(owner,sectors.at(name).at("frame"))->tensor,i*ambiguity+j);
+                check(column == state(frame.tensor,i*ambiguity+j), "censored full sector ambiguity reconstruction differs");
+            }
+        }
+    }
+    if (!view.has("joint_family")) return;
+    const auto joint = view.at("joint_family"), states = joint.at("states");
+    const auto metric = view.at("metric");
+    const auto inner = [&](const auto &a, const auto &b) {
+        const auto mb = apply(owner,metric,b); Rational result{};
+        for (std::size_t i = 0; i < n; ++i) result += a[i]*mb[i];
+        return result;
+    };
+    rfc::numeric::RationalVector weights;
+    for (std::size_t s = 0; s < states.size(); ++s) {
+        const auto record = states.at(s);
+        weights.push_back(scalar(owner,record.at("weight")));
+        check(weights.back() == Rational(query.at("joint_family").at("states").at(s).at("weight").text()),
+              "joint finite law weight changed");
+        const auto &times = field(owner,record.at("event_times"))->tensor;
+        const auto &presence = field(owner,record.at("event_presence"))->tensor;
+        const auto declared = query.at("joint_family").at("states").at(s).at("values");
+        for (std::size_t e = 0; e < declared.size(); ++e) {
+            const auto entry = declared.at(e); std::optional<std::size_t> coordinate;
+            for (std::size_t i = 0; i < n; ++i)
+                if (view.at("coordinate_carrier").at(i).at("id").text() == entry.at("entity").text()) coordinate = i;
+            check(coordinate.has_value(),"joint original entity disappeared");
+            const auto event = entry.at("event_time");
+            check(times.support().contains(*coordinate) == (event.kind() != NativeRecordKind::Null),
+                  "joint declared no event support changed");
+            if (event.kind() != NativeRecordKind::Null)
+                check(state(times,*coordinate) == Rational(event.text()), "joint exact original event time or supported zero changed");
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            check(presence.support().contains(i) == (selected[i] != 0), "joint state original selection support differs");
+            if (selected[i] != 0) check(times.support().contains(i) == (state(presence,i) == 1),
+                                      "joint no event became supported zero time");
+        }
+    }
+    constexpr const char *names[] = {"full","gradient","curl","harmonic"};
+    for (const auto &[moment_key,sector_key] : std::vector<std::pair<std::string,std::string>>{
+            {"event_moments","event_sectors"},{"restricted_time_moments","restricted_time_sectors"}}) {
+        const auto moment = joint.at(moment_key), channels = moment.at("channels"); const auto count = channels.size();
+        std::vector<std::vector<rfc::numeric::RationalVector>> samples(count);
+        std::vector<rfc::numeric::RationalVector> means(count,rfc::numeric::RationalVector(n));
+        for (std::size_t s = 0; s < states.size(); ++s)
+            for (std::size_t c = 0; c < count; ++c) {
+                auto x = values(owner,states.at(s).at("readings").at(c/4).at(sector_key).at(names[c%4]));
+                samples[c].push_back(x); for (std::size_t i = 0; i < n; ++i) means[c][i] += weights[s]*x[i];
+            }
+        const auto &expected = field(owner,moment.at("expected_gram"))->tensor;
+        const auto &mean_gram = field(owner,moment.at("mean_gram"))->tensor;
+        const auto &centered = field(owner,moment.at("centered_gram"))->tensor;
+        for (std::size_t a = 0; a < count; ++a) {
+            check(values(owner,channels.at(a).at("mean_field")) == means[a], "joint complete channel mean differs");
+            const auto &family = field(owner,moment.at("field_families").at(a).at("centered_fields"))->tensor;
+            Rational variance{};
+            for (std::size_t s = 0; s < states.size(); ++s) {
+                auto delta = samples[a][s];
+                for (std::size_t i = 0; i < n; ++i) {
+                    delta[i] -= means[a][i]; check(state(family,s*n+i) == delta[i], "joint centered field differs");
+                }
+                variance += weights[s]*inner(delta,delta);
+            }
+            check(scalar(owner,moment.at("field_families").at(a).at("variance")) == variance,
+                  "joint complete finite variance differs");
+            for (std::size_t b = 0; b < count; ++b) {
+                Rational second{}; for (std::size_t s = 0; s < states.size(); ++s) second += weights[s]*inner(samples[a][s],samples[b][s]);
+                const auto first = inner(means[a],means[b]);
+                check(state(expected,a*count+b) == second && state(mean_gram,a*count+b) == first && state(centered,a*count+b) == second-first,
+                      "joint complete cross time/sector moments differ");
+            }
+        }
+    }
+}
+
+void verify_censored_claim(const NativeRecord &publication) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    auto request = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[{"path":["readings",0,"time"],"value_type":"rational","comparison":"equal","value":"0"}]})");
+    request.set("source_namespace", Json::string(std::to_string(publication.source_namespace())));
+    request.set("cutoff", Json::integer(static_cast<std::int64_t>(publication.publication_history()->last_sequence())));
+    request.at("items").at(0).set("value", Json::string(scalar(owner,view.at("readings").at(0).at("time")).get_str()));
+    check(check_certificate_claims_record(publication,admit_record_view(request)).at("result").at("matched").integer() == 1,
+          "censored native scalar literal claim lost its actual field owner");
+    if (!view.has("joint_family")) return;
+    const auto states = view.at("joint_family").at("states");
+    for (std::size_t s = 0; s < states.size(); ++s) {
+        const auto &tensor = field(owner,states.at(s).at("event_times"))->tensor;
+        for (std::size_t i = 0; i < tensor.domain().logical_size(); ++i) {
+            auto path = Json::array();
+            path.push(Json::string("joint_family")); path.push(Json::string("states"));
+            path.push(Json::integer(static_cast<std::int64_t>(s))); path.push(Json::string("event_times"));
+            request.at("items").at(0).set("path",path);
+            request.at("items").at(0).set("coordinate",Json::integer(static_cast<std::int64_t>(i)));
+            if (tensor.support().contains(i)) {
+                request.at("items").at(0).set("value",Json::string(tensor.state(i)->get_str()));
+                check(check_certificate_claims_record(publication,admit_record_view(request)).at("result").at("matched").integer() == 1,
+                      "joint original coordinate literal claim differs");
+            } else {
+                request.at("items").at(0).set("value",Json::string("0"));
+                bool refused{};
+                try {(void)check_certificate_claims_record(publication,admit_record_view(request));}
+                catch (const std::invalid_argument &error) {refused = std::string(error.what()).find("missing") != std::string::npos;}
+                check(refused,"joint no event/unselected support accepted as zero event time");
+            }
+        }
+    }
+}
+void verify_censored_workflow(const std::shared_ptr<const ScientificStudy> &study,
+                             const NativeRecord &query, const fs::path &output) {
+    auto declaration = Json::parse(R"({"schema":"gadget.scientific.workflow.v1","id":"censored-families","source_digest":"","limits":{"depth":4,"nodes":3,"model_calls":0,"parallel_workers":2},"definitions":[],"entry":{"id":"two-families","type":"parallel","workers":2,"steps":[]}})");
+    declaration.set("source_digest",Json::string(study->digest()));
+    for (const auto *id : {"first","second"}) {
+        auto node = Json::object(); node.set("id",Json::string(id)); node.set("type",Json::string("query"));
+        node.set("query",render_record_view(query)); declaration.at("entry").at("steps").push(node);
+    }
+    const auto request = admit_record_view(declaration);
+    const auto operation = execute_workflow_record(study,request);
+    check(operation.at("result").at("native_execution").boolean() && operation.at("result").at("status").text() == "complete",
+          "censored producer refused native workflow");
+    const auto results = operation.at("result").at("result");
+    check(results.size() == 2,"censored native workflow lost an independent family");
+    const auto first = NativeRecord::decode(results.at(0).at("publication").bytes());
+    const auto second = NativeRecord::decode(results.at(1).at("publication").bytes());
+    check(first.source_namespace() != second.source_namespace(),"censored independent results merged by dimension");
+    for (const auto &result : {first,second}) {
+        check(NativeRecord::decode(result.at("request_publication").bytes()).encode() == request.encode(),
+              "censored workflow leaf lost its original request owner");
+        verify_censored(result,study->native_publication(),query); verify_censored_claim(result);
+    }
+    operation.write(output/"owning-workflow.rfcxs");
+    const auto reopened = NativeRecord::read(output/"owning-workflow.rfcxs");
+    check(NativeRecord::decode(reopened.at("result").at("result").at(0).at("publication").bytes()).encode() == first.encode(),
+          "censored reopened workflow changed complete native publication");
+}
+
 void verify_replay(const NativeRecord &expected, const NativeRecord &actual) {
     const auto a = expected.endpoint(), b = actual.endpoint();
     check(a->tensors.size() == b->tensors.size(), "replay field family differs");
@@ -724,6 +955,7 @@ int main(int argc, char **argv) try {
         else if (std::string(argv[4]) == "sections") verify_sections(result);
         else if (std::string(argv[4]) == "ablation") verify_ablation(result);
         else if (std::string(argv[4]) == "direct") verify_direct(result, original);
+        else if (std::string(argv[4]) == "censored") {verify_censored(result, original, query); verify_censored_claim(result);}
         else if (std::string(argv[4]) != "finite") verify_model(result, original);
         else {
             const auto fields = result.at("result").at("fields");
@@ -740,6 +972,8 @@ int main(int argc, char **argv) try {
     }
     if (std::string(argv[4]) == "sections" || std::string(argv[4]) == "structural")
         verify_workflow(study, queries.at(queries.names().front()), output, std::string(argv[4]) == "sections");
+    if (std::string(argv[4]) == "censored")
+        verify_censored_workflow(study, queries.at(queries.names().front()), output);
     auto plan = Json::object(), steps = Json::array();
     plan.set("schema", Json::string("gadget.scientific.plan.v1"));
     plan.set("id", Json::string("native-models")); plan.set("question", Json::string("Retain declared model fields"));

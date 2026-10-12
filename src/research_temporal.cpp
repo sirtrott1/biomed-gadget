@@ -452,11 +452,23 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
     out.set("identity_verified", Json::boolean(true));
     return out;
 }
-Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
+scientific_detail::ResultValue censored_endpoint_bounds(const NativeStudy &study, const Json &query,
                               const std::map<std::string, Vector> &fields,
                               const std::vector<bool> &upper_support,
                               const std::map<std::string, Json> &meanings, const Json &coordinates,
-                              bool validate) {
+                              bool validate, CensoredResultFields *native) {
+    using scientific_detail::ResultValue;
+    using scientific_detail::ResultFields;
+    require(validate || native, "censored native result owner required");
+    const auto rat = [&](const Rational &value) {
+        return native ? native->publication.stage_scalar(value) : ResultValue{};
+    };
+    const auto vec = [&](const Vector &value, std::uint64_t axis) {
+        return ResultFields::stage_vector(value, axis);
+    };
+    const auto mat = [&](const Matrix &value, std::uint64_t input, std::uint64_t output) {
+        return ResultFields::stage_matrix(value, input, output);
+    };
     members(query,
             {"operation", "context", "lower", "upper", "lower_closed", "upper_closed",
              "upper_finite", "selection", "strata", "times", "origin", "time_unit", "population",
@@ -522,7 +534,8 @@ Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
     require(population > 0, "endpoint selection empty");
 
     Matrix readout(1 + query.at("strata").size(), n);
-    auto groups = Json::array();
+    auto groups = ResultValue::array();
+    std::vector<bool> group_defined;
     for (std::size_t g = 0; g < readout.rows(); ++g) {
         Vector membership = selected;
         if (g)
@@ -531,17 +544,18 @@ Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
         Rational mass{0};
         for (const auto &v : membership)
             mass += v;
-        auto group = Json::object();
-        group.set("id", g ? query.at("strata").at(g - 1) : Json::string("selected_population"));
+        auto group = ResultValue::object();
+        group.set("id", g ? ResultValue(query.at("strata").at(g - 1)) : ResultValue::string("selected_population"));
         group.set("size", rat(mass));
-        group.set("defined", Json::boolean(mass != 0));
+        group_defined.push_back(mass != 0);
+        group.set("defined", ResultValue::boolean(mass != 0));
         groups.push(group);
         if (mass != 0)
             for (std::size_t i = 0; i < n; ++i)
                 if (membership[i] != 0)
                     readout.set(g, i, membership[i] / mass);
     }
-    auto contrasts = Json::array();
+    auto contrasts = ResultValue::array();
     const std::size_t contrasts_count = query.has("contrasts") ? query.at("contrasts").size() : 0;
     Matrix contrast_readout(contrasts_count, n);
     std::set<std::string> contrast_ids;
@@ -560,10 +574,10 @@ Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
                 right = g;
         }
         require(left && right, "endpoint contrast group unknown");
-        auto record = Json::parse(d.dump());
+        auto record = ResultValue(d);
         const bool defined =
-            groups.at(*left).at("defined").boolean() && groups.at(*right).at("defined").boolean();
-        record.set("defined", Json::boolean(defined));
+            group_defined.at(*left) && group_defined.at(*right);
+        record.set("defined", ResultValue::boolean(defined));
         contrasts.push(record);
         if (defined)
             for (std::size_t i = 0; i < n; ++i)
@@ -574,43 +588,44 @@ Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
         (v > 0 ? positive : negative).set(p.first, p.second, v);
     require(core::bianchi_through(study.source(), study.source().max_grade()).satisfied(),
             "censored relational field requires source closure");
-    Json joint;
+    ResultValue joint;
     if (query.has("joint_family"))
         joint =
             joint_endpoint_family(study, query.at("joint_family"), l, u, lc, uc, uf, selected,
-                                  times, origin, readout, contrast_readout, coordinates, validate);
+                                  times, origin, readout, contrast_readout, coordinates, validate, native);
     if (validate)
-        return Json::object();
-    auto observations = Json::array();
+        return ResultValue::object();
+    auto observations = ResultValue::array();
     for (std::size_t i = 0; i < n; ++i)
         if (selected[i] != 0) {
-            auto r = Json::object();
+            auto r = ResultValue::object();
             r.set("coordinate", coordinates.at(i));
             r.set("lower", rat(l[i]));
-            r.set("upper", uf[i] != 0 ? rat(u[i]) : Json{});
-            r.set("lower_closed", Json::boolean(lc[i] == 1));
-            r.set("upper_closed", Json::boolean(uc[i] == 1));
-            r.set("first_possible_grid_index", cardinality(times.size()));
-            r.set("first_definite_grid_index", cardinality(times.size()));
+            r.set("upper", uf[i] != 0 ? rat(u[i]) : ResultValue{});
+            r.set("lower_closed", ResultValue::boolean(lc[i] == 1));
+            r.set("upper_closed", ResultValue::boolean(uc[i] == 1));
+            r.set("first_possible_grid_index", ResultValue::count(times.size()));
+            r.set("first_definite_grid_index", ResultValue::count(times.size()));
             for (std::size_t t = 0; t < times.size(); ++t) {
                 if (l[i] < times[t] || (l[i] == times[t] && lc[i] == 1)) {
-                    r.set("first_possible_grid_index", cardinality(t));
+                    r.set("first_possible_grid_index", ResultValue::count(t));
                     break;
                 }
             }
             for (std::size_t t = 0; t < times.size(); ++t)
                 if (uf[i] != 0 && u[i] <= times[t]) {
-                    r.set("first_definite_grid_index", cardinality(t));
+                    r.set("first_definite_grid_index", ResultValue::count(t));
                     break;
                 }
             observations.push(r);
         }
+    const auto source_axis = native->source, group_axis = native->groups, contrast_axis = native->contrasts;
     const PreparedRelationalField hodge(study, core::Grade{0});
-    auto readings = Json::array();
+    auto readings = ResultValue::array();
     for (const auto &s : times) {
         Vector emin(n, Rational{0}), emax(n, Rational{0}), rmin(n, Rational{0}),
             rmax(n, Rational{0});
-        auto lower_attained = Json::array(), upper_attained = Json::array();
+        auto lower_attained = ResultValue::array(), upper_attained = ResultValue::array();
         for (std::size_t i = 0; i < n; ++i) {
             if (selected[i] != 0) {
                 emin[i] = uf[i] != 0 && u[i] <= s ? 1 : 0;
@@ -618,44 +633,52 @@ Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
                 rmin[i] = std::min(l[i], s) - origin;
                 rmax[i] = (uf[i] != 0 ? std::min(u[i], s) : s) - origin;
             }
-            lower_attained.push(Json::boolean(selected[i] == 0 || lc[i] == 1 || l[i] >= s));
+            lower_attained.push(ResultValue::boolean(selected[i] == 0 || lc[i] == 1 || l[i] >= s));
             upper_attained.push(
-                Json::boolean(selected[i] == 0 || uf[i] == 0 || uc[i] == 1 || u[i] > s));
+                ResultValue::boolean(selected[i] == 0 || uf[i] == 0 || uc[i] == 1 || u[i] > s));
         }
-        auto r = Json::object();
+        auto r = ResultValue::object();
         r.set("time", rat(s));
         r.set("event_fraction_contrast_lower",
-              vec(numeric::add(positive.apply(emin), negative.apply(emax))));
+              vec(numeric::add(positive.apply(emin), negative.apply(emax)), contrast_axis));
         r.set("event_fraction_contrast_upper",
-              vec(numeric::add(positive.apply(emax), negative.apply(emin))));
+              vec(numeric::add(positive.apply(emax), negative.apply(emin)), contrast_axis));
         r.set("restricted_time_contrast_infimum",
-              vec(numeric::add(positive.apply(rmin), negative.apply(rmax))));
+              vec(numeric::add(positive.apply(rmin), negative.apply(rmax)), contrast_axis));
         r.set("restricted_time_contrast_supremum",
-              vec(numeric::add(positive.apply(rmax), negative.apply(rmin))));
-        r.set("event_field_lower", vec(emin));
-        r.set("event_field_upper", vec(emax));
-        r.set("cumulative_event_fraction_lower", vec(readout.apply(emin)));
-        r.set("cumulative_event_fraction_upper", vec(readout.apply(emax)));
-        r.set("restricted_event_free_time_infimum", vec(readout.apply(rmin)));
-        r.set("restricted_event_free_time_supremum", vec(readout.apply(rmax)));
-        r.set("restricted_time_lower_field", vec(rmin));
-        r.set("restricted_time_upper_field", vec(rmax));
+              vec(numeric::add(positive.apply(rmax), negative.apply(rmin)), contrast_axis));
+        r.set("event_field_lower", vec(emin, source_axis));
+        r.set("event_field_upper", vec(emax, source_axis));
+        r.set("cumulative_event_fraction_lower", vec(readout.apply(emin), group_axis));
+        r.set("cumulative_event_fraction_upper", vec(readout.apply(emax), group_axis));
+        r.set("restricted_event_free_time_infimum", vec(readout.apply(rmin), group_axis));
+        r.set("restricted_event_free_time_supremum", vec(readout.apply(rmax), group_axis));
+        r.set("restricted_time_lower_field", vec(rmin, source_axis));
+        r.set("restricted_time_upper_field", vec(rmax, source_axis));
         r.set("lower_coordinate_bound_attained", lower_attained);
         r.set("upper_coordinate_bound_attained", upper_attained);
         std::vector<std::size_t> ambiguous;
         for (std::size_t i = 0; i < n; ++i)
             if (emin[i] != emax[i])
                 ambiguous.push_back(i);
+        const auto parameter_axis = native->publication.axis(ambiguous.size());
+        auto parameter_binding = ResultValue::object();
+        parameter_binding.set("kind", ResultValue::string("independent_event_indicator_parameters"));
+        parameter_binding.set("time", rat(s));
+        parameter_binding.set("source_carrier", ResultValue::count(source_axis));
+        parameter_binding.set("parameter_carrier", ResultValue::count(parameter_axis));
+        parameter_binding.set("source_coordinates", native->publication.indices(ambiguous, parameter_axis));
+        native->publication.bind(std::move(parameter_binding));
         Matrix frame(n, ambiguous.size());
         for (std::size_t j = 0; j < ambiguous.size(); ++j)
             frame.set(ambiguous[j], j, Rational{1});
-        auto family = Json::object();
-        family.set("offset", vec(emin));
-        family.set("frame", mat(frame));
+        auto family = ResultValue::object();
+        family.set("offset", vec(emin, source_axis));
+        family.set("frame", mat(frame, parameter_axis, source_axis));
         family.set(
             "parameter_domain",
-            Json::string("independent zero-or-one event indicators at this evaluation time"));
-        auto sectors = Json::object();
+            ResultValue::string("independent zero-or-one event indicators at this evaluation time"));
+        auto sectors = ResultValue::object();
         const auto offsets = hodge.apply(emin);
         constexpr const char *names[] = {"full", "gradient", "curl", "harmonic"};
         std::array<Matrix, 4> sector_frames{
@@ -671,9 +694,9 @@ Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
                         sector_frames[k].set(i, j, parts[k][i]);
         }
         for (std::size_t k = 0; k < 4; ++k) {
-            auto a = Json::object();
-            a.set("offset", vec(offsets[k]));
-            a.set("frame", mat(sector_frames[k]));
+            auto a = ResultValue::object();
+            a.set("offset", vec(offsets[k], source_axis));
+            a.set("frame", mat(sector_frames[k], parameter_axis, source_axis));
             Vector lower = offsets[k], upper = offsets[k];
             for (const auto &[p, v] : sector_frames[k].entries()) {
                 if (v < 0)
@@ -681,8 +704,8 @@ Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
                 else
                     upper[p.first] += v;
             }
-            a.set("coordinate_lower", vec(lower));
-            a.set("coordinate_upper", vec(upper));
+            a.set("coordinate_lower", vec(lower, source_axis));
+            a.set("coordinate_upper", vec(upper, source_axis));
             sectors.set(names[k], a);
         }
         family.set("sectors", sectors);
@@ -690,29 +713,29 @@ Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
 
         readings.push(r);
     }
-    auto out = Json::object();
+    auto out = ResultValue::object();
     out.set("population", query.at("population"));
     out.set("event", query.at("event"));
     out.set("origin", rat(origin));
     out.set("time_unit", query.at("time_unit"));
     out.set("groups", groups);
     out.set("contrasts", contrasts);
-    out.set("contrast_readout", mat(contrast_readout));
-    out.set("readout", mat(readout));
+    out.set("contrast_readout", mat(contrast_readout, source_axis, contrast_axis));
+    out.set("readout", mat(readout, source_axis, group_axis));
     out.set("observations", observations);
     out.set("readings", readings);
     out.set("coordinate_carrier", coordinates);
-    auto reader = Json::object(), aggregate_readings = Json::array();
+    auto reader = ResultValue::object(), aggregate_readings = ResultValue::array();
     reader.set(
         "scope",
-        Json::string("Finite-population marginal event and restricted-time bounds; original "
+        ResultValue::string("Finite-population marginal event and restricted-time bounds; original "
                      "coordinates and coupled field families remain in the source certificate"));
     reader.set("groups", groups);
     reader.set("contrasts", contrasts);
     reader.set("time_unit", query.at("time_unit"));
     for (std::size_t i = 0; i < readings.size(); ++i) {
-        auto e = Json::object();
-        e.set("full_result_index", cardinality(i));
+        auto e = ResultValue::object();
+        e.set("full_result_index", ResultValue::count(i));
         for (const auto *key :
              {"time", "cumulative_event_fraction_lower", "cumulative_event_fraction_upper",
               "restricted_event_free_time_infimum", "restricted_event_free_time_supremum",
@@ -723,18 +746,18 @@ Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
     reader.set("readings", aggregate_readings);
     out.set("reader", reader);
 
-    out.set("metric", mat(study.tower().metrics()[0].materialize()));
+    out.set("metric", mat(study.tower().metrics()[0].materialize(), source_axis, source_axis));
     out.set("sharp_for",
-            Json::string("Each displayed marginal over the independent declared event-time "
+            ResultValue::string("Each displayed marginal over the independent declared event-time "
                          "intervals; bounds at different times or for different groups need not "
                          "share one attaining event-time assignment."));
     std::size_t unidentified = 0;
     for (std::size_t i = 0; i < n; ++i)
         if (selected[i] != 0 && (uf[i] == 0 || u[i] != l[i]))
             ++unidentified;
-    out.set("unidentified_event_count", cardinality(unidentified));
-    auto facts = Json::object();
-    facts.set("unidentified_event_count", cardinality(unidentified));
+    out.set("unidentified_event_count", ResultValue::count(unidentified));
+    auto facts = ResultValue::object();
+    facts.set("unidentified_event_count", ResultValue::count(unidentified));
     out.set("facts", facts);
     if (query.has("joint_family"))
         out.set("joint_family", joint);
