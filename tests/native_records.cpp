@@ -4,12 +4,65 @@
 #include <rfc/storage/native_series_prefix.hpp>
 #include <iostream>
 #include <algorithm>
+#include <barrier>
+#include <exception>
+#include <thread>
 
 using namespace gadget;
 using namespace rfc;
 namespace {
 void check(bool ok,const char *message) {if(!ok)throw std::runtime_error(message);}
 template<class F>void rejects(F &&f) {bool threw=false;try{f();}catch(const std::exception &){threw=true;}check(threw,"invalid native record admitted");}
+std::vector<storage::PinnedNativeAccession> concurrent_access(NativeRecord record) {
+    constexpr std::size_t workers = 8, rounds = 64;
+    const auto endpoint = record.endpoint();
+    const auto name_space = record.source_namespace();
+    std::barrier ready(static_cast<std::ptrdiff_t>(workers));
+    std::vector<std::optional<storage::PinnedNativeAccession>> selected(
+        workers * endpoint->tensors.size());
+    std::vector<std::exception_ptr> errors(workers);
+    std::vector<std::jthread> threads;
+    for (std::size_t worker = 0; worker < workers; ++worker)
+        threads.emplace_back([&, worker] {
+            ready.arrive_and_wait();
+            try {
+                for (std::size_t round = 0; round < rounds; ++round) {
+                    const auto view = round % 2 ? record.at("cell") : record;
+                    storage::NativeAccessionRequest request;
+                    request.kind = storage::NativeAccessionKind::Tensor;
+                    request.subject = 999;
+                    rejects([&] { (void)view.access(request); });
+                    for (std::size_t i = 0; i < endpoint->tensors.size(); ++i) {
+                        request.subject = endpoint->tensors[i].key;
+                        auto pin = view.access(request);
+                        check(pin.endpoint() == endpoint && pin.source_namespace() == name_space &&
+                                  pin.sequence() == endpoint->sequence &&
+                                  pin.tensor().get() == &endpoint->tensors[i].tensor,
+                              "concurrent record access changed its actual tensor owner");
+                        const auto tensor = pin.tensor();
+                        for (std::size_t coordinate = 0; coordinate < tensor->domain().logical_size(); ++coordinate)
+                            check(tensor->state(coordinate) == endpoint->tensors[i].tensor.state(coordinate),
+                                  "concurrent record access changed a coefficient or support state");
+                        selected[worker * endpoint->tensors.size() + i] = std::move(pin);
+                    }
+                }
+            } catch (...) {
+                errors[worker] = std::current_exception();
+            }
+        });
+    threads.clear();
+    for (const auto &error : errors)
+        if (error) std::rethrow_exception(error);
+    std::vector<storage::PinnedNativeAccession> pins;
+    for (auto &pin : selected) {
+        check(pin.has_value(), "concurrent record access omitted an original tensor");
+        if (!pins.empty())
+            check(pin->same_execution_authority(pins.front()),
+                  "record copies or children prepared independent directories");
+        pins.push_back(std::move(*pin));
+    }
+    return pins;
+}
 void equal_value(const NativeRecord &a, const NativeRecord &b) {
     check(a.kind() == b.kind(), "native value constructor changed");
     switch (a.kind()) {
@@ -189,6 +242,14 @@ int main(int argc,char **argv) {
     check(storage::read_file_exact(directory/"data.bin",native_data_limits().max_archive_bytes)==record.encode(),
           "failed exclusive publication changed the previous file");
     const auto reopened=NativeRecord::read(directory/"data.bin");
+    const auto concurrent_pins = concurrent_access(NativeRecord::decode(reopened.encode()));
+    check(concurrent_pins.size() == 24 &&
+              concurrent_pins[0].tensor()->state(0) == numeric::Rational{0} &&
+              !concurrent_pins[0].tensor()->state(1) &&
+              concurrent_pins[0].tensor()->state(2) == numeric::Rational{-5,13} &&
+              concurrent_pins[1].tensor()->state(0) == numeric::Rational{-7,5} &&
+              concurrent_pins[2].tensor()->state(0) == numeric::Rational{0},
+          "concurrent tensor pins lost exact coefficients, zero, absence or lifetime");
     const auto bytes=reopened.at("cell").at("evidence").bytes();
     check(std::equal(raw.begin(),raw.end(),bytes.begin(),bytes.end()),"original bytes, NUL or trailing zeros lost");
     check(reopened.encode()==record.encode(),"canonical native bytes changed on replay");

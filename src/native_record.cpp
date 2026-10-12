@@ -906,6 +906,10 @@ std::optional<storage::NativeEncodedTensor> NativeRecord::encoded_tensor(std::ui
     if(!state_->history)return std::nullopt;
     return storage::NativeEncodedTensor::from_series(*state_->history,key,endpoint()->sequence);
 }
+storage::PinnedNativeAccession NativeRecord::access(
+    const storage::NativeAccessionRequest &request) const {
+    return state_->study.access(request);
+}
 NativeRecord NativeRecord::read(const std::filesystem::path &path) {
     auto limits=native_data_limits();
     if(const auto room=runtime::detect_hardware().advisory_memory_headroom())limits.temporal.declarations.max_materialized_bytes=std::max<std::size_t>(1,*room);

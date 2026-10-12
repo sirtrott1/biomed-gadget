@@ -132,6 +132,9 @@ class NativeRecord {
     NativeRecordValue unbound_value(const std::map<std::uint64_t,std::uint64_t> &source_map = {}) const;
     std::optional<NativeRecord> parent() const;
     std::shared_ptr<const rfc::storage::TemporalEndpoint> endpoint() const;
+    // Resolve through the owning study's synchronized canonical directory.
+    rfc::storage::PinnedNativeAccession access(
+        const rfc::storage::NativeAccessionRequest &request) const;
     std::shared_ptr<const rfc::storage::NativeAccessionDirectory> accession_directory() const;
     std::uint64_t source_namespace() const;
     NativeRecord declared_value(std::uint64_t key) const;
