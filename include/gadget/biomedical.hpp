@@ -21,6 +21,10 @@ class EvidenceStore {
     // The request selects original assertions and a question on this frozen
     // snapshot. Native context retains those assertions and their byte owners.
     NativeRecord source_context(const NativeRecord &request) const;
+    // Check the admitted reported point projection against original assertions.
+    // The receipt retains separate study/evidence owners and a native selector.
+    NativeRecord bind_reported_field(const ScientificStudy &study,
+                                    const NativeRecord &request) const;
     // Admit a prospective query or source annotation without executing it.
     // Snapshot retrieval does not establish historical or biological time.
     NativeRecord admit_proposal(const NativeRecord &context_request,
