@@ -44,6 +44,15 @@ coboundary, independent frame, Gram system and coordinate maps. Local stalks, in
 compatible section and residual. Numerical assembly, rank, metric actions and
 prepared solves are supplied by RexGraph C++.
 
+With `complete_families: true`, each prepared support group also retains the complete `kernel_frame` and
+`row_dependencies`. The kernel maps free coefficients to all observed stalk
+coordinates and satisfies `D K = 0`; its columns number the compatible
+dimension. They are joint directions, so coefficients cannot be chosen
+independently for each view. Row dependencies satisfy `D^T L = 0` and retain
+every relation among the assessed constraints. Their carriers name the original
+selected coordinate and row maps. Omitting this output selection preserves the
+earlier projection-only contract and exact replay of existing native archives.
+
 A comparison cost across different measurement units must be declared. Each view
 metric names its measurement domain and the common quadrance codomain. The
 example's diagonal coefficients are `1,2`, `3,4` and `5,6`. These are supplied

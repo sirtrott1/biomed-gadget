@@ -2509,6 +2509,10 @@
         "workers": {
           "type": "integer",
           "minimum": 1
+        },
+        "complete_families": {
+          "type": "boolean",
+          "default": false
         }
       },
       "required": [

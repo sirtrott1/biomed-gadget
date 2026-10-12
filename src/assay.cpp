@@ -1727,6 +1727,7 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
              "source_kernel",
              "execution_certificate",
              "execution",
+             "complete_families",
              "views",
              "sections",
              "interfaces",

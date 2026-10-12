@@ -1,6 +1,7 @@
 """Declared inter-assay sections; independent rational projection and portable lineage."""
 import copy
 import hashlib
+import importlib.util
 import json
 import shutil
 import subprocess
@@ -76,10 +77,111 @@ def payload(result):
     return result
 
 
+def complete_families(result):
+    for group in result['prepared_groups']:
+        action = matrix(group['action'])
+        kernel = matrix(group['kernel_frame'])
+        dependencies = matrix(group['row_dependencies'])
+        frame = matrix(group['residual_frame'])
+        n, m = group['action']['columns'], group['action']['rows']
+        rank = rref(action)[1]
+        check(group['kernel_frame']['rows'] == n)
+        check(group['kernel_frame']['columns'] == n-rank == group['compatible_dimension'])
+        check(rref(kernel)[1] == n-rank)
+        check(group['row_dependencies']['rows'] == m)
+        check(group['row_dependencies']['columns'] == m-rank)
+        check(rref(dependencies)[1] == m-rank)
+        check(all(sum(action[i][j]*kernel[j][k] for j in range(n)) == 0
+                  for i in range(m) for k in range(n-rank)))
+        check(all(sum(action[i][j]*dependencies[i][k] for i in range(m)) == 0
+                  for j in range(n) for k in range(m-rank)))
+        check(rref([kernel[j]+frame[j] for j in range(n)])[1] == n)
+
+
+def paired_capture_contracts():
+    tool = example.parents[2]/'tools/prepare_paired_assay_sections.py'
+    module_spec = importlib.util.spec_from_file_location('paired_sections', tool)
+    preparation = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(preparation)
+    folder = root/'paired-capture'
+    folder.mkdir()
+
+    def artifact(name, body):
+        (folder/name).write_text(body)
+        return dict(path=name, sha256='sha256:'+hashlib.sha256(body.encode()).hexdigest())
+
+    barcodes = artifact('barcodes.tsv', 'cell-a\ncell-b\ncell-c\n')
+    features = artifact('features.tsv', 'g1\tGene1\tGene Expression\ng2\tGene2\tGene Expression\na1\tAntibody1\tAntibody Capture\na2\tAntibody2\tAntibody Capture\n')
+    original = artifact('matrix.mtx', '%%MatrixMarket matrix coordinate integer general\n4 3 8\n1 1 2\n2 1 3\n3 1 1\n4 1 2\n1 2 7\n3 2 7\n2 3 4\n4 3 4\n')
+    observations = artifact('observations.tsv', 'id\ncell-a\ncell-b\ncell-c\n')
+    assays = []
+    for name, ids, entries, namespace, channel in [
+        ('rna', ['g1','g2'], [(1,1,2),(2,1,3),(1,2,7),(2,3,4)], '978101', 'E'),
+        ('antibody', ['a1','a2'], [(1,1,1),(2,1,2),(1,2,7),(2,3,4)], '978102', 'observation')]:
+        dictionary = artifact(name+'-features.tsv', 'id\n'+'\n'.join(ids)+'\n')
+        matrix_source = artifact(name+'.mtx', '%%MatrixMarket matrix coordinate integer general\n2 3 4\n'+''.join(f'{i} {j} {v}\n' for i,j,v in entries))
+        assays.append(dict(id=name, kind='single_cell', format='matrix_market', source=matrix_source,
+            features=dictionary, observations=observations, source_namespace=namespace, carrier='features',
+            quantity='umi_count', units=name+'_assigned_umi', channel=channel, method='Authored captured counts',
+            arithmetic='exact_decimal', implicit_entries='measured_zero', missing_tokens=[], provenance=[barcodes,features,original]))
+    source = dict(schema='gadget.assays.import.v1', id='paired-source-controls', design=dict(
+        question='Check original matched source columns', population='Three authored columns', selection='All',
+        limitations=['Constructed source control']), assays=assays, resources=[], links=[])
+    (folder/'paired-import.json').write_text(json.dumps(source)+'\n')
+    contract = preparation.source_contract(folder)
+    check([p['section'] for p in contract['correspondence']['pairs']] == ['cell-a','cell-b','cell-c'])
+    destination = root/'paired-workflow'
+    p = subprocess.run([sys.executable, str(tool), '--binary', str(binary), '--source', str(folder),
+        '--out', str(destination), '--source-namespace', '978103', '--workers', '2'], capture_output=True, text=True)
+    check(p.returncode == 0)
+    paired = json.loads((destination/'analysis/sections/result.json').read_text())['result']
+    complete_families(paired)
+    check([len(paired['sections'][0]['fields'][i]['input']) for i in range(2)] == [1,2])
+    for section, expected in zip(paired['sections'], ([5,1,2],[7,7,0],[4,0,4])):
+        check([Q(v) for f in section['fields'] for v in f['input']] == expected)
+        defect = Q(expected[0]-expected[1]-expected[2])
+        residual = [defect/3, -defect/3, -defect/3]
+        check([Q(v) for f in section['fields'] for v in f['residual']] == residual)
+        check(Q(section['residual_quadrance']) == defect*defect/3)
+    for filename, changed in [('barcodes.tsv','cell-a\ncell-a\ncell-c\n'),
+                              ('observations.tsv','id\ncell-b\ncell-a\ncell-c\n')]:
+        original_bytes = (folder/filename).read_bytes()
+        (folder/filename).write_text(changed)
+        bad = copy.deepcopy(source)
+        for assay in bad['assays']:
+            for record in [assay['observations'], *assay['provenance']]:
+                if record['path'] == filename:
+                    record['sha256'] = 'sha256:'+hashlib.sha256(changed.encode()).hexdigest()
+        (folder/'paired-import.json').write_text(json.dumps(bad))
+        try:
+            preparation.source_contract(folder)
+        except ValueError:
+            check(True)
+        else:
+            check(False)
+        (folder/filename).write_bytes(original_bytes)
+    (folder/'paired-import.json').write_text(json.dumps(source))
+
+
 run('import-assays', '--spec', root/'inputs/import.json', '--out', root/'workspace')
 manifest = root/'workspace/workspace.json'
 query = json.loads((root/'inputs/query.json').read_text())
-result = run('assay-query', '--workspace', manifest, '--request', root/'inputs/query.json')['result']
+query['complete_families'] = True
+result = run('assay-query', '--workspace', manifest, '--request', save('complete-query.json', query))['result']
+complete_families(result)
+paired_capture_contracts()
+legacy = run('assay-query', '--workspace', manifest, '--request', root/'inputs/query.json')['result']
+explicit_legacy = copy.deepcopy(query)
+explicit_legacy['complete_families'] = False
+old_profile = run('assay-query', '--workspace', manifest,
+                  '--request', save('legacy-query.json', explicit_legacy))['result']
+check(payload(legacy) == payload(old_profile))
+check(all('kernel_frame' not in g and 'row_dependencies' not in g for g in legacy['prepared_groups']))
+for wrong in ['complete', 1, None, [], {}]:
+    bad = copy.deepcopy(query)
+    bad['complete_families'] = wrong
+    run('assay-query', '--workspace', manifest,
+        '--request', save('invalid-families.json', bad), fail=True)
 D = [[1, 0, -1, 0, 0, 0], [0, 0, 0, 1, Q(-1, 2), 0],
      [0, 1, 0, 1, 0, -1], [0]*6, [0]*6, [0]*6]
 dependencies = [{0, 2}, {3, 4}, {1, 3, 5}, {0}, set(), set()]
@@ -141,6 +243,7 @@ for participant in rectangular['interfaces'][0]['participants']:
         dict(observable_id='total', source_id='f2', coefficient='1')])
 wide_interface = run('assay-query', '--workspace', manifest,
                      '--request', save('rectangular.json', rectangular))['result']
+complete_families(wide_interface)
 expected_D = [D[0], [2, 1, -2, -1, 0, 0]] + D[1:]
 check(matrix(wide_interface['coboundary']) == expected_D)
 first = wide_interface['sections'][0]
