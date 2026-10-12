@@ -1726,6 +1726,7 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
              "intercept",
              "source_kernel",
              "execution_certificate",
+             "execution",
              "views",
              "sections",
              "interfaces",
@@ -1735,6 +1736,8 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
              "boundary_policy"});
     require(request.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
     const auto operation = request.at("operation").text();
+    require(!request.has("execution") || operation == "indexed_sequence_alignment",
+            "indexed execution widths require indexed_sequence_alignment");
     if (!resources) {
         if (operation == "native_query" &&
             request.at("query").at("operation").text() == "metric_relative_novelty") {

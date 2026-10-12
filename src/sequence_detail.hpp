@@ -56,6 +56,25 @@ inline void reference_frame(const ResourceImage &image, const std::vector<Sequen
                 "reference contig length mismatch");
     }
 }
+inline void reference_frame(const ResourceImage &image, const SequenceSource &refs) {
+    require(image.declaration.at("format").text() == "fasta", "reference requires FASTA");
+    if (!image.declaration.has("reference"))
+        return;
+    const auto frame = reference_record(image.declaration.at("reference"));
+    require(frame.at("sequence_sha256").text() == refs.digest() &&
+                frame.at("contigs").size() == refs.size(),
+            "reference hash/dictionary mismatch");
+    std::map<std::string, std::size_t> lengths;
+    for (std::size_t i = 0; i < refs.size(); ++i)
+        lengths.emplace(refs.id(i), refs.length(i));
+    for (std::size_t i = 0; i < frame.at("contigs").size(); ++i) {
+        const auto contig = frame.at("contigs").at(i);
+        require(lengths.contains(contig.at("id").text()) &&
+                    lengths.at(contig.at("id").text()) ==
+                        static_cast<std::size_t>(contig.at("length").integer()),
+                "reference contig length mismatch");
+    }
+}
 inline int dna(char c) {
     switch (c) {
     case 'A':
@@ -89,7 +108,7 @@ struct Hit {
 class SeedIndex {
     using Table = std::unordered_map<std::uint64_t, std::vector<Hit>>;
     std::map<std::size_t, Table> tables_;
-    std::size_t hits_{}, scans_{};
+    std::size_t hits_{}, scans_{}, blocks_{}, peak_block_{};
 
   public:
     void request(const std::string &seed) { tables_[seed.size()].try_emplace(token(seed)); }
@@ -121,6 +140,39 @@ class SeedIndex {
             }
         }
     }
+    void build(const SequenceSource &refs, std::size_t block_bases) {
+        require(block_bases > 0, "reference block width must be positive");
+        for (auto &[length, table] : tables_) {
+            table.reserve(table.size());
+            const auto mask = length == token_bases ? std::numeric_limits<std::uint64_t>::max()
+                                                    : (std::uint64_t{1} << (2u * length)) - 1u;
+            for (std::size_t r = 0; r < refs.size(); ++r) {
+                std::uint64_t code = 0;
+                std::size_t run = 0;
+                refs.blocks(r, block_bases, [&](std::size_t begin, std::string_view bases) {
+                    blocks_ = rfc::machine::checked_size_add(blocks_, 1);
+                    peak_block_ = std::max(peak_block_, bases.size());
+                    for (std::size_t i = 0; i < bases.size(); ++i) {
+                        scans_ = rfc::machine::checked_size_add(scans_, 1);
+                        const auto d = dna(bases[i]);
+                        if (d < 0) {
+                            code = 0;
+                            run = 0;
+                            continue;
+                        }
+                        code = ((code << 2u) | static_cast<unsigned>(d)) & mask;
+                        if (++run < length)
+                            continue;
+                        const auto found = table.find(code);
+                        if (found != table.end()) {
+                            found->second.push_back({r, begin + i + 1 - length});
+                            hits_ = rfc::machine::checked_size_add(hits_, 1);
+                        }
+                    }
+                });
+            }
+        }
+    }
     const std::vector<Hit> &find(const std::string &seed) const {
         return tables_.at(seed.size()).at(token(seed));
     }
@@ -130,6 +182,8 @@ class SeedIndex {
         out.set("retained_seed_hits", cardinality(hits_));
         out.set("seed_lengths", cardinality(tables_.size()));
         out.set("key_encoding", Json::string("injective_two_bit_DNA"));
+        out.set("reference_blocks", cardinality(blocks_));
+        out.set("peak_normalized_reference_block_bases", cardinality(peak_block_));
         return out;
     }
 };

@@ -1459,6 +1459,25 @@
           "type": "integer",
           "minimum": 0,
           "description": "Must be strictly less than every declared query length; all admitted placements are retained."
+        },
+        "execution": {
+          "type": "object",
+          "description": "Complete read batches and original reference byte blocks. These execution widths do not limit reads, placements or results.",
+          "properties": {
+            "read_partition_records": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "reference_block_bases": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "read_partition_records",
+            "reference_block_bases"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

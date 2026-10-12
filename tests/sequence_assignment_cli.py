@@ -216,6 +216,10 @@ def main():
     reference={'r':'AAAAAAAAAA','varied':'ACGTACATGTNNACGT'}
     queries={'q':'AAAAAAAAAA'}
     resource('reference.fa',reference);resource('queries.fa',queries)
+    tiny_reads={f'q{i}':s for i,s in enumerate(map(''.join,itertools.product('AC',repeat=2)))}
+    tiny_reference={f'r{i}':s for i,s in enumerate(map(''.join,itertools.product('AC',repeat=3)))}
+    tiny_reference.update(ambiguity='ANCA',left='A',right='C')
+    resource('partition-queries.fa',tiny_reads);resource('partition-reference.fa',tiny_reference)
     long_size=20065
     resource('long-reference.fa',{'long':'A'*long_size});resource('long-query.fa',{'long':'A'*long_size})
     # Many source reads, and enough placements to cross the old 10000-result cap.
@@ -256,6 +260,46 @@ def main():
     check(len(result['queries'])==1025 and len(result['matches'])>10000,'all source reads and placements beyond former output cap')
     expected_count=sum(v.count('A') for v in reference.values())
     check(all(q['matches']==expected_count for q in result['queries']),'every source read has every exact placement')
+    check(result['work']['read_partitions']==5 and result['work']['peak_partition_reads']==256,
+          'all 1025 original reads processed through complete bounded batches')
+    for budget in [0,1]:
+        oracle=set()
+        for qid,q in tiny_reads.items():
+            for strand in ['+','-']:
+                oriented=q if strand=='+' else reverse(q)
+                for rid,r in tiny_reference.items():
+                    for start in range(len(r)):
+                        for end in range(start+1,len(r)+1):
+                            cost=edit(oriented,r[start:end])
+                            if cost<=budget:oracle.add((qid,rid,strand,start,end,cost))
+        common=None
+        for batch,width in [(1,1),(3,2),(20,5)]:
+            control=dict(read_partition_records=batch,reference_block_bases=width)
+            result=query(f'partition-{budget}-{batch}-{width}',**dict(base,
+                query_resource='partition-queries.fa',reference_resource='partition-reference.fa',
+                maximum_edits=budget,execution=control))
+            actual={(m['query_id'],m['reference_id'],m['strand'],m['start'],m['end'],
+                     int(m['minimum_edits'])) for m in result['matches']}
+            check(actual==oracle,'exhaustive placements across read batches, seams and repeats')
+            payload={k:v for k,v in result.items() if k!='work'}
+            if common is None:common=payload
+            else:check(payload==common,'complete routes, fields, carriers and source spans invariant under partition widths')
+            check(result['work']['peak_partition_reads']<=batch and
+                  result['work']['peak_normalized_reference_block_bases']<=width,
+                  'execution widths bound normalized batches and blocks, without truncation')
+    for i,execution in enumerate([
+        dict(read_partition_records=0,reference_block_bases=2),
+        dict(read_partition_records=1,reference_block_bases=0),
+        dict(read_partition_records=-1,reference_block_bases=2),
+        dict(read_partition_records=1.5,reference_block_bases=2),
+        dict(read_partition_records=1),
+        dict(read_partition_records=1,reference_block_bases=2,ignored=True)]):
+        run('assay-query','--workspace',workspace,'--request',save(f'invalid-partition-{i}.json',
+            dict(schema='gadget.assays.query.v1',**dict(base,execution=execution))),fail=True)
+    query('inspect-no-execution',operation='inspect')
+    run('assay-query','--workspace',workspace,'--request',save('foreign-execution.json',
+        dict(schema='gadget.assays.query.v1',operation='inspect',
+             execution=dict(read_partition_records=1,reference_block_bases=1))),fail=True)
     result=query('wide-salmon',operation='allocation_bounds',resource='classes',targets=targets,candidate_search=req['candidate_search'],scale='1',scale_provenance='raw',kernel_certificate=True)
     check(result['native_occurrence_count']==5001 and result['allocation_nullity']==5000 and result['target_ambiguity_rank']==1,'workspace Salmon adapter shares exact factor method')
     # The source hypothesis e<m remains necessary; arbitrary budget ceilings do not.
