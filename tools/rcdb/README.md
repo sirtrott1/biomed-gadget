@@ -159,6 +159,15 @@ the original archive byte for byte. The destination must be new. Encoded and
 decoded admission budgets are supplied by the caller. This file transport does
 not change the installed RCDB generic-record bound.
 
+File admission captures one opened regular file within its measured size. RCDB
+record admission checks the installed codec's byte budget on that descriptor
+before reading; compressed admission checks the caller's encoded byte budget.
+Growth and truncation during capture refuse before store publication or native
+admission. Nonregular inputs refuse, including FIFOs without a writer on POSIX.
+The captured bytes still undergo the existing complete native validation.
+These checks do not provide an atomic snapshot of concurrent edits of the same
+size; inputs must remain immutable during admission.
+
 `install_compressed_format(gadget=..., max_encoded_bytes=...,
 max_output_bytes=...)` registers `.rcblob` files with RexGraph's format registry.
 It returns validated RFCXS bytes from `io.load`. GADGET's C++ executable accepts

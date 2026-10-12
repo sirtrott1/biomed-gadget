@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from unittest.mock import patch
 
 from rcdb import LocalStore
 from rcdb.core import decompress_blob
@@ -26,6 +27,21 @@ def rejects(action):
     except (ValueError, FileExistsError):
         return
     raise AssertionError("Expected refusal")
+
+
+if len(sys.argv) > 4 and sys.argv[4] == "--nonregular":
+    fifo = root / "input.fifo"
+    rejects(lambda: adapter.validate_publication_file(fifo, gadget=binary))
+    from rexgraph import io
+    adapter.install_format(gadget=binary)
+    rejects(lambda: io.load(fifo, format="gadget-native"))
+    rejects(lambda: adapter.read_compressed_publication(
+        fifo, gadget=binary, max_encoded_bytes=len(raw), max_output_bytes=len(raw)))
+    with closing(LocalStore(root / "fifo.rcdb", record_codecs=(*DEFAULT_RECORD_CODECS, codec))) as store:
+        rejects(lambda: adapter.put_publication(store, "fifo", fifo, expected_version=0))
+        assert store.read_record("fifo") is None
+    print("Nonregular native validation, file loading, compression and RCDB input refusals PASS")
+    sys.exit(0)
 
 
 if len(sys.argv) > 4 and sys.argv[4] == "--reopen":
@@ -73,6 +89,17 @@ for action in [lambda: io.load(source_copy),
         subprocess.run = original_run
 assert len(replacements) == 2 and not (root / "changed.rcblob").exists()
 assert publication.read_bytes() == raw
+rejects(lambda: io.load(root, format="gadget-native"))
+rejects(lambda: adapter.validate_publication_file(root, gadget=binary))
+rejects(lambda: adapter.read_compressed_publication(
+    root, gadget=binary, max_encoded_bytes=len(raw), max_output_bytes=len(raw)))
+if hasattr(os, "mkfifo"):
+    os.mkfifo(root / "input.fifo")
+    process = subprocess.run([sys.executable, __file__, str(binary), str(publication),
+                              str(root), "--nonregular"], capture_output=True, text=True,
+                             timeout=10, env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)})
+    assert process.returncode == 0, process.stderr
+    print(process.stdout.strip())
 for name in ("zstd", "zlib"):
     path = root/(name+".rfcxs.rcblob")
     assert adapter.compress_publication(publication, path, gadget=binary, codec=name) == path
@@ -83,6 +110,26 @@ for name in ("zstd", "zlib"):
     assert adapter.read_compressed_publication(path, **budget) == raw
     assert adapter.read_compressed_publication(
         path, **{**budget, "max_encoded_bytes": 2**80}) == raw
+    changing = root / (name + "-changing.rcblob")
+    original_fstat = os.fstat
+    for mutation in ("grow", "truncate"):
+        changing.write_bytes(encoded)
+        identity = changing.stat()
+        altered = []
+
+        def checked_fstat(descriptor):
+            info = original_fstat(descriptor)
+            if (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino) and not altered:
+                with changing.open("r+b") as stream:
+                    stream.truncate(len(encoded) + 8 * 1024 * 1024 if mutation == "grow"
+                                    else len(encoded) - 1)
+                altered.append(mutation)
+            return info
+
+        with patch.object(os, "fstat", checked_fstat):
+            rejects(lambda: adapter.read_compressed_publication(changing, **budget))
+        assert altered == [mutation]
+        assert path.read_bytes() == encoded and publication.read_bytes() == raw
     rejects(lambda: adapter.compress_publication(publication, path, gadget=binary, codec=name))
     assert path.read_bytes() == encoded
     rejects(lambda: adapter.read_compressed_publication(
