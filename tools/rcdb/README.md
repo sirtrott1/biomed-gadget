@@ -165,3 +165,68 @@ It returns validated RFCXS bytes from `io.load`. GADGET's C++ executable accepts
 the decoded `.rfcxs` file. This provider uses RCDB's whole-buffer compression
 API; compressed file size does not describe the memory required to admit the
 complex or execute its field operations.
+
+## Native field selection
+
+`gadget_native_field_query` selects a tensor from an actual GADGET native
+publication. The request names its exact source namespace, publication cutoff,
+tensor key, nullable input/output carrier keys and interpretation:
+
+```json
+{
+  "schema": "gadget.rcdb.field.query.v1",
+  "source_namespace": "811",
+  "cutoff": 4,
+  "tensor": 888,
+  "input_carrier": null,
+  "output_carrier": null,
+  "interpretation": "coefficient selection fixture"
+}
+```
+
+Use the actual values from the selected publication. Equal dimensions do not
+identify carriers. Publication sequence is separate from biological time.
+
+```sh
+gadget_native_field_query --input study.rfcxs --request selection.json \
+  --out new-selection.rfcxs
+```
+
+The output is an administrative native operation record. Its
+`result.selected_publication` retains the complete unchanged selected prefix,
+including all original fields, carriers, support and byte sources. Reopen those
+bytes with `NativeRecord::decode` to obtain the actual mathematical owner; the
+receipt's own complex is not that owner. The receipt records the selected tensor
+and original global coordinate bounds. It does not create a Python tensor or a
+new source from a numerical view. Composite biomedical assertions require their
+own declared selectors and do not become tensor fields implicitly.
+
+An optional `window` has `lower` and `upper` arrays with zero based, half open
+bounds on every original tensor axis. It requires an `execution` object naming
+`name`, `records`, `rational_slots`, `sparse_entries`, `scalar_work` and
+`integer_bits` limits for the existing SDK execution policy. These limits govern
+the provider's named reference containers and work; they are not a process heap
+quota. Supported zero and absence remain distinct. The current native window
+provider materializes source entries during preparation, so a small coordinate
+window does not imply low peak memory. Full original source ownership remains
+in the output.
+
+RCQL selection uses exact RCDB publication and native request versions:
+
+```python
+from gadget_rcdb import install_rcql_field_selector
+
+install_rcql_field_selector(selector="/absolute/path/to/gadget_native_field_query",
+                           gadget="/absolute/path/to/gadget")
+selection = run(
+    query(source("db"), call("GADGET_NATIVE_FIELD", "study", 1, "selection-request", 1)),
+    sources={"db": BoundSource(store, SourcePolicy.allow(
+        "identity", "records", "files", "gadget_field_select"))},
+)
+native_selection_bytes = selection.values[0]
+```
+
+The result type is `GadgetNativeFieldSelectionBytes`. RCQL records both selected
+versions, their state digests and the native result digest. Native C++ retains
+and validates the field owner; bytes remain distinct from Python mathematical
+state. Existing RCDB and RCQL codec byte profiles still apply.
