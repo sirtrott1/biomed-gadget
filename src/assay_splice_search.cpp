@@ -177,6 +177,7 @@ Json splice_search(const ResourceImages &images, const Json &request) {
             }
             require(spelling == q.bases, "splice exon gluing must reconstruct the entire query");
             m.set("query_id", Json::string(queries[q.read].id));
+            m.set("query_record_index", cardinality(q.read));
             m.set("reference_id", Json::string(refs[exons[chain.front()].reference].id));
             m.set("strand", Json::string(q.strand));
             m.set("blocks", blocks);
@@ -233,6 +234,7 @@ Json splice_search(const ResourceImages &images, const Json &request) {
     for (std::size_t q = 0; q < queries.size(); ++q) {
         auto s = Json::object();
         s.set("query_id", Json::string(queries[q].id));
+        s.set("query_record_index", cardinality(q));
         s.set("matches", cardinality(counts[q]));
         summaries.push(s);
     }

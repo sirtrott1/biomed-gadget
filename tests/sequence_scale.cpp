@@ -89,6 +89,44 @@ int main() {
             quality_control.build(reads, 1);
             check(quality_control.find("ACGT").size() == 1,
                   "FASTQ quality tokens never create seed occurrences");
+            const std::string repeated_bytes =
+                "@same first lane\r\nac\r\n+same first lane\r\n!!\r\n"
+                "@same second lane\nAC\n+\n55\n@same\nCG\n+\n~~";
+            ResourceImage repeated{gadget::Json::parse(R"({"format":"fastq"})"), repeated_bytes, {}};
+            const SequenceSource occurrences(repeated);
+            check(occurrences.size() == 3, "repeated FASTQ labels discarded original records");
+            for (std::size_t i = 0; i < 3; ++i) {
+                check(occurrences.id(i) == "same" && occurrences.length(i) == 2 &&
+                          occurrences.evidence(i).at("record_index").integer() == static_cast<std::int64_t>(i),
+                      "original FASTQ label and occurrence index differ");
+                check(occurrences.record(i).bases == (i < 2 ? "AC" : "CG"),
+                      "repeated label replaced distinct original bases");
+                const auto &span = occurrences.original_span(i);
+                check(repeated_bytes.substr(span.start, span.end - span.start).starts_with("@same"),
+                      "repeated FASTQ occurrence lost its original byte span");
+                for (const auto width : {1u, 2u, 7u}) {
+                    std::string joined;
+                    occurrences.blocks(i, width, [&](auto offset, auto block) {
+                        check(offset == joined.size(), "repeated read block coordinate differs");
+                        joined += block;
+                    });
+                    check(joined == occurrences.record(i).bases,
+                          "repeated read block partition differs");
+                }
+            }
+            SeedIndex repeated_index;
+            repeated_index.request("AC"); repeated_index.build(occurrences, 1);
+            check(repeated_index.find("AC").size() == 2 &&
+                      repeated_index.find("AC")[0].reference == 0 &&
+                      repeated_index.find("AC")[1].reference == 1,
+                  "seed index merged repeated source labels");
+            check(repeated.bytes == repeated_bytes, "repeated original FASTQ bytes changed");
+            ResourceImage duplicate_fasta{gadget::Json::parse(R"({"format":"fasta"})"),
+                                         ">same\nAC\n>same\nCG\n", {}};
+            rejects([&] { (void)SequenceSource(duplicate_fasta); });
+            ResourceImage empty_identifier{gadget::Json::parse(R"({"format":"fastq"})"),
+                                          "@\nAC\n+\n!!\n", {}};
+            rejects([&] { (void)SequenceSource(empty_identifier); });
         }
         SequenceRecord reference;
         reference.id = "large";
