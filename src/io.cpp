@@ -10,6 +10,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <rfc/machine/checked_size.hpp>
+#include <rfc/storage/file_io.hpp>
 
 namespace gadget {
 std::recursive_mutex &Json::mutex() {
@@ -128,23 +129,35 @@ std::size_t source_byte_limit() {
                     static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max()));
 }
 std::string read_text(const fs::path &p, std::size_t limit) {
-    std::ifstream f(p, std::ios::binary);
+    rfc::storage::validate_file_path(p);
+    if (!fs::is_regular_file(p))
+        throw std::invalid_argument("regular input file required");
+    std::ifstream f(p, std::ios::binary | std::ios::ate);
     if (!f)
         throw std::runtime_error("cannot open " + p.string());
-    auto size = fs::file_size(p);
-    if (size > std::min(limit, source_byte_limit()))
+    const auto end = f.tellg();
+    if (end < 0 || static_cast<std::uintmax_t>(end) > std::min(limit, source_byte_limit()))
         throw std::runtime_error("input size budget exceeded: " + p.string());
+    const auto size = static_cast<std::size_t>(end);
     std::string s(size, '\0');
+    if (!f.seekg(0))
+        throw std::runtime_error("cannot seek " + p.string());
     f.read(s.data(), static_cast<std::streamsize>(size));
     if (!f && size)
         throw std::runtime_error("cannot read " + p.string());
+    if (f.peek() != std::char_traits<char>::eof() || f.bad())
+        throw std::runtime_error("input changed or unreadable at EOF: " + p.string());
     return s;
 }
 void write_text(const fs::path &p, const std::string &text) {
-    fs::create_directories(p.parent_path());
-    std::ofstream f(p, std::ios::binary | std::ios::trunc);
-    if (!f || !f.write(text.data(), static_cast<std::streamsize>(text.size())))
-        throw std::runtime_error("cannot write " + p.string());
+    rfc::storage::validate_file_path(p);
+    if (!p.parent_path().empty())
+        fs::create_directories(p.parent_path());
+    rfc::storage::publish_file_exact(p, rfc::storage::FilePublication::ReplaceRegular,
+        [&](std::ostream &output) {
+            rfc::storage::write_stream_exact(output,
+                std::as_bytes(std::span(text.data(), text.size())));
+        });
 }
 std::string sha256(std::string_view text) {
     unsigned char digest[EVP_MAX_MD_SIZE];
@@ -158,6 +171,7 @@ std::string sha256(std::string_view text) {
     return s.str();
 }
 std::string sha256_file(const fs::path &path) {
+    rfc::storage::validate_file_path(path);
     if (!fs::is_regular_file(path))
         throw std::invalid_argument("file identity requires a regular file");
     std::ifstream stream(path, std::ios::binary);
