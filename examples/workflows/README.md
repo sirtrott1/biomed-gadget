@@ -20,13 +20,20 @@ The workflow receipt preserves failed replies and completed source owners too.
 The current strict scientific profile admits native model comparison, finite
 reference calibration, Hodge decomposition, linear response observation,
 declared response transition, metric relative novelty, observed/constrained
-response models and relational field ensembles. Biomedical leaves use native
+response models, relational field ensembles, structural reference calibration
+and local sections. `has_native_scientific_publisher` reports the implemented
+publisher inventory; the selected source and query still require admission.
+Biomedical leaves use native
 role/composite evidence operations. An unconverted scientific publisher is
 refused during admission, including in an untaken branch or unused definition.
 `execute_workflow` provides the existing compatibility display through the same
 Runner; legacy publisher output remains an explicit migration boundary.
 `workflow_record_view` displays a saved native workflow without executing it.
 Generic record views expose the structural receipt and original archive refs.
+The CLI uses that strict route when `--out` requests a native archive. Without
+`--out`, the CLI displays the compatibility Runner result from the original
+typed declaration. Converted leaves still retain their actual native owners;
+unconverted leaves remain the explicit migration boundary described above.
 
 A native branch or claim node reads actual typed values. A `condition` or claim
 item declares `path`, `value_type`, `comparison` and expected `value`. Paths start

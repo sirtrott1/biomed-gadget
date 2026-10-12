@@ -346,13 +346,11 @@
         },
         "tile_words": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 20000
+          "minimum": 1
         },
         "gpu_words": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 313
+          "minimum": 0
         }
       },
       "required": [

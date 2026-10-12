@@ -31,6 +31,29 @@ template <class F> void rejects(F &&f, const char *name) {
 } // namespace
 int main() {
     try {
+        const auto descriptor = gadget::Json::parse(
+            R"({"text":{"type":"string"},"document":{"type":"string"},"start":{"type":"integer"},"end":{"type":"integer"}})");
+        const auto retained_descriptor = gadget::admit_record_view(descriptor);
+        check(retained_descriptor.at("document").kind() == gadget::NativeRecordKind::Object &&
+                  retained_descriptor.at("document").at("type").text() == "string",
+              "schema descriptor was interpreted as an evidence quote");
+        const std::string original_quote = "original evidence";
+        std::vector<std::byte> quote_bytes;
+        for (const auto c : original_quote) quote_bytes.push_back(static_cast<std::byte>(c));
+        gadget::RecordByteBindings quote_bindings;
+        quote_bindings.sources.emplace_back(902, std::span<const std::byte>(quote_bytes));
+        quote_bindings.documents.emplace("source", 902);
+        const auto quote = gadget::Json::parse(
+            R"({"text":"original evidence","document":"source","start":0,"end":17})");
+        const auto retained_quote = gadget::admit_record_view(quote, quote_bindings);
+        check(retained_quote.at("text").kind() == gadget::NativeRecordKind::Text &&
+                  retained_quote.at("text").text() == original_quote &&
+                  retained_quote.at("text").byte_source().shares_owner(quote_bindings.sources.front()),
+              "bound quote lost its original byte owner");
+        auto changed_quote = gadget::Json::parse(quote.dump());
+        changed_quote.set("text", gadget::Json::string("fabricated quote"));
+        rejects([&] { (void)gadget::admit_record_view(changed_quote, quote_bindings); },
+                "changed original evidence quote was accepted");
         using namespace rfc;
         using gadget::exact_decimal;
         {

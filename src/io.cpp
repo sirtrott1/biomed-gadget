@@ -10,8 +10,95 @@
 #include <sstream>
 #include <stdexcept>
 #include <rfc/machine/checked_size.hpp>
+#include <rfc/storage/file_io.hpp>
 
 namespace gadget {
+namespace {
+void validate_json_member_name(std::string_view name) {
+    if (name.find('\0') != std::string_view::npos)
+        throw std::invalid_argument("JSON member name exceeds json-c C-string representation");
+}
+void validate_json_source_names(std::string_view source) {
+    // json-c owns the grammar and decoding. Inspect only string-token escapes
+    // followed by a member colon, whose decoded NUL the key API cannot retain.
+    for (std::size_t position = 0; position < source.size();) {
+        const auto byte = source[position++];
+        if (byte == '\0')
+            throw std::invalid_argument("unescaped NUL in JSON source");
+        if (byte != '"')
+            continue;
+        bool nul = false, closed = false;
+        while (position < source.size()) {
+            const auto character = source[position++];
+            if (character == '\0')
+                throw std::invalid_argument("unescaped NUL in JSON source");
+            if (character == '"') {
+                closed = true;
+                break;
+            }
+            if (character == '\\' && position < source.size()) {
+                const auto escape = source[position++];
+                if (escape == '\0')
+                    throw std::invalid_argument("unescaped NUL in JSON source");
+                if (escape == 'u' && source.substr(position, 4) == "0000")
+                    nul = true;
+            }
+        }
+        if (!nul || !closed)
+            continue;
+        auto next = position;
+        while (next < source.size() &&
+               (source[next] == ' ' || source[next] == '\t' ||
+                source[next] == '\r' || source[next] == '\n'))
+            ++next;
+        if (next < source.size() && source[next] == ':')
+            throw std::invalid_argument("JSON member name exceeds json-c C-string representation");
+    }
+}
+void validate_json_numeric_literals(json_object *root) {
+    struct Frame {
+        json_object *value;
+        std::size_t next{};
+        json_object_iterator current{}, end{};
+    };
+    std::vector<Frame> pending;
+    const auto enter = [&](json_object *value) {
+        if (json_object_is_type(value, json_type_object))
+            pending.push_back({value, 0, json_object_iter_begin(value), json_object_iter_end(value)});
+        else if (json_object_is_type(value, json_type_array))
+            pending.push_back({value});
+        else if (json_object_is_type(value, json_type_double) && !std::isfinite(json_object_get_double(value))) {
+            // json-c preserves a valid decimal literal even when its
+            // binary64 view overflows. Only its non-JSON extensions refuse.
+            const auto literal = json_object_to_json_string_ext(value, JSON_C_TO_STRING_PLAIN);
+            if (!literal) throw std::bad_alloc{};
+            if (std::string_view(literal) == "NaN" || std::string_view(literal) == "Infinity" ||
+                std::string_view(literal) == "-Infinity")
+                throw std::invalid_argument("non-JSON numeric literal");
+        }
+    };
+    enter(root);
+    while (!pending.empty()) {
+        auto &frame = pending.back();
+        json_object *child;
+        if (json_object_is_type(frame.value, json_type_array)) {
+            if (frame.next == json_object_array_length(frame.value)) {
+                pending.pop_back();
+                continue;
+            }
+            child = json_object_array_get_idx(frame.value, frame.next++);
+        } else {
+            if (json_object_iter_equal(&frame.current, &frame.end)) {
+                pending.pop_back();
+                continue;
+            }
+            child = json_object_iter_peek_value(&frame.current);
+            json_object_iter_next(&frame.current);
+        }
+        enter(child);
+    }
+}
+} // namespace
 std::recursive_mutex &Json::mutex() {
     static std::recursive_mutex lock;
     return lock;
@@ -24,6 +111,7 @@ Json Json::number(double n) {
 Json Json::parse(const std::string &s) {
     if (s.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
         throw std::length_error("JSON input exceeds json-c integer representation");
+    validate_json_source_names(s);
     // Grow only when the codec reports insufficient stack depth. Every nested
     // container in valid JSON needs two source bytes; no second parser or
     // application nesting ceiling is needed to size the complete input.
@@ -36,26 +124,35 @@ Json Json::parse(const std::string &s) {
             throw std::bad_alloc{};
         json_tokener_set_flags(tok.get(), JSON_TOKENER_STRICT | JSON_TOKENER_VALIDATE_UTF8);
         Json result(json_tokener_parse_ex(tok.get(), s.c_str(), static_cast<int>(s.size())));
-        const auto error = json_tokener_get_error(tok.get());
+        auto error = json_tokener_get_error(tok.get());
+        const auto consumed = json_tokener_get_parse_end(tok.get());
+        if (error == json_tokener_continue && consumed == s.size()) {
+            // Scalar tokens need an explicit end-of-input notification. Keep
+            // the original source intact and let the same tokener finish it.
+            result = Json(json_tokener_parse_ex(tok.get(), "", 1));
+            error = json_tokener_get_error(tok.get());
+        }
         if (error == json_tokener_error_depth && depth < source_depth) {
             depth = std::min(depth * 2, source_depth);
             continue;
         }
         if (error != json_tokener_success)
             throw std::invalid_argument("invalid JSON");
-        const auto consumed = json_tokener_get_parse_end(tok.get());
         if (!trim(s.substr(consumed)).empty())
             throw std::invalid_argument("trailing JSON content");
+        validate_json_numeric_literals(result.raw());
         return result;
     }
 }
 bool Json::has(const std::string &key) const {
+    validate_json_member_name(key);
     std::lock_guard lock(mutex());
     json_object *out = nullptr;
     return json_object_is_type(raw(), json_type_object) &&
            json_object_object_get_ex(raw(), key.c_str(), &out);
 }
 Json Json::at(const std::string &key) const {
+    validate_json_member_name(key);
     std::lock_guard lock(mutex());
     json_object *out = nullptr;
     if (!json_object_is_type(raw(), json_type_object) ||
@@ -86,6 +183,8 @@ std::int64_t Json::integer() const {
     std::lock_guard lock(mutex());
     if (!json_object_is_type(raw(), json_type_int))
         throw std::invalid_argument("expected JSON integer");
+    if (json_object_get_uint64(raw()) > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        throw std::length_error("JSON integer exceeds signed accessor representation");
     return json_object_get_int64(raw());
 }
 bool Json::boolean() const {
@@ -95,6 +194,7 @@ bool Json::boolean() const {
     return json_object_get_boolean(raw());
 }
 void Json::set(const std::string &key, const Json &value) {
+    validate_json_member_name(key);
     std::lock_guard lock(mutex());
     if (!json_object_is_type(raw(), json_type_object))
         throw std::logic_error("JSON object required");
@@ -128,23 +228,35 @@ std::size_t source_byte_limit() {
                     static_cast<std::size_t>(std::numeric_limits<std::streamsize>::max()));
 }
 std::string read_text(const fs::path &p, std::size_t limit) {
-    std::ifstream f(p, std::ios::binary);
+    rfc::storage::validate_file_path(p);
+    if (!fs::is_regular_file(p))
+        throw std::invalid_argument("regular input file required");
+    std::ifstream f(p, std::ios::binary | std::ios::ate);
     if (!f)
         throw std::runtime_error("cannot open " + p.string());
-    auto size = fs::file_size(p);
-    if (size > std::min(limit, source_byte_limit()))
+    const auto end = f.tellg();
+    if (end < 0 || static_cast<std::uintmax_t>(end) > std::min(limit, source_byte_limit()))
         throw std::runtime_error("input size budget exceeded: " + p.string());
+    const auto size = static_cast<std::size_t>(end);
     std::string s(size, '\0');
+    if (!f.seekg(0))
+        throw std::runtime_error("cannot seek " + p.string());
     f.read(s.data(), static_cast<std::streamsize>(size));
     if (!f && size)
         throw std::runtime_error("cannot read " + p.string());
+    if (f.peek() != std::char_traits<char>::eof() || f.bad())
+        throw std::runtime_error("input changed or unreadable at EOF: " + p.string());
     return s;
 }
 void write_text(const fs::path &p, const std::string &text) {
-    fs::create_directories(p.parent_path());
-    std::ofstream f(p, std::ios::binary | std::ios::trunc);
-    if (!f || !f.write(text.data(), static_cast<std::streamsize>(text.size())))
-        throw std::runtime_error("cannot write " + p.string());
+    rfc::storage::validate_file_path(p);
+    if (!p.parent_path().empty())
+        fs::create_directories(p.parent_path());
+    rfc::storage::publish_file_exact(p, rfc::storage::FilePublication::ReplaceRegular,
+        [&](std::ostream &output) {
+            rfc::storage::write_stream_exact(output,
+                std::as_bytes(std::span(text.data(), text.size())));
+        });
 }
 std::string sha256(std::string_view text) {
     unsigned char digest[EVP_MAX_MD_SIZE];
@@ -158,6 +270,7 @@ std::string sha256(std::string_view text) {
     return s.str();
 }
 std::string sha256_file(const fs::path &path) {
+    rfc::storage::validate_file_path(path);
     if (!fs::is_regular_file(path))
         throw std::invalid_argument("file identity requires a regular file");
     std::ifstream stream(path, std::ios::binary);

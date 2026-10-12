@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
                    "       databases; database-request --request FILE\n"
                    "       fetch-databases --request FILE --out NEW_DIRECTORY\n"
                    "       import-evidence --snapshot DIRECTORY --out NEW_DIRECTORY\n"
-                   "       evidence-query --evidence DIRECTORY --query FILE\n"
+                   "       evidence-query --evidence DIRECTORY --query FILE [--out-record FILE]\n"
                    "       workflow [--evidence DIRECTORY]; ask|session [--task "
                    "planner|observer|claim_reader]\n"
                    "       compute options: [--compute-device 0] [--allow-software-device off]\n"
@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
             {"fetch-databases", {"--request", "--out"}},
             {"database-request", {"--request"}},
             {"import-evidence", {"--snapshot", "--out", "--adapter-version"}},
-            {"evidence-query", {"--evidence", "--query"}},
+            {"evidence-query", {"--evidence", "--query", "--out-record"}},
             {"import-table", {"--spec", "--out"}},
             {"native-record", {"--input","--out"}},
             {"record-view", {"--input","--member","--format","--assay"}},
@@ -482,6 +482,11 @@ int main(int argc, char **argv) {
         }
         if (command == "evidence-query") {
             gadget::EvidenceStore store(required("--evidence"));
+            if (options.contains("--out-record")) {
+                store.execute_record(gadget::read_record(required("--query")).native())
+                    .write(options.at("--out-record"));
+                return 0;
+            }
             std::cout
                 << store.execute(static_cast<gadget::Json>(gadget::read_record(required("--query")))).dump()
                 << '\n';
@@ -588,9 +593,16 @@ int main(int argc, char **argv) {
             std::unique_ptr<gadget::EvidenceStore> evidence;
             if (options.contains("--evidence"))
                 evidence = std::make_unique<gadget::EvidenceStore>(options.at("--evidence"));
-            const auto publication=gadget::execute_workflow_record(study,request.native(),callbacks,gadget::CpuResources::local(),compute,evidence.get());
-            if(options.contains("--out"))publication.write(required("--out"));
-            const auto result=gadget::render_record_view(publication.at("result"));
+            gadget::Json result;
+            if (options.contains("--out")) {
+                const auto publication = gadget::execute_workflow_record(study, request.native(),
+                    callbacks, gadget::CpuResources::local(), compute, evidence.get());
+                publication.write(required("--out"));
+                result = gadget::workflow_record_view(publication);
+            } else {
+                result = gadget::execute_workflow(study, request.native(), callbacks,
+                    gadget::CpuResources::local(), compute, evidence.get());
+            }
             std::cout << result.dump() << '\n';
             return result.at("status").text() == "complete" ? 0 : 2;
         }

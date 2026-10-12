@@ -41,6 +41,8 @@ class Json {
     static Json integer(std::int64_t n) { return Json(json_object_new_int64(n)); }
     static Json number(double n);
     static Json boolean(bool b) { return Json(json_object_new_boolean(b)); }
+    // json-c grammar with complete input and representable member names.
+    // Escaped NUL string values are retained; NUL member names are refused.
     static Json parse(const std::string &s);
     json_object *raw() const { return value_.get(); }
     bool has(const std::string &key) const;
@@ -48,6 +50,7 @@ class Json {
     Json at(std::size_t index) const;
     std::size_t size() const;
     std::string text() const;
+    // Signed access refuses an unsigned value outside this return type.
     std::int64_t integer() const;
     bool boolean() const;
     void set(const std::string &key, const Json &value);
@@ -58,7 +61,10 @@ class Json {
 // The complete-file adapter is constrained by its string and stream
 // representations. Callers may still declare a narrower byte contract.
 std::size_t source_byte_limit();
+// Complete bytes from one opened regular file, with size and EOF validation.
 std::string read_text(const fs::path &path, std::size_t limit = source_byte_limit());
+// Staged SDK replacement of a regular file. Failed writes preserve the former
+// bytes. Parents must be trusted; this does not promise fsync durability.
 void write_text(const fs::path &path, const std::string &text);
 std::string sha256(std::string_view text);
 using ByteChunkSink = std::function<void(std::span<const std::byte>)>;

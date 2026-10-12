@@ -29,6 +29,9 @@ class ResultValue {
             if (key == name) return ResultValue(value);
         throw std::invalid_argument("scientific result member absent");
     }
+    ResultValue at(std::size_t index) const {
+        return ResultValue(std::get<NativeRecordValue::Array>(value_.data).elements.at(index));
+    }
     std::string text() const {return std::get<std::string>(value_.data);}
     std::size_t size() const {return std::get<NativeRecordValue::Array>(value_.data).elements.size();}
     NativeRecordValue release() && {return std::move(value_);}
@@ -41,6 +44,8 @@ class ResultFields {
     assay_detail::SourceGradeFields fields_;
     std::uint64_t scalar_;
     std::vector<RawByteSource> publications_;
+    struct ArchivedPublication { NativeRecord owner; ResultValue reference; };
+    std::map<std::pair<const void *, std::uint64_t>, ArchivedPublication> archived_;
     ResultValue bindings_{ResultValue::array()};
     ResultValue reference(NativeRecordValue key, std::string display,
                           std::optional<NativeRecordValue> coordinates = {}) {
@@ -57,8 +62,24 @@ class ResultFields {
           original_fields_(endpoint_.tensors.size()), original_carriers_(endpoint_.carriers.size()),
           fields_(endpoint_), scalar_(fields_.explicit_carrier(1)) {}
     std::uint64_t axis(std::size_t size) {return fields_.explicit_carrier(size);}
+    std::uint64_t stalk(rfc::storage::StableCellKey cell, std::size_t size) {
+        if (!rfc::storage::StableSourceIndex(endpoint_.source).cell(cell))
+            throw std::invalid_argument("scientific stalk source cell absent");
+        const auto key = fields_.explicit_carrier(size);
+        auto &carrier = endpoint_.carriers.back();
+        carrier.kind = rfc::storage::TemporalCarrierKind::CellStalk;
+        carrier.grade = cell.grade;
+        carrier.cell = cell;
+        return key;
+    }
     std::uint64_t source_grade(std::size_t grade, std::optional<std::uint64_t> preferred = {});
     ResultValue publication(const NativeRecord &owner) {
+        if (!owner.is_root() || !owner.publication_history())
+            throw std::invalid_argument("scientific archive requires its actual root publication");
+        const auto identity = std::pair<const void *, std::uint64_t>{owner.endpoint().get(),
+            owner.publication_history()->last_sequence()};
+        const auto previous = archived_.find(identity);
+        if (previous != archived_.end()) return previous->second.reference;
         std::uint64_t key = 1;
         for (const auto &bytes : source_.raw_sources())
             key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
@@ -71,6 +92,7 @@ class ResultFields {
             NativeRecordValue::ByteSpan{key, 0, bytes.bytes().size(), false})));
         out.set("path", ResultValue::array());
         publications_.push_back(std::move(bytes));
+        archived_.emplace(identity, ArchivedPublication{owner, out});
         return out;
     }
     static ResultValue member(ResultValue publication, std::initializer_list<std::string> names) {
@@ -78,6 +100,19 @@ class ResultFields {
         for (const auto &name : names) path.push(ResultValue::string(name));
         publication.set("path", std::move(path));
         return publication;
+    }
+    static ResultValue member(ResultValue publication, std::size_t index) {
+        auto path = publication.at("path");
+        path.push(ResultValue::count(index));
+        publication.set("path", std::move(path));
+        return publication;
+    }
+    static ResultValue overlay(ResultValue base, ResultValue additions) {
+        auto value = ResultValue::object();
+        value.set("schema", ResultValue::string("gadget.scientific.view.overlay.v1"));
+        value.set("base", std::move(base));
+        value.set("additions", std::move(additions));
+        return value;
     }
     ResultValue stored(std::uint64_t key, std::string display) {
         if (std::none_of(endpoint_.tensors.begin(), endpoint_.tensors.end(),
@@ -190,6 +225,7 @@ class ResultFields {
     void bind(ResultValue binding) {bindings_.push(std::move(binding));}
     NativeRecord finish(ResultValue view) {
         view = ResultValue(consume_staged(std::move(view).release()));
+        bindings_ = ResultValue(consume_staged(std::move(bindings_).release()));
         auto root = ResultValue::object();
         root.set("schema", ResultValue::string("gadget.scientific.fields.v1"));
         root.set("view", std::move(view));

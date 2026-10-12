@@ -1,6 +1,7 @@
 #pragma once
 #include <gadget/resources.hpp>
 #include <rfc/backend/packed_binary.hpp>
+#include <stop_token>
 
 namespace gadget {
 // Device policy belongs to the host, never to a model-authored query.
@@ -23,6 +24,9 @@ class PackedOperation {
                              ComputeOptions options = {});
     ~PackedOperation();
     PackedResult execute(CpuResources &resources, const Json &query);
+    // Host cancellation is checked at canonical CPU word boundaries. A call
+    // reserves every output and its complete verification buffer until joined.
+    PackedResult execute(CpuResources &resources, const Json &query, std::stop_token stop);
 };
 Json compute_devices();
 } // namespace gadget
