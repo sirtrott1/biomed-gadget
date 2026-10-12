@@ -4,28 +4,99 @@
 #include <rfc/numeric/exact_matrix.hpp>
 
 namespace gadget::assay_detail {
-std::vector<SequenceRecord> sequence_records(const ResourceImage &resource) {
-    const auto format = resource.declaration.at("format").text();
-    require(format == "fasta" || format == "fastq", "sequence resource requires FASTA or FASTQ");
-    const auto records = read_sequence_spans(resource.bytes,format);
-    const auto resource_sha256 = "sha256:" + sha256(resource.bytes);
-    std::vector<SequenceRecord> out;
-    for (std::size_t i = 0; i < records.size(); ++i) {
-        const auto &record = records.at(i);
-        const auto start = record.start, end = record.end;
-        const auto bytes = resource.bytes.substr(start, end - start);
-        const auto ls = lines(bytes);
-        std::string bases;
-        for (std::size_t l = 1; l < (format == "fastq" ? 2u : ls.size()); ++l)
-            for (auto c : bytes.substr(ls[l].first, ls[l].second - ls[l].first))
-                bases += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-        auto evidence = Json::object();
-        evidence.set("source_sha256", Json::string(resource_sha256));
-        evidence.set("record_index", cardinality(i));
-        evidence.set("source_start", cardinality(record.start));
-        evidence.set("source_end", cardinality(record.end));
-        out.push_back({resource.bytes.substr(record.id_start,record.id_length), std::move(bases), evidence});
+SequenceSource::SequenceSource(const ResourceImage &resource)
+    : resource_(resource),
+      spans_(read_sequence_spans(resource.bytes, resource.declaration.at("format").text())),
+      digest_("sha256:" + sha256(resource.bytes)) {
+    const std::string_view bytes(resource.bytes);
+    segments_.reserve(spans_.size());
+    for (const auto &span : spans_) {
+        std::vector<Segment> segments;
+        auto position = bytes.find('\n', span.start);
+        require(position != std::string_view::npos, "sequence header has no bases");
+        ++position;
+        std::size_t begin = 0;
+        while (begin < span.length) {
+            auto end = bytes.find('\n', position);
+            if (end == std::string_view::npos || end > span.end)
+                end = span.end;
+            auto stop = end;
+            if (stop > position && bytes[stop - 1] == '\r')
+                --stop;
+            require(stop > position && stop - position <= span.length - begin,
+                    "sequence byte span length");
+            segments.push_back({position, begin, stop - position});
+            begin = rfc::machine::checked_size_add(begin, stop - position);
+            position = rfc::machine::checked_size_add(end, 1);
+        }
+        require(begin == span.length, "sequence byte span coverage");
+        segments_.push_back(std::move(segments));
     }
+}
+std::string SequenceSource::id(std::size_t index) const {
+    const auto &span = spans_.at(index);
+    return resource_.bytes.substr(span.id_start, span.id_length);
+}
+Json SequenceSource::evidence(std::size_t index) const {
+    const auto &span = spans_.at(index);
+    auto result = Json::object();
+    result.set("source_sha256", Json::string(digest_));
+    result.set("record_index", cardinality(index));
+    result.set("source_start", cardinality(span.start));
+    result.set("source_end", cardinality(span.end));
+    return result;
+}
+std::string SequenceSource::bases(std::size_t index, std::size_t begin, std::size_t length) const {
+    require(begin <= this->length(index) && length <= this->length(index) - begin,
+            "sequence window outside original record");
+    std::string result;
+    result.reserve(length);
+    if (length == 0)
+        return result;
+    const auto &segments = segments_.at(index);
+    auto segment =
+        std::upper_bound(segments.begin(), segments.end(), begin,
+                         [](auto position, const auto &part) { return position < part.begin; });
+    --segment;
+    while (result.size() < length) {
+        const auto local = begin - segment->begin;
+        const auto count = std::min(length - result.size(), segment->length - local);
+        for (std::size_t i = 0; i < count; ++i)
+            result += static_cast<char>(std::toupper(
+                static_cast<unsigned char>(resource_.bytes[segment->source + local + i])));
+        begin += count;
+        ++segment;
+    }
+    return result;
+}
+SequenceRecord SequenceSource::record(std::size_t index) const {
+    return {id(index), bases(index, 0, length(index)), evidence(index)};
+}
+void SequenceSource::blocks(std::size_t index, std::size_t width,
+                            const std::function<void(std::size_t, std::string_view)> &visit) const {
+    require(width > 0, "sequence block width must be positive");
+    std::string block;
+    block.reserve(std::min(width, length(index)));
+    std::size_t begin = 0;
+    for (const auto &segment : segments_.at(index))
+        for (std::size_t i = 0; i < segment.length; ++i) {
+            block += static_cast<char>(
+                std::toupper(static_cast<unsigned char>(resource_.bytes[segment.source + i])));
+            if (block.size() == width) {
+                visit(begin, block);
+                begin += block.size();
+                block.clear();
+            }
+        }
+    if (!block.empty())
+        visit(begin, block);
+}
+std::vector<SequenceRecord> sequence_records(const ResourceImage &resource) {
+    const SequenceSource source(resource);
+    std::vector<SequenceRecord> out;
+    out.reserve(source.size());
+    for (std::size_t i = 0; i < source.size(); ++i)
+        out.push_back(source.record(i));
     return out;
 }
 Json reference_matches(const ResourceImages &images, const Json &request) {
