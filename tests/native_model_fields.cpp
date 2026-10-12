@@ -1,6 +1,7 @@
 #include <gadget/assay.hpp>
 #include <gadget/record_view.hpp>
 #include <gadget/scientific.hpp>
+#include <gadget/resources.hpp>
 #include <rfc/storage/rfcx.hpp>
 #include <iostream>
 
@@ -93,6 +94,185 @@ void verify_model(const NativeRecord &publication, const NativeRecord &original)
         }
     }
 }
+rfc::numeric::RationalVector values(const NativeRecord &owner, const NativeRecord &descriptor) {
+    const auto &tensor = field(owner, descriptor)->tensor;
+    rfc::numeric::RationalVector result;
+    if (descriptor.has("coordinates")) {
+        const auto &coordinates = field(owner, descriptor.at("coordinates"))->tensor;
+        for (std::size_t i = 0; i < coordinates.domain().logical_size(); ++i)
+            result.push_back(state(tensor, state(coordinates, i).get_num().get_ui()));
+    } else {
+        for (std::size_t i = 0; i < tensor.domain().logical_size(); ++i) result.push_back(state(tensor, i));
+    }
+    return result;
+}
+rfc::numeric::RationalVector apply(const NativeRecord &owner, const NativeRecord &descriptor,
+                                   const rfc::numeric::RationalVector &input) {
+    const auto &tensor = field(owner, descriptor)->tensor;
+    const auto shape = tensor.domain().extents();
+    check(shape.size() == 2 && shape[1] == input.size(), "native matrix input shape differs");
+    rfc::numeric::RationalVector output(shape[0]);
+    for (std::size_t i = 0; i < output.size(); ++i)
+        for (std::size_t j = 0; j < input.size(); ++j) output[i] += state(tensor, i * input.size() + j) * input[j];
+    return output;
+}
+void audit_fields(const NativeRecord &owner, const NativeRecord &view) {
+    if (view.kind() == NativeRecordKind::Object) {
+        if (view.has("schema") && view.at("schema").text() == "gadget.scientific.tensor.view.v1") {
+            const auto &tensor = *field(owner, view);
+            const auto encoded = owner.encoded_tensor(tensor.key);
+            check(encoded.has_value(), "computed field has no retained native encoding");
+            rfc::storage::NativeAccessionRequest request; request.subject = tensor.key;
+            const auto pin = owner.accession_directory()->pin(request);
+            check(pin.source_namespace() == owner.source_namespace(),
+                  "computed field pin has foreign namespace");
+            check(pin.sequence() == owner.publication_history()->last_sequence(), "computed field pin lost cutoff");
+            check(tensor.output.has_value(), "computed result lost output carrier");
+            if (tensor.input) check(tensor.tensor.domain().rank() == 2, "map lost ordered axes");
+            return;
+        }
+        if (view.has("schema")) check(view.at("schema").text() != "gadget.scientific.tensor.stage.v1", "unpublished staged result escaped");
+        for (const auto &name : view.names()) audit_fields(owner, view.at(name));
+    } else if (view.kind() == NativeRecordKind::Array) {
+        for (std::size_t i = 0; i < view.size(); ++i) audit_fields(owner, view.at(i));
+    }
+}
+void verify_response(const NativeRecord &publication, const NativeRecord &original) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    check(owner.at("schema").text() == "gadget.scientific.fields.v1", "response lost native fields");
+    check(rfc::storage::encode_rfcx(owner.endpoint()->source).bytes == rfc::storage::encode_rfcx(original.endpoint()->source).bytes,
+          "response changed original complex");
+    audit_fields(owner, view);
+    check(field(owner, view.at("metric"))->role == rfc::storage::TemporalTensorRole::Metric,
+          "response metric lost its native role");
+    const auto preparations = view.at("preparations");
+    for (std::size_t p = 0; p < preparations.size(); ++p) {
+        const auto models = preparations.at(p).at("models");
+        for (std::size_t m = 0; m < models.size(); ++m) {
+            const auto model = models.at(m), design = model.at("design"), kernel = model.at("coefficient_kernel");
+            const auto &a = *field(owner, design), &k = *field(owner, kernel), &f = *field(owner, model.at("independent_frame"));
+            check(a.input == k.output && a.output == f.output && a.input != f.input && k.input != k.output,
+                  "response coefficient axes merged");
+            const auto n = a.tensor.domain().extents()[0], columns = a.tensor.domain().extents()[1], free = k.tensor.domain().extents()[1];
+            check(columns == model.at("rank").integer() + model.at("coefficient_nullity").integer(), "response free family incomplete");
+            for (std::size_t i = 0; i < n; ++i)
+                for (std::size_t j = 0; j < free; ++j) {
+                    Rational sum{0};
+                    for (std::size_t c = 0; c < columns; ++c) sum += state(a.tensor, i * columns + c) * state(k.tensor, c * free + j);
+                    check(sum == 0, "response kernel changes fitted field");
+                }
+        }
+    }
+    for (std::size_t s = 0; s < view.at("states").size(); ++s) {
+        const auto fits = view.at("states").at(s).at("fits");
+        for (std::size_t i = 0; i < fits.size(); ++i) {
+            const auto fit = fits.at(i);
+            const auto input = values(owner, fit.at("objective_input")), represented = values(owner, fit.at("objective_represented")), residual = values(owner, fit.at("objective_residual"));
+            check(rfc::numeric::add(represented, residual) == input, "response reconstruction differs");
+            const auto weighted = apply(owner, view.at("metric"), residual);
+            check(rfc::numeric::dot(residual, weighted) == values(owner, fit.at("residual_quadrance"))[0], "response metric quadrance differs");
+            check(rfc::numeric::dot(represented, weighted) == 0, "response projection is not metric orthogonal");
+            check(rfc::numeric::is_zero(values(owner, fit.at("normal_equations"))), "response normal equations failed");
+            for (const auto *reading : {"observed", "represented", "residual"}) {
+                const auto sectors = fit.at(reading).at("sectors");
+                check(rfc::numeric::add(rfc::numeric::add(values(owner, sectors.at("gradient")), values(owner, sectors.at("curl"))), values(owner, sectors.at("harmonic"))) == values(owner, sectors.at("full")), "response sectors lost field");
+            }
+        }
+    }
+    if (view.has("physical_shape")) {
+        const auto physical = view.at("physical_shape"), families = physical.at("families"), results = physical.at("results");
+        for (std::size_t i = 0; i < results.size(); ++i) {
+            const auto result = results.at(i);
+            check(rfc::numeric::is_zero(values(owner, result.at("half_gradient_stationarity"))), "physical stationarity failed");
+            for (const auto &q : values(owner, result.at("slack"))) check(q >= 0, "physical primal feasibility failed");
+            for (const auto &q : values(owner, result.at("multipliers"))) check(q >= 0, "physical dual feasibility failed");
+        }
+        for (std::size_t i = 0; i < families.size(); ++i) {
+            const auto family = families.at(i);
+            check(field(owner, family.at("frame"))->input == field(owner, family.at("gram"))->input, "physical Gram owner differs");
+            check(field(owner, family.at("source_normals"))->input == field(owner, family.at("frame"))->output, "physical source constraint owner differs");
+        }
+    }
+}
+void verify_ensemble(const NativeRecord &publication, const NativeRecord &original) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    check(rfc::storage::encode_rfcx(owner.endpoint()->source).bytes == rfc::storage::encode_rfcx(original.endpoint()->source).bytes, "ensemble changed original source");
+    audit_fields(owner, view);
+    check(field(owner, view.at("metric"))->role == rfc::storage::TemporalTensorRole::Metric,
+          "ensemble metric lost its native role");
+    for (std::size_t s = 0; s < view.at("samples").size(); ++s) {
+        const auto sample = view.at("samples").at(s);
+        const auto full = values(owner, sample.at("full")), gradient = values(owner, sample.at("gradient")), curl = values(owner, sample.at("curl")), harmonic = values(owner, sample.at("harmonic"));
+        check(rfc::numeric::add(rfc::numeric::add(gradient, curl), harmonic) == full, "ensemble sectors lost field");
+        const auto carrier = field(owner, sample.at("full"))->output;
+        for (const auto *sector : {"gradient", "curl", "harmonic"}) check(field(owner, sample.at(sector))->output == carrier, "ensemble sector changed source owner");
+    }
+    for (std::size_t g = 0; g < view.at("groups").size(); ++g) {
+        const auto group = view.at("groups").at(g);
+        Rational variance{0};
+        for (const auto *sector : {"gradient", "curl", "harmonic"}) variance += values(owner, group.at("ensembles").at(sector).at("variance"))[0];
+        check(variance == values(owner, group.at("ensembles").at("full").at("variance"))[0], "ensemble finite variance budget differs");
+    }
+}
+void verify_green(const std::shared_ptr<const ScientificStudy> &study) {
+    const auto n = study->endpoint()->source.grade(rfc::core::Grade{0}).cell_count();
+    auto query = Json::object(), coordinates = Json::object(), cells = Json::array(), interior = Json::array();
+    query.set("operation", Json::string("green_response")); query.set("context", Json::string("all"));
+    query.set("field", Json::string("all.signal")); query.set("lambda", Json::string("1"));
+    coordinates.set("id", Json::string("81000"));
+    for (std::size_t i = 0; i < n; ++i) {
+        cells.push(Json::string(std::to_string(rfc::storage::stable_cell_key(study->endpoint()->source,
+            {rfc::core::Grade{0}, static_cast<std::uint32_t>(i)}).key)));
+        interior.push(Json::integer(static_cast<std::int64_t>(i)));
+    }
+    coordinates.set("cells", cells); query.set("coordinates", coordinates); query.set("interior", interior);
+    const auto maximum = std::numeric_limits<std::size_t>::max();
+    rfc::runtime::ExecutionHostPolicy policy;
+    policy.name = "green-contract"; policy.limits = {maximum, maximum, maximum, maximum, maximum};
+    auto resources = CpuResources::local();
+    const auto bytes = resources->coordinator().available_declared_buffer_bytes();
+    {
+        ScientificSession session(study, resources);
+        const auto result = session.execute_green_response(query, rfc::runtime::ExecutionLease(policy));
+        check(result.at("result").at("interface_coordinates").size() == 0, "complete interior became a truncated partition");
+        const auto field = result.at("result").at("field");
+        check(field.size() == n, "Green truncated output coordinates");
+        for (std::size_t i = 0; i < n; ++i)
+            check(exact_rational(field.at(i).at("value").at("rational").text()) == Rational(std::to_string(i)), "Green line oracle differs");
+        check(session.execute(query).at("result").at("factorization_reused").boolean(), "Green discarded source-bound preparation");
+        if (n == 3) {
+            for (std::size_t i = 1; i < 137; ++i) {
+                auto next = Json::parse(query.dump()), space = Json::parse(coordinates.dump());
+                space.set("id", Json::string(std::to_string(81000 + i))); next.set("coordinates", space);
+                check(session.execute(next).at("result").at("retained_preparations").integer() == static_cast<std::int64_t>(i + 1),
+                      "Green omitted a retained solve above prior count");
+            }
+        } else check(n > 128 && interior.size() > 128, "former Green dimension/interior limits untested");
+        auto limited = policy; limited.limits.sparse_entries = 0;
+        bool refused = false;
+        try {(void)session.execute_green_response(query, rfc::runtime::ExecutionLease(limited));}
+        catch (const std::length_error &) {refused = true;}
+        check(refused, "cached Green ignored actual sparse-entry policy");
+        auto cancel = std::make_shared<std::atomic_bool>(true); refused = false;
+        try {(void)session.execute_green_response(query, rfc::runtime::ExecutionLease(policy, cancel));}
+        catch (const rfc::runtime::ExecutionCancelled &) {refused = true;}
+        check(refused, "Green cancellation published a result");
+        auto foreign = Json::parse(query.dump()), space = Json::parse(coordinates.dump());
+        auto reversed = Json::array(); for (std::size_t i = 0; i < n; ++i) reversed.push(cells.at(n - i - 1));
+        space.set("cells", reversed); foreign.set("coordinates", space); refused = false;
+        try {(void)session.execute(foreign);} catch (const std::invalid_argument &) {refused = true;}
+        check(refused, "Green accepted a foreign coordinate order");
+    }
+    check(resources->coordinator().available_declared_buffer_bytes() == bytes, "Green retained resource charge survived owner destruction");
+    auto hardware = rfc::runtime::detect_hardware();
+    rfc::runtime::CpuResourcePolicy tight; tight.worker_limit = 1; tight.declared_buffer_byte_limit = 1;
+    auto small = std::make_shared<CpuResources>(hardware, tight, [hardware] {return hardware;});
+    ScientificSession session(study, small);
+    bool refused = false;
+    try {(void)session.execute_green_response(query, rfc::runtime::ExecutionLease(policy));}
+    catch (const rfc::runtime::ExecutionLimitExceeded &error) {refused = error.resource() == "declared buffer bytes";}
+    check(refused, "Green did not identify exhausted buffer resource");
+}
 void verify_replay(const NativeRecord &expected, const NativeRecord &actual) {
     const auto a = expected.endpoint(), b = actual.endpoint();
     check(a->tensors.size() == b->tensors.size(), "replay field family differs");
@@ -114,6 +294,11 @@ int main(int argc, char **argv) try {
     const auto study = std::string(argv[4]) == "study"
         ? std::make_shared<const ScientificStudy>(workspace_path)
         : AssayWorkspace(workspace_path).study("measurements");
+    if (std::string(argv[4]) == "green") {
+        verify_green(study);
+        std::cout << "{\"status\":\"PASS\",\"checks\":" << checks << "}\n";
+        return 0;
+    }
     const auto original = study->native_publication();
     ScientificSession session(study);
     const auto queries = admit_record_view(Json::parse(read_text(queries_path)));
@@ -121,7 +306,9 @@ int main(int argc, char **argv) try {
     for (const auto &name : queries.names()) {
         const auto query = queries.at(name);
         const auto result = session.execute_record(query);
-        if (std::string(argv[4]) != "finite") verify_model(result, original);
+        if (std::string(argv[4]) == "response") verify_response(result, original);
+        else if (std::string(argv[4]) == "ensemble") verify_ensemble(result, original);
+        else if (std::string(argv[4]) != "finite") verify_model(result, original);
         else {
             const auto fields = result.at("result").at("fields");
             const auto binding = fields.at("bindings").at(0);

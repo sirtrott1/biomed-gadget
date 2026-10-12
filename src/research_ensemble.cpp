@@ -1,5 +1,6 @@
 #include "research_ensemble.hpp"
 #include "research_fields.hpp"
+#include "scientific_result_fields.hpp"
 #include "scientific_ensemble.hpp"
 #include "scientific_relational_field.hpp"
 #include <array>
@@ -11,63 +12,47 @@ namespace gadget::research_detail {
 namespace {
 using Matrix = numeric::ExactMatrix;
 constexpr std::array<const char *, 4> channels{"full", "gradient", "curl", "harmonic"};
-Json rational(Rational value) {
-    value.canonicalize();
-    return Json::string(value.get_str());
-}
-Json vector_json(const Vector &values) {
-    auto out = Json::array();
-    for (const auto &value : values)
-        out.push(rational(value));
-    return out;
-}
-Json matrix_json(const Matrix &matrix) {
-    auto out = Json::object(), entries = Json::array();
-    out.set("rows", cardinality(matrix.rows()));
-    out.set("columns", cardinality(matrix.cols()));
-    for (const auto &[position, value] : matrix.entries()) {
-        auto entry = Json::object();
-        entry.set("row", cardinality(position.first));
-        entry.set("column", cardinality(position.second));
-        entry.set("value", rational(value));
-        entries.push(entry);
-    }
-    out.set("entries", entries);
-    return out;
-}
+using Value = scientific_detail::ResultValue;
+using Publication = scientific_detail::ResultFields;
+using Context = scientific_detail::ResultFieldContext;
 struct Scope {
     std::string id;
     std::vector<std::size_t> samples;
 };
 struct Reading {
     std::array<Vector, 4> fields;
-    Json record;
+    Value record;
 };
-Json describe(const scientific_detail::WeightedFieldEnsemble &ensemble) {
-    auto out = Json::object();
-    out.set("mean", vector_json(ensemble.mean));
-    out.set("centered_fields", matrix_json(ensemble.centered));
-    out.set("rank", cardinality(ensemble.rank));
+Value describe(Context &context, std::size_t grade, std::uint64_t samples,
+               const scientific_detail::WeightedFieldEnsemble &ensemble) {
+    auto &publication = context.publication;
+    const auto rows = context.grades.at(grade).rows;
+    const auto contraction = ensemble.sample_space ? samples : rows;
+    const auto rational = [&](const Rational &value) {return publication.stage_scalar(value);};
+    auto out = Value::object();
+    out.set("mean", context.field(ensemble.mean, grade));
+    out.set("centered_fields", Publication::stage_matrix(ensemble.centered, rows, samples));
+    out.set("rank", Value::count(ensemble.rank));
     out.set("contraction_space",
-            Json::string(ensemble.sample_space ? "samples" : "source_coordinates"));
-    out.set("contraction_metric", matrix_json(ensemble.contraction_metric));
-    out.set("second_moment_or_gram", matrix_json(ensemble.contraction));
-    out.set("status", Json::string(ensemble.moments ? "completed" : "constant_fields"));
+            Value::string(ensemble.sample_space ? "samples" : "source_coordinates"));
+    out.set("contraction_metric", Publication::stage_matrix(ensemble.contraction_metric, contraction, contraction, storage::TemporalTensorRole::Metric));
+    out.set("second_moment_or_gram", Publication::stage_matrix(ensemble.contraction, contraction, contraction));
+    out.set("status", Value::string(ensemble.moments ? "completed" : "constant_fields"));
     out.set("variance", rational(ensemble.moments ? ensemble.moments->variance : Rational{0}));
     out.set("second_contraction",
             rational(ensemble.moments ? ensemble.moments->second_contraction : Rational{0}));
     out.set("effective_dimension_2",
-            ensemble.moments ? rational(ensemble.moments->dimension) : Json{});
+            ensemble.moments ? rational(ensemble.moments->dimension) : Value{});
     out.set("collision_probability",
-            ensemble.moments ? rational(ensemble.moments->collision_probability) : Json{});
-    out.set("weighted_centering_exact", Json::boolean(true));
+            ensemble.moments ? rational(ensemble.moments->collision_probability) : Value{});
+    out.set("weighted_centering_exact", Value::boolean(true));
     return out;
 }
 } // namespace
 
-Json relational_field_ensemble(const NativeStudy &study, const Json &query, core::Grade grade,
+Value relational_field_ensemble(const NativeStudy &study, const Json &query, core::Grade grade,
                                const std::vector<Vector> &fields, bool validate,
-                               const std::shared_ptr<CpuResources> &resources) {
+                               const std::shared_ptr<CpuResources> &resources, Context *context) {
     members(query,
             {"operation", "context", "fields", "weights", "interpretation", "green_parameters",
              "workers"},
@@ -146,7 +131,19 @@ Json relational_field_ensemble(const NativeStudy &study, const Json &query, core
         count(query.at("workers"), cpu->coordinator().capacity(), "ensemble workers");
     require(workers > 0, "ensemble workers must be positive");
     if (validate)
-        return Json::object();
+        return Value::object();
+    require(context != nullptr, "ensemble native publication owner required");
+    auto &publication = context->publication;
+    const auto rows = context->grades.at(grade.value).rows;
+    const auto sample_axis = publication.axis(fields.size());
+    auto sample_binding = Value::object(), sample_names = Value::array();
+    for (const auto &id : ids) sample_names.push(Value::string(id));
+    sample_binding.set("sample_carrier", Value::count(sample_axis));
+    sample_binding.set("fields", std::move(sample_names));
+    publication.bind(std::move(sample_binding));
+    const auto empty_axis = publication.axis(0);
+    const auto rational = [&](const Rational &value) {return publication.stage_scalar(value);};
+    const auto vector_json = [&](const Vector &value) {return context->field(value, grade.value);};
     std::optional<runtime::CpuResourceCoordinator::Reservation> reservation;
     reservation.emplace(cpu->reserve(workers));
     const scientific_detail::PreparedRelationalField prepared(study, grade);
@@ -162,9 +159,9 @@ Json relational_field_ensemble(const NativeStudy &study, const Json &query, core
         auto &reading = readings[s];
         reading.fields = prepared.apply(fields[s], [&] { stop.check(); });
         Rational sector_energy{0};
-        reading.record = Json::object();
-        reading.record.set("field", Json::string(ids[s]));
-        auto quadrances = Json::object();
+        reading.record = Value::object();
+        reading.record.set("field", Value::string(ids[s]));
+        auto quadrances = Value::object();
         for (std::size_t sector = 0; sector < channels.size(); ++sector) {
             reading.record.set(channels[sector], vector_json(reading.fields[sector]));
             const auto quadrance = metric.inner(reading.fields[sector], reading.fields[sector]);
@@ -189,17 +186,18 @@ Json relational_field_ensemble(const NativeStudy &study, const Json &query, core
         const auto square = study.tower().apply_dirac(dirac);
         const auto laplacian = study.tower().apply_hodge_tower(tower);
         require(square.grades == laplacian.grades, "ensemble Dirac square identity");
-        auto dirac_fields = Json::array();
-        for (const auto &values : dirac.grades)
-            dirac_fields.push(vector_json(values));
+        auto dirac_fields = Value::array();
+        for (std::size_t k = 0; k < dirac.grades.size(); ++k)
+            dirac_fields.push(context->field(dirac.grades[k], k));
         reading.record.set("dirac", dirac_fields);
         reading.record.set("boundary",
-                           vector_json(grade.value ? dirac.grades[grade.value - 1u] : Vector{}));
+                           grade.value ? context->field(dirac.grades[grade.value - 1u], grade.value - 1u)
+                                       : Publication::stage_vector(Vector{}, empty_axis));
         reading.record.set("upper_adjoint",
-                           vector_json(grade.value < study.source().max_grade().value
-                                           ? dirac.grades[grade.value + 1u]
-                                           : Vector{}));
-        auto green = Json::array();
+                           grade.value < study.source().max_grade().value
+                               ? context->field(dirac.grades[grade.value + 1u], grade.value + 1u)
+                               : Publication::stage_vector(Vector{}, empty_axis));
+        auto green = Value::array();
         for (const auto &parameter : parameters) {
             stop.check();
             const auto response = study.green_action(grade, parameter, fields[s]);
@@ -208,42 +206,43 @@ Json relational_field_ensemble(const NativeStudy &study, const Json &query, core
                                      numeric::scale(parameter, hodge.apply(response.value))) ==
                             fields[s],
                     "ensemble Green residual");
-            auto record = Json::object();
+            auto record = Value::object();
             record.set("lambda", rational(parameter));
             record.set("field", vector_json(response.value));
-            record.set("iterations", cardinality(response.iterations));
-            record.set("residual_exact", Json::boolean(true));
+            record.set("iterations", Value::count(response.iterations));
+            record.set("residual_exact", Value::boolean(true));
             green.push(record);
         }
         reading.record.set("green", green);
-        reading.record.set("reconstruction_exact", Json::boolean(true));
-        reading.record.set("orthogonality_exact", Json::boolean(true));
-        reading.record.set("dirac_square_exact", Json::boolean(true));
-        reading.record.set("harmonic_kernel_exact", Json::boolean(true));
+        reading.record.set("reconstruction_exact", Value::boolean(true));
+        reading.record.set("orthogonality_exact", Value::boolean(true));
+        reading.record.set("dirac_square_exact", Value::boolean(true));
+        reading.record.set("harmonic_kernel_exact", Value::boolean(true));
     });
     reservation.reset();
     auto serial = cpu->reserve(1);
-    auto out = Json::object(), samples = Json::array(), groups = Json::array(),
-         frames = Json::object();
-    out.set("grade", cardinality(grade.value));
+    auto out = Value::object(), samples = Value::array(), groups = Value::array(),
+         frames = Value::object();
+    out.set("grade", Value::count(grade.value));
     out.set("interpretation", interpretation);
-    out.set("weights", vector_json(weights));
-    out.set("metric", matrix_json(metric.materialize()));
+    out.set("weights", Publication::stage_vector(weights, sample_axis));
+    out.set("metric", Publication::stage_matrix(metric.materialize(), rows, rows, storage::TemporalTensorRole::Metric));
     for (const auto &reading : readings)
         samples.push(reading.record);
     out.set("samples", samples);
     for (std::size_t s = 0; s < projections.size(); ++s) {
-        auto record = Json::object();
-        record.set("frame", matrix_json(projections[s].frame));
-        record.set("gram", matrix_json(projections[s].solve.matrix()));
-        record.set("rank", cardinality(projections[s].frame.cols()));
-        record.set("factor_entries", cardinality(projections[s].solve.stored_entries()));
+        const auto frame_axis = publication.axis(projections[s].frame.cols());
+        auto record = Value::object();
+        record.set("frame", Publication::stage_matrix(projections[s].frame, frame_axis, rows));
+        record.set("gram", Publication::stage_matrix(projections[s].solve.matrix(), frame_axis, frame_axis, storage::TemporalTensorRole::Metric));
+        record.set("rank", Value::count(projections[s].frame.cols()));
+        record.set("factor_entries", Value::count(projections[s].solve.stored_entries()));
         frames.set(channels[s + 1], record);
     }
-    auto harmonic = Json::object();
-    harmonic.set("rank", cardinality(metric.size() - nonharmonic_rank));
-    harmonic.set("representation", Json::string("identity_minus_gradient_minus_curl"));
-    harmonic.set("basis_materialized", Json::boolean(false));
+    auto harmonic = Value::object();
+    harmonic.set("rank", Value::count(metric.size() - nonharmonic_rank));
+    harmonic.set("representation", Value::string("identity_minus_gradient_minus_curl"));
+    harmonic.set("basis_materialized", Value::boolean(false));
     frames.set("harmonic", harmonic);
     out.set("frames", frames);
     std::vector<std::array<Vector, 4>> means;
@@ -252,16 +251,23 @@ Json relational_field_ensemble(const NativeStudy &study, const Json &query, core
         Rational mass{0};
         for (const auto s : scope.samples)
             mass += weights[s];
-        auto members_ = Json::array();
+        const auto group_axis = publication.axis(scope.samples.size());
+        auto binding = Value::object();
+        binding.set("group", Value::string(scope.id));
+        binding.set("sample_carrier", Value::count(sample_axis));
+        binding.set("group_carrier", Value::count(group_axis));
+        binding.set("sample_coordinates", publication.indices(scope.samples, group_axis));
+        publication.bind(std::move(binding));
+        auto members_ = Value::array();
         for (const auto s : scope.samples) {
             conditional.push_back(weights[s] / mass);
-            members_.push(Json::string(ids[s]));
+            members_.push(Value::string(ids[s]));
         }
-        auto record = Json::object(), summaries = Json::object(), couplings = Json::array();
-        record.set("id", Json::string(scope.id));
+        auto record = Value::object(), summaries = Value::object(), couplings = Value::array();
+        record.set("id", Value::string(scope.id));
         record.set("fields", members_);
         record.set("original_mass", rational(mass));
-        record.set("conditional_weights", vector_json(conditional));
+        record.set("conditional_weights", Publication::stage_vector(conditional, group_axis));
         std::array<Vector, 4> mean;
         std::vector<scientific_detail::WeightedFieldEnsemble> ensembles;
         for (std::size_t channel = 0; channel < channels.size(); ++channel) {
@@ -270,7 +276,7 @@ Json relational_field_ensemble(const NativeStudy &study, const Json &query, core
                 values.push_back(readings[s].fields[channel]);
             ensembles.emplace_back(values, conditional, metric);
             mean[channel] = ensembles.back().mean;
-            summaries.set(channels[channel], describe(ensembles.back()));
+            summaries.set(channels[channel], describe(*context, grade.value, group_axis, ensembles.back()));
         }
         Rational variance{0};
         for (std::size_t s = 1; s < channels.size(); ++s)
@@ -280,41 +286,53 @@ Json relational_field_ensemble(const NativeStudy &study, const Json &query, core
                 "ensemble variance budget");
         for (std::size_t a = 1; a < channels.size(); ++a)
             for (std::size_t b = a + 1; b < channels.size(); ++b) {
-                auto value = Json::object();
-                value.set("left", Json::string(channels[a]));
-                value.set("right", Json::string(channels[b]));
+                auto value = Value::object();
+                value.set("left", Value::string(channels[a]));
+                value.set("right", Value::string(channels[b]));
                 const bool defined = ensembles[a].moments && ensembles[b].moments;
-                value.set("status", Json::string(defined ? "completed" : "zero_sector_variance"));
+                value.set("status", Value::string(defined ? "completed" : "zero_sector_variance"));
                 value.set("value", defined ? rational(scientific_detail::weighted_field_coupling(
                                                  ensembles[a], ensembles[b], conditional, metric))
-                                           : Json{});
+                                           : Value{});
+                if (ensembles[a].sample_space) {
+                    Matrix terms(scope.samples.size(), scope.samples.size());
+                    for (std::size_t i = 0; i < scope.samples.size(); ++i)
+                        for (std::size_t j = 0; j < scope.samples.size(); ++j)
+                            terms.set(i, j, conditional[i] * conditional[j] *
+                                ensembles[a].contraction.get(i, j) * ensembles[b].contraction.get(i, j));
+                    value.set("ordered_contributions", Publication::stage_matrix(terms, group_axis, group_axis));
+                } else {
+                    const auto cross = field::metric_gram(ensembles[a].centered,
+                        field::ExactMetric::diagonal(conditional), ensembles[b].centered);
+                    value.set("cross_covariance", Publication::stage_matrix(cross, rows, rows));
+                }
                 couplings.push(value);
             }
         record.set("ensembles", summaries);
         record.set("sector_coupling", couplings);
-        record.set("variance_budget_exact", Json::boolean(true));
+        record.set("variance_budget_exact", Value::boolean(true));
         groups.push(record);
         means.push_back(std::move(mean));
     }
     out.set("groups", groups);
-    auto comparisons = Json::array();
+    auto comparisons = Value::array();
     if (query.has("comparisons"))
         for (std::size_t i = 0; i < query.at("comparisons").size(); ++i) {
             const auto declaration = query.at("comparisons").at(i);
             const auto left = scope_indices.at(declaration.at("left").text()),
                        right = scope_indices.at(declaration.at("right").text());
-            auto record = Json::object(), changes = Json::object(), overlap = Json::array();
+            auto record = Value::object(), changes = Value::object(), overlap = Value::array();
             record.set("declaration", declaration);
             for (const auto s : scopes[left].samples)
                 if (std::find(scopes[right].samples.begin(), scopes[right].samples.end(), s) !=
                     scopes[right].samples.end())
-                    overlap.push(Json::string(ids[s]));
+                    overlap.push(Value::string(ids[s]));
             record.set("shared_fields", overlap);
             Vector reconstructed(metric.size(), Rational{0});
             Rational sector_quadrance{0};
             for (std::size_t channel = 0; channel < channels.size(); ++channel) {
                 const auto delta = numeric::sub(means[right][channel], means[left][channel]);
-                auto change = Json::object();
+                auto change = Value::object();
                 change.set("field", vector_json(delta));
                 change.set("quadrance", rational(metric.inner(delta, delta)));
                 changes.set(channels[channel], change);
@@ -327,27 +345,27 @@ Json relational_field_ensemble(const NativeStudy &study, const Json &query, core
             require(reconstructed == delta && sector_quadrance == metric.inner(delta, delta),
                     "ensemble mean contrast reconstruction");
             record.set("right_minus_left", changes);
-            record.set("reconstruction_exact", Json::boolean(true));
+            record.set("reconstruction_exact", Value::boolean(true));
             comparisons.push(record);
         }
     out.set("comparisons", comparisons);
-    auto chain = Json::array();
+    auto chain = Value::array();
     for (const auto &check : prepared.bianchi.interfaces) {
-        auto value = Json::object();
-        value.set("lower_boundary_grade", cardinality(check.lower_boundary_grade.value));
-        value.set("satisfied", Json::boolean(check.satisfied));
+        auto value = Value::object();
+        value.set("lower_boundary_grade", Value::count(check.lower_boundary_grade.value));
+        value.set("satisfied", Value::boolean(check.satisfied));
         chain.push(value);
     }
     out.set("chain_interfaces", chain);
-    auto execution = Json::object();
-    execution.set("projector_preparations", cardinality(projections.size()));
-    execution.set("applications_per_projector", cardinality(fields.size()));
-    execution.set("requested_workers", cardinality(report.requested_workers));
-    execution.set("worker_slots", cardinality(report.worker_slots));
-    execution.set("completed_tiles", cardinality(report.completed_tiles));
+    auto execution = Value::object();
+    execution.set("projector_preparations", Value::count(projections.size()));
+    execution.set("applications_per_projector", Value::count(fields.size()));
+    execution.set("requested_workers", Value::count(report.requested_workers));
+    execution.set("worker_slots", Value::count(report.worker_slots));
+    execution.set("completed_tiles", Value::count(report.completed_tiles));
     execution.set("preparation",
-                  Json::string("native boundary frames and prepared exact Gram solves"));
-    execution.set("green", Json::string("native exact operator-first actions"));
+                  Value::string("native boundary frames and prepared exact Gram solves"));
+    execution.set("green", Value::string("native exact operator-first actions"));
     out.set("execution", execution);
     return out;
 }
