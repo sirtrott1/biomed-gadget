@@ -1,6 +1,127 @@
 #include "assay_detail.hpp"
 #include <gadget/pipeline.hpp>
+#include <atomic>
+#include <barrier>
+#include <csignal>
+#include <exception>
 #include <iostream>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <thread>
+#include <unistd.h>
+
+namespace {
+void io_boundary(const gadget::fs::path &root) {
+    using namespace gadget;
+    fs::create_directories(root);
+    const auto check = [](bool ok, const char *message) {
+        if (!ok) throw std::logic_error(message);
+    };
+    const auto rejects = [&](auto action) {
+        bool refused = false;
+        try { action(); } catch (const std::exception &) { refused = true; }
+        check(refused, "invalid file operation admitted");
+    };
+    const std::string original("original\0bytes\n", 15);
+    const auto source = root / "source";
+    write_text(source, original);
+    check(read_text(source) == original && sha256_file(source) == sha256(original),
+          "all original bytes or complete file hash changed");
+    const fs::path nul(source.string() + std::string(1, '\0') + "suffix");
+    rejects([&] { (void)read_text(nul); });
+    rejects([&] { (void)sha256_file(nul); });
+    rejects([&] { write_text(nul, "replacement"); });
+    rejects([&] { (void)read_text(fs::path{}); });
+    rejects([&] { write_text(fs::path{}, "replacement"); });
+    rejects([&] { (void)read_text(root); });
+    rejects([&] { (void)read_text(source, original.size() - 1); });
+    check(read_text(source, original.size()) == original, "exact caller byte budget refused");
+    check(read_text(source) == original, "path refusal modified its lexical prefix");
+
+    const auto link = root / "symbolic";
+    fs::create_symlink(source, link);
+    rejects([&] { write_text(link, "replacement"); });
+    check(fs::is_symlink(link) && read_text(source) == original,
+          "symbolic output changed original bytes");
+    const auto dangling = root / "dangling";
+    fs::create_symlink(root / "absent", dangling);
+    rejects([&] { write_text(dangling, "replacement"); });
+    check(fs::is_symlink(dangling) && !fs::exists(root / "absent"),
+          "dangling output link followed");
+    const auto hard = root / "hard";
+    fs::create_hard_link(source, hard);
+    write_text(hard, "independent replacement");
+    check(read_text(source) == original && read_text(hard) == "independent replacement" &&
+              !fs::equivalent(source, hard), "replacement mutated another linked original");
+    write_text(root / "empty", "");
+    check(read_text(root / "empty", 0).empty(), "empty file or zero-byte budget refused");
+    const auto previous = fs::current_path();
+    fs::current_path(root);
+    try {
+        write_text("relative", original);
+        check(read_text("relative") == original, "relative publication changed original bytes");
+    } catch (...) {
+        fs::current_path(previous);
+        throw;
+    }
+    fs::current_path(previous);
+
+    for (const auto &destination : {source, root / "new"}) {
+        const auto pid = fork();
+        if (pid < 0) throw std::runtime_error("cannot start file exhaustion consumer");
+        if (pid == 0) {
+            std::signal(SIGXFSZ, SIG_IGN);
+            const rlimit limit{64, 64};
+            if (setrlimit(RLIMIT_FSIZE, &limit)) _exit(2);
+            try { write_text(destination, std::string(1u << 20, 'x')); }
+            catch (const std::exception &) { _exit(0); }
+            _exit(3);
+        }
+        int status{};
+        check(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+              "file byte exhaustion did not refuse");
+        check(read_text(source) == original && !fs::exists(root / "new"),
+              "failed write exposed partial or replaced original bytes");
+        for (const auto &entry : fs::directory_iterator(root))
+            check(!entry.path().filename().string().starts_with(".rfc-stage-"),
+                  "failed staged write left residue");
+    }
+    write_text(root / "new", original);
+    check(read_text(root / "new") == original, "write failure prevented exact retry");
+
+    const auto output = root / "concurrent";
+    const std::string first(33027, 'a'), second(571, 'b');
+    write_text(output, first);
+    std::atomic<bool> done{};
+    std::atomic<std::size_t> reads{};
+    std::exception_ptr failure;
+    std::barrier ready(2);
+    std::jthread reader([&] {
+        ready.arrive_and_wait();
+        try {
+            do {
+                const auto bytes = read_text(output);
+                check(bytes == first || bytes == second, "reader saw partial or mixed replacement");
+                ++reads;
+            } while (!done.load());
+        } catch (...) { failure = std::current_exception(); }
+    });
+    ready.arrive_and_wait();
+    try {
+        for (std::size_t i = 0; i < 128; ++i)
+            write_text(output, i % 2 ? first : second);
+    } catch (...) {
+        done = true;
+        reader.join();
+        throw;
+    }
+    done = true;
+    reader.join();
+    if (failure) std::rethrow_exception(failure);
+    check(reads > 0 && read_text(output) == first,
+          "complete replacement reader/final state not exercised");
+}
+} // namespace
 
 int main(int argc, char **argv) {
     try {
@@ -11,6 +132,7 @@ int main(int argc, char **argv) {
         const auto root = fs::absolute(argv[1]);
         fs::remove_all(root);
         fs::create_directories(root);
+        io_boundary(root / "io-boundary");
         const auto check = [](bool ok, const char *message) {
             if (!ok) throw std::logic_error(message);
         };

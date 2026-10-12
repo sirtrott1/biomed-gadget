@@ -58,7 +58,10 @@ class Json {
 // The complete-file adapter is constrained by its string and stream
 // representations. Callers may still declare a narrower byte contract.
 std::size_t source_byte_limit();
+// Complete bytes from one opened regular file, with size and EOF validation.
 std::string read_text(const fs::path &path, std::size_t limit = source_byte_limit());
+// Staged SDK replacement of a regular file. Failed writes preserve the former
+// bytes. Parents must be trusted; this does not promise fsync durability.
 void write_text(const fs::path &path, const std::string &text);
 std::string sha256(std::string_view text);
 using ByteChunkSink = std::function<void(std::span<const std::byte>)>;
