@@ -19,6 +19,73 @@ template <class F> void rejects(F f) {
     check(failed, "invalid evidence admitted");
 }
 Json parse(const char *s) { return Json::parse(s); }
+void reported_field_contracts(const EvidenceStore &store, const ScientificStudy &study,
+                              const fs::path &root) {
+    auto request = parse(R"({"schema":"gadget.biomedical.field.request.v1","source_digest":"","study_digest":"","field":"all.Kd_nM","endpoint":"Kd","units":"nM"})");
+    request.set("source_digest", Json::string(store.digest()));
+    request.set("study_digest", Json::string(study.digest()));
+    const auto binding = store.bind_reported_field(study, admit_record_view(request));
+    const auto result = binding.at("result");
+    check(result.at("supported").integer() == 3 && result.at("correspondence").size() == 6,
+          "reported field lost original complete correspondence");
+    const auto rows = result.at("correspondence");
+    check(rows.at(0).at("supported").boolean() && !rows.at(1).at("supported").boolean() &&
+              !rows.at(2).at("supported").boolean() && rows.at(3).at("supported").boolean() &&
+              !rows.at(4).at("supported").boolean() && rows.at(5).at("supported").boolean(),
+          "censored, missing, other-unit or zero assertion was substituted");
+    const auto selector = result.at("selector");
+    const auto pin = study.field_accession("all.Kd_nM");
+    check(selector.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
+              selector.at("cutoff").integer() == pin.sequence() &&
+              selector.at("tensor").integer() == pin.tensor_declaration()->key &&
+              selector.at("output_carrier").integer() == *pin.tensor_declaration()->output &&
+              selector.at("input_carrier").kind() == NativeRecordKind::Null,
+          "reported field selector replaced its native owner/carrier");
+    check(binding.source_namespace() == store.native_publication().source_namespace() &&
+              binding.source_namespace() != pin.source_namespace(),
+          "interpreted and quantitative sources were identified");
+    binding.write(root / "field-binding.rfcxs");
+    const auto reopened = NativeRecord::read(root / "field-binding.rfcxs");
+    const auto field_source = NativeRecord::decode(reopened.at("result").at("field_publication").bytes());
+    check(field_source.encode() == study.native_publication().historical_publication(pin.sequence()).encode() &&
+              NativeRecord::decode(reopened.at("result").at("study_publication").bytes()).encode() ==
+                  study.native_publication().encode(),
+          "reported field archive changed its actual study or source");
+    const auto actual = field_source.endpoint()->tensors;
+    const auto selected = std::find_if(actual.begin(), actual.end(), [&](const auto &tensor) {
+        return tensor.key == pin.tensor_declaration()->key;
+    });
+    check(selected != actual.end() && selected->tensor.state(3) == rfc::numeric::Rational{0} &&
+              !selected->tensor.state(1) && !selected->tensor.state(2) && !selected->tensor.state(4),
+          "reported field replay replaced supported zero or absent support");
+    for (const auto &[name, wrong] : std::vector<std::pair<std::string, std::string>>{
+             {"source_digest", "foreign"}, {"study_digest", "foreign"}, {"endpoint", "Ki"},
+             {"units", "uM"}, {"field", "all.endpoint"}, {"field", "absent"}}) {
+        auto bad = Json::parse(request.dump());
+        bad.set(name, Json::string(wrong));
+        rejects([&] { store.bind_reported_field(study, admit_record_view(bad)); });
+    }
+    auto other = Json::parse(request.dump());
+    other.set("field", Json::string("all.Ki_nM"));
+    other.set("endpoint", Json::string("Ki"));
+    check(store.bind_reported_field(study, admit_record_view(other)).at("result").at("supported").integer() == 0,
+          "empty endpoint field acquired unsupported values");
+    const auto original_map = read_text(root / "store/study/record-map.json");
+    auto altered = Json::parse(original_map);
+    altered.at(0).set("assertion_key", altered.at(1).at("assertion_key"));
+    write_text(root / "store/study/record-map.json", altered.dump());
+    auto declaration = Json::parse(read_text(root / "store/study/study.json"));
+    const auto documents = declaration.at("documents");
+    for (std::size_t i = 0; i < documents.size(); ++i)
+        if (documents.at(i).at("id").text() == "native_record_correspondence")
+            documents.at(i).set("sha256", Json::string("sha256:" + sha256(altered.dump())));
+    write_text(root / "store/study/altered-map-study.json", declaration.dump());
+    const ScientificStudy altered_study(root / "store/study/altered-map-study.json");
+    auto bad = Json::parse(request.dump());
+    bad.set("study_digest", Json::string(altered_study.digest()));
+    rejects([&] { store.bind_reported_field(altered_study, admit_record_view(bad)); });
+    write_text(root / "store/study/record-map.json", original_map);
+}
 void proposal_contracts(const EvidenceStore &store, const fs::path &root, const Json &points) {
     auto request = parse(R"({"schema":"gadget.biomedical.context.v1","source_digest":"", "snapshot_sha256":"", "question":"Which original Kd observations support this threshold?", "assertion_keys":[]})");
     request.set("source_digest", Json::string(store.digest()));
@@ -323,6 +390,7 @@ int main() {
         compare.set("right", points.at(4).at("native_assertion_key"));
         rejects([&] { store.execute(compare); });
         auto study = std::make_shared<const ScientificStudy>(root / "store/study/study.json");
+        reported_field_contracts(store, *study, root);
         ScientificSession session(study);
         const auto summary =
             session

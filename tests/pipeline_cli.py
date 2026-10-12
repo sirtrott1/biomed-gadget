@@ -68,6 +68,8 @@ for recipe in profiles['recipes']:
             branch=document[parts[0]][int(parts[1])]
             operation=branch['properties']['operation']
             assert recipe['operation'] in operation.get('enum',[operation.get('const')])
+assert recipe_schemas['indexed_sequence_alignment']['properties']['parameters']['properties']['execution'] == {
+    '$ref': 'assays-query.schema.json#/oneOf/19/properties/execution'}
 
 def request(operation, **kw):
     return dict(schema='gadget.assays.query.v1', operation=operation, **kw)
@@ -429,5 +431,51 @@ failed_program['steps'][2]['request']['query']['field'] = 'all.absent'
 run('pipeline', '--workspace', coverage_manifest, '--request', save('native-failure.json', failed_program),
     '--out', root/'native-failure', fail=True)
 assert not (root/'native-failure').exists() and not list(root.glob('.gadget-pipeline-*'))
+
+sequence_reference = source('indexed-reference.fa', '>reference\nACGTAGGTACGT\n')
+sequence_spec = copy.deepcopy(spec)
+sequence_spec['id'] = 'indexed-pipeline-contracts'
+sequence_spec['resources'].append(dict(id='indexed-reference', format='fasta',
+    source=sequence_reference, method='Authored placement source'))
+sequence_workspace = root/'sequence-workspace'
+run('import-assays', '--spec', save('sequence-import.json', sequence_spec), '--out', sequence_workspace)
+sequence_manifest = sequence_workspace/'workspace.json'
+parameters = dict(query_resource='reads', reference_resource='indexed-reference', strands=['+'],
+    maximum_edits=0, scoring='unit_edit_cost', evidence='Complete authored exact placements')
+common = None
+for batch, width in [(1, 1), (4, 20)]:
+    execution = dict(read_partition_records=batch, reference_block_bases=width)
+    settings = dict(schema='gadget.pipeline.default.v1', profile='sequence',
+        question='Retain exact placements across execution blocks', goals=[
+            dict(id='placements', method='indexed_sequence_alignment', parameters={**parameters,
+                'execution': execution})])
+    name = f'indexed-pipeline-{batch}-{width}'
+    plan = run('pipeline-prepare', '--workspace', sequence_manifest,
+        '--request', save(name+'-settings.json', settings))
+    assert plan['steps'][0]['request']['execution'] == execution
+    run('pipeline', '--workspace', sequence_manifest, '--request', save(name+'-plan.json', plan),
+        '--out', root/name)
+    result = json.loads((root/name/'placements/result.json').read_text())['result']
+    actual = {(row['query_id'], row['reference_id'], row['strand'], int(row['start']),
+        int(row['end']), int(row['minimum_edits'])) for row in result['matches']}
+    assert actual == {('r1', 'reference', '+', 0, 4, 0), ('r1', 'reference', '+', 8, 12, 0),
+        ('r2', 'reference', '+', 4, 8, 0)}
+    assert result['work']['peak_partition_reads'] <= batch
+    assert result['work']['peak_normalized_reference_block_bases'] <= width
+    payload = {key: value for key, value in result.items() if key != 'work'}
+    if common is None:
+        common = payload
+    else:
+        assert payload == common
+    retained = run('record-view', '--input', root/name/'placements/result.rfcxs', '--member', 'request')
+    assert retained['execution'] == execution
+bad = copy.deepcopy(settings)
+bad['goals'][0]['parameters']['execution']['reference_block_bases'] = 0
+bad_plan = run('pipeline-prepare', '--workspace', sequence_manifest,
+    '--request', save('invalid-indexed-execution.json', bad))
+run('pipeline', '--workspace', sequence_manifest,
+    '--request', save('invalid-indexed-plan.json', bad_plan),
+    '--out', root/'invalid-indexed-execution', fail=True)
+assert not (root/'invalid-indexed-execution').exists()
 
 print(json.dumps(dict(status='PASS',command_checks=checks,derived_source_binding=True,atomic_failure=True,model_proposal_admission=True,assay_recipes=['rna_seq','single_cell','spatial','atac_seq'],matched_units_above_former_cap=pair_count,recipe_planning=True,dependency_chain=300,native_producer_branches=True)))

@@ -1664,6 +1664,9 @@
                   },
                   "maximum_edits": {
                     "$ref": "assays-query.schema.json#/oneOf/19/properties/maximum_edits"
+                  },
+                  "execution": {
+                    "$ref": "assays-query.schema.json#/oneOf/19/properties/execution"
                   }
                 },
                 "required": [
