@@ -870,6 +870,89 @@ void verify_censored_workflow(const std::shared_ptr<const ScientificStudy> &stud
           "censored reopened workflow changed complete native publication");
 }
 
+void verify_moment(const NativeRecord &publication, const NativeRecord &original) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner,view); audit_fields(owner,owner.at("bindings"));
+    const auto binding = owner.at("bindings").at(0), inputs = binding.at("inputs");
+    const ScientificStudy original_study(original);
+    check(std::ranges::equal(binding.at("original_study_publication").bytes(),original.encode()),
+          "moment original study archive changed");
+    for (std::size_t f = 0; f < inputs.size(); ++f) {
+        const auto input = inputs.at(f); const auto &tensor = *field(original,input.at("tensor"));
+        const auto pin = original_study.field_accession(input.at("id").text());
+        check(input.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
+              input.at("cutoff").integer() == pin.sequence() && input.at("carrier").integer() == *tensor.output,
+              "moment original tensor pin/cutoff/carrier changed");
+        const auto &map = field(owner,input.at("realization"))->tensor;
+        const auto x = values(owner,input.at("values")); const auto shape = map.domain().extents();
+        check(shape.at(0) == x.size() && shape.at(1) == tensor.tensor.domain().logical_size(),
+              "moment actual original realization shape differs");
+        for (std::size_t i = 0; i < x.size(); ++i) {
+            Rational value{}; std::size_t coordinates{};
+            for (std::size_t j = 0; j < shape[1]; ++j) {
+                const auto coefficient = state(map,i*shape[1]+j);
+                if (coefficient != 0) {++coordinates;check(coefficient == 1,"moment realization not original UID selection");value += state(tensor.tensor,j);}
+            }
+            check(coordinates == 1 && value == x[i],"moment lost original support/value");
+        }
+    }
+    const auto old_x = values(owner,inputs.at(0).at("values")), old_y = values(owner,inputs.at(1).at("values"));
+    Rational expected{};
+    if (binding.at("kind").text() == "actual_typed_moment") {
+        const auto powered = values(owner,binding.at("powered_right_field"));
+        const auto axis = *field(owner,inputs.at(0).at("values"))->output;
+        const rfc::storage::TemporalTensor *metric{};
+        for (const auto &tensor : owner.endpoint()->tensors)
+            if (tensor.role == rfc::storage::TemporalTensorRole::Metric && tensor.output == axis) metric = &tensor;
+        check(metric && metric->input == axis,"moment actual declared metric/carrier absent");
+        for (std::size_t i = 0; i < old_x.size(); ++i)
+            for (std::size_t j = 0; j < powered.size(); ++j)
+                expected += old_x[i]*state(metric->tensor,i*powered.size()+j)*powered[j];
+        check(scalar(owner,view.at("rational")) == expected,"native typed moment contraction differs");
+    } else {
+        check(binding.at("kind").text() == "actual_temporal_moment_change", "moment result owner absent");
+        const auto old = NativeRecord::decode(binding.at("old_context_publication").at("publication").bytes());
+        audit_fields(old,old.at("view")); audit_fields(old,old.at("bindings"));
+        const auto new_x = values(owner,inputs.at(2).at("values")), new_y = values(owner,inputs.at(3).at("values"));
+        const auto &comparison = *field(owner,binding.at("comparison"));
+        check(comparison.input != comparison.output && field(owner,binding.at("old_form"))->input == comparison.input &&
+              field(owner,binding.at("new_form"))->input == comparison.output,
+              "moment independent old/new form/map carriers identified by dimension");
+        const auto jx = apply(owner,binding.at("comparison"),old_x), jy = apply(owner,binding.at("comparison"),old_y);
+        const auto ex = values(owner,binding.at("left_innovation")), ey = values(owner,binding.at("right_innovation"));
+        check(values(owner,binding.at("transported_left")) == jx && values(owner,binding.at("transported_right")) == jy,
+              "moment original correspondence action differs");
+        for (std::size_t i = 0; i < new_x.size(); ++i)
+            check(jx[i]+ex[i] == new_x[i] && jy[i]+ey[i] == new_y[i],"moment innovations fail full reconstruction");
+        const auto pair = [](const auto &a,const auto &b) {
+            Rational result{}; for (std::size_t i = 0; i < a.size(); ++i) result += a[i]*b[i]; return result;
+        };
+        const auto old_value = pair(old_x,apply(owner,binding.at("old_form"),old_y));
+        const auto new_value = pair(new_x,apply(owner,binding.at("new_form"),new_y));
+        const Rational pullback = pair(jx,apply(owner,binding.at("new_form"),jy))-old_value;
+        const auto left = pair(ex,apply(owner,binding.at("new_form"),jy));
+        const auto right = pair(jx,apply(owner,binding.at("new_form"),ey));
+        const auto interaction = pair(ex,apply(owner,binding.at("new_form"),ey));
+        check(scalar(owner,view.at("pullback_form")) == pullback && scalar(owner,view.at("left_innovation")) == left &&
+              scalar(owner,view.at("right_innovation")) == right && scalar(owner,view.at("innovation_interaction")) == interaction,
+              "moment complete four finite contributions differ");
+        expected = new_value-old_value;
+        check(scalar(owner,view.at("total")) == expected && expected == pullback+left+right+interaction &&
+              scalar(owner,binding.at("old_moment")) == old_value && scalar(owner,binding.at("new_moment")) == new_value,
+              "moment full endpoint delta identity differs");
+        check(scalar(owner,view.at("finite_rate"))*scalar(owner,view.at("interval")) == expected,
+              "moment declared finite interval/rate differs");
+    }
+    auto request = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[{"path":[],"value_type":"rational","comparison":"equal","value":"0"}]})");
+    request.set("source_namespace",Json::string(std::to_string(publication.source_namespace())));
+    request.set("cutoff",Json::integer(static_cast<std::int64_t>(publication.publication_history()->last_sequence())));
+    request.at("items").at(0).set("value",Json::string(expected.get_str()));
+    request.at("items").at(0).at("path").push(Json::string(
+        binding.at("kind").text() == "actual_typed_moment" ? "rational" : "total"));
+    check(check_certificate_claims_record(publication,admit_record_view(request)).at("result").at("matched").integer() == 1,
+          "moment literal claim lost its actual scalar owner");
+}
+
 void verify_replay(const NativeRecord &expected, const NativeRecord &actual) {
     const auto a = expected.endpoint(), b = actual.endpoint();
     check(a->tensors.size() == b->tensors.size(), "replay field family differs");
@@ -955,6 +1038,7 @@ int main(int argc, char **argv) try {
         else if (std::string(argv[4]) == "sections") verify_sections(result);
         else if (std::string(argv[4]) == "ablation") verify_ablation(result);
         else if (std::string(argv[4]) == "direct") verify_direct(result, original);
+        else if (std::string(argv[4]) == "moment") verify_moment(result, original);
         else if (std::string(argv[4]) == "censored") {verify_censored(result, original, query); verify_censored_claim(result);}
         else if (std::string(argv[4]) != "finite") verify_model(result, original);
         else {

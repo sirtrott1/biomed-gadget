@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile a complete captured RNA/antibody library-balance workflow."""
+"""Compile a complete captured RNA/antibody library balance workflow."""
 import argparse
 import csv
 import hashlib
@@ -91,9 +91,9 @@ def source_contract(folder):
 
 def pipeline_design(contract, namespace, workers, correspondence_sha):
     assays, features, observations = contract['assays'], contract['features'], contract['observations']
-    design = dict(question='Describe the declared RNA library-total versus antibody assignment balance for every captured barcode',
+    design = dict(question='Describe the declared RNA library total versus antibody assignment balance for every captured barcode',
         population=contract['design']['population'], selection='All captured barcodes, every RNA feature and every antibody feature',
-        limitations=['Library-assignment contrast with explicit unit domains and declared positive costs; no biochemical calibration or cell-type inference',
+        limitations=['Library assignment contrast with explicit unit domains and declared positive costs; no biochemical calibration or cell type inference',
             'One captured donor and upstream barcode/UMI selection; no independence, treatment or clinical endpoint assertion'])
     aggregation = dict(schema='gadget.assays.materialize.v1', id='rna-library',
         source_namespace=namespace, design=design, channel=assays['rna']['channel'], recipe=dict(
@@ -113,8 +113,8 @@ def pipeline_design(contract, namespace, workers, correspondence_sha):
         evidence='Comparison choice; not fitted sampling variance or modality calibration')
     interface = dict(id='library-balance', axes=['assigned_count_balance'],
         quantity='declared_library_assignment_balance', units='declared count', channel='observation',
-        method='Signed RNA library-total minus the sum of antibody assignments',
-        evidence='Declared library-count contrast, without identifying the assay units', participants=[])
+        method='Signed RNA library total minus the sum of antibody assignments',
+        evidence='Declared library count contrast, without identifying the assay units', participants=[])
     views = []
     for i, name in enumerate(('rna', 'antibody')):
         assay = 'rna-library' if name == 'rna' else 'antibody'
@@ -175,7 +175,7 @@ def main():
     receipt = dict(schema='gadget.paired.capture.workflow.v1', source_hashes=contract['hashes'],
         sections=len(contract['observations']), features={k: len(v) for k,v in contract['features'].items()},
         correspondence_sha256=digest(correspondence), native_result='analysis/sections/result.rfcxs',
-        scope='Complete captured inputs and declared library-assignment balance; no clinical or biochemical calibration claim')
+        scope='Complete captured inputs and declared library assignment balance; no clinical or biochemical calibration claim')
     (args.out/'source-receipt.json').write_text(json.dumps(receipt, indent=2)+'\n')
     print(json.dumps(receipt))
 
