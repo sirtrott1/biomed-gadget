@@ -230,3 +230,11 @@ The result type is `GadgetNativeFieldSelectionBytes`. RCQL records both selected
 versions, their state digests and the native result digest. Native C++ retains
 and validates the field owner; bytes remain distinct from Python mathematical
 state. Existing RCDB and RCQL codec byte profiles still apply.
+
+Native selection files use the SDK's `CreateNew` publisher. Competing writers
+to one destination produce one complete winning file; later writers refuse
+without changing it. Existing files, symbolic links and hard links refuse.
+A failed staged write leaves no published output and can be retried at the same
+destination. Parent directories must be trusted. This single file publication
+does not provide fsync durability, a database transaction or crash recovery;
+RCDB histories use their existing storage provider.
