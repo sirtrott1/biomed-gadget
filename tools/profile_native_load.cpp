@@ -116,32 +116,73 @@ std::uint64_t cutoff_value(const std::string &text) {
             "cutoff must be an unsigned publication sequence");
     return value;
 }
+std::size_t verify_encoded(const storage::NativeEncodedTensor &encoded,
+                           const storage::PinnedNativeAccession &pin) {
+    require(encoded.publication().pin() == pin.endpoint() &&
+                encoded.publication().source_namespace() == pin.source_namespace() &&
+                encoded.publication().sequence() == pin.sequence(),
+            "encoded tensor changed its selected publication");
+    const auto tensor = pin.tensor();
+    require(encoded.tensor().domain() == tensor->domain() &&
+                storage::temporal_endpoint_detail::support_equal(encoded.tensor().support(),
+                                                                tensor->support()),
+            "encoded tensor changed its domain or support");
+    const auto &values = tensor->values();
+    auto cursor = values.retained_source() ? values.retained_source()->open() : nullptr;
+    const auto *entries = values.materialized_entries();
+    require(cursor || entries, "selected tensor has no retained coefficient reader");
+    numeric::SparseRationalEntry entry;
+    std::size_t count{};
+    encoded.tensor().for_each_nonzero([&](std::size_t index, const numeric::Rational &value) {
+        if (cursor) {
+            require(cursor->next(entry) && entry.index == index && entry.value == value,
+                    "encoded tensor coefficient differs from its selected publication");
+        } else {
+            require(count < entries->size() && entries->at(count).index == index &&
+                        entries->at(count).value == value,
+                    "encoded tensor coefficient differs from its selected publication");
+        }
+        count = machine::checked_size_add(count, 1);
+    });
+    require(count == values.nonzeros() && count == encoded.tensor().stored_nonzeros() &&
+                (!cursor || !cursor->next(entry)),
+            "encoded tensor omitted selected coefficients");
+    return count;
+}
 } // namespace
 int main(int argc, char **argv) {
     try {
         std::filesystem::path input, output;
-        std::optional<std::uint64_t> cutoff;
-        bool record = false, accessions = false;
+        std::optional<std::uint64_t> cutoff, encoded_key;
+        bool record = false, accessions = false, fields = false;
         std::set<std::string> seen;
         for (int i = 1; i < argc; ++i) {
             const std::string option(argv[i]);
             require(seen.insert(option).second, "duplicate profile option");
             if (option == "--record") record = true;
             else if (option == "--accessions") accessions = true;
+            else if (option == "--fields") fields = true;
             else {
-                require(option == "--input" || option == "--rewrite" || option == "--cutoff",
-                        "usage: gadget_native_load_profile --input FILE [--cutoff N] [--record] [--accessions] [--rewrite FILE]");
+                require(option == "--input" || option == "--rewrite" || option == "--cutoff" ||
+                            option == "--encoded-tensor",
+                        "usage: gadget_native_load_profile --input FILE [--cutoff N] [--record] [--accessions] [--fields] [--encoded-tensor KEY] [--rewrite FILE]");
                 require(i + 1 < argc, "missing profile option value");
                 const std::string value(argv[++i]);
                 if (option == "--input") input = value;
                 else if (option == "--rewrite") output = value;
-                else cutoff = cutoff_value(value);
+                else if (option == "--cutoff") cutoff = cutoff_value(value);
+                else encoded_key = cutoff_value(value);
             }
         }
         require(!input.empty(), "native profile requires --input");
         gadget::profiling::cpu_clock();
         const auto total = Clock::now();
         auto start = total;
+        Counts counts;
+        std::vector<storage::PinnedNativeAccession> retained_fields;
+        std::optional<storage::PinnedNativeAccession> encoded_pin;
+        std::optional<storage::NativeEncodedTensor> encoded;
+        std::weak_ptr<const storage::TemporalEndpoint> selected_owner;
         {
         auto history = [&] {
             const storage::ReadOnlyMappedFile image(input);
@@ -154,8 +195,10 @@ int main(int argc, char **argv) {
             history, cutoff.value_or(history.last_sequence())).history();
         const auto study = gadget::NativeStudy::from_history(selected);
         phase("select", start);
+        std::cout << "value\tpublication.source_namespace\t" << selected.source_namespace() << '\n';
+        std::cout << "value\tpublication.cutoff\t" << study.endpoint()->sequence << '\n';
         start = Clock::now();
-        Counts counts = endpoint_counts(*study.endpoint());
+        counts = endpoint_counts(*study.endpoint());
         add(counts, "history.archive_bytes", history.archive_bytes());
         std::set<const std::vector<std::byte> *> components;
         history.visit_components([&](const auto &part) {
@@ -183,7 +226,7 @@ int main(int argc, char **argv) {
                 }
             }
         }
-        if (accessions) {
+        if (accessions || fields || encoded_key) {
             start = Clock::now();
             const auto directory = publication ? publication->accession_directory()
                                                : study.accession_directory();
@@ -197,6 +240,59 @@ int main(int argc, char **argv) {
             require(reused == directory && directory->pin_snapshot() == study.endpoint(),
                     "accession preparation changed the selected owner");
             phase("accessions_reused", start);
+            if (fields) {
+                start = Clock::now();
+                const auto endpoint = study.endpoint();
+                selected_owner = endpoint;
+                for (const auto *name : {"logical_coordinates", "supported_coordinates", "nonzero_entries"})
+                    add(counts, std::string("field_access.") + name, 0);
+                retained_fields.reserve(endpoint->tensors.size());
+                for (const auto &field : endpoint->tensors) {
+                    storage::NativeAccessionRequest request;
+                    request.kind = storage::NativeAccessionKind::Tensor;
+                    request.subject = field.key;
+                    auto pin = directory->pin(request);
+                    require(pin.endpoint() == endpoint && pin.tensor().get() == &field.tensor,
+                            "field accession copied or changed the selected tensor");
+                    add(counts, "field_access.logical_coordinates", field.tensor.domain().logical_size());
+                    add(counts, "field_access.supported_coordinates", field.tensor.support().count());
+                    add(counts, "field_access.nonzero_entries", field.tensor.stored_nonzeros());
+                    retained_fields.push_back(std::move(pin));
+                }
+                add(counts, "field_access.pins", retained_fields.size());
+                capacity(counts, "field_access.pin_capacity_bytes", retained_fields);
+                phase("field_access", start);
+                start = Clock::now();
+                for (std::size_t i = 0; i < retained_fields.size(); ++i) {
+                    const auto &pin = retained_fields[i];
+                    require(pin.endpoint() == endpoint &&
+                                pin.tensor().get() == &endpoint->tensors[i].tensor &&
+                                pin.source_namespace() == selected.source_namespace() &&
+                                pin.sequence() == endpoint->sequence,
+                            "retained field pin changed source, cutoff or tensor ownership");
+                }
+                phase("fields_reused", start);
+            }
+            if (encoded_key) {
+                start = Clock::now();
+                encoded = storage::NativeEncodedTensor::from_series(selected, *encoded_key);
+                phase("encoded_select", start);
+                add(counts, "encoded.available", encoded ? 1 : 0);
+                std::cout << "value\tencoded.key\t" << *encoded_key << '\n';
+                if (encoded) {
+                    storage::NativeAccessionRequest request;
+                    request.kind = storage::NativeAccessionKind::Tensor;
+                    request.subject = *encoded_key;
+                    encoded_pin = directory->pin(request);
+                    selected_owner = encoded_pin->endpoint();
+                    start = Clock::now();
+                    add(counts, "encoded.verified_nonzeros", verify_encoded(*encoded, *encoded_pin));
+                    add(counts, "encoded.supported_coordinates", encoded->tensor().support().count());
+                    std::cout << "value\tencoded.encoding_sequence\t"
+                              << encoded->encoding_sequence() << '\n';
+                    phase("encoded_verify", start);
+                }
+            }
         }
         if (!output.empty()) {
             start = Clock::now();
@@ -215,10 +311,40 @@ int main(int argc, char **argv) {
             phase("verify_bytes", start);
             add(counts, "history.verified_bytes", original.size());
         }
-        for (const auto &[key, value] : counts) std::cout << "value\t" << key << '\t' << value << '\n';
         start = Clock::now();
         }
         phase("release", start);
+        if (fields || encoded) {
+            start = Clock::now();
+            {
+                const auto endpoint = selected_owner.lock();
+                require(endpoint || (retained_fields.empty() && !encoded),
+                        "retained field access lost its publication owner");
+                add(counts, "field_access.materialized_value_fields_after", 0);
+                for (std::size_t i = 0; i < retained_fields.size(); ++i) {
+                    require(retained_fields[i].endpoint() == endpoint &&
+                                retained_fields[i].tensor().get() == &endpoint->tensors[i].tensor,
+                            "field pin did not survive intake owner destruction");
+                    add(counts, "field_access.materialized_value_fields_after",
+                        retained_fields[i].tensor()->values().materialized_entries() ? 1 : 0);
+                }
+                add(counts, "field_access.lifetime_verified_pins", retained_fields.size());
+                if (encoded) {
+                    add(counts, "encoded.lifetime_verified_nonzeros",
+                        verify_encoded(*encoded, *encoded_pin));
+                    add(counts, "encoded.materialized_field_after",
+                        encoded_pin->tensor()->values().materialized_entries() ? 1 : 0);
+                }
+            }
+            phase("fields_lifetime", start);
+            start = Clock::now();
+            std::vector<storage::PinnedNativeAccession>().swap(retained_fields);
+            encoded.reset();
+            encoded_pin.reset();
+            require(selected_owner.expired(), "released field pins retained their publication");
+            phase("release_fields", start);
+        }
+        for (const auto &[key, value] : counts) std::cout << "value\t" << key << '\t' << value << '\n';
         phase("total", total);
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
