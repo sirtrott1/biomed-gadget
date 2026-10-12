@@ -29,6 +29,9 @@ class ResultValue {
             if (key == name) return ResultValue(value);
         throw std::invalid_argument("scientific result member absent");
     }
+    ResultValue at(std::size_t index) const {
+        return ResultValue(std::get<NativeRecordValue::Array>(value_.data).elements.at(index));
+    }
     std::string text() const {return std::get<std::string>(value_.data);}
     std::size_t size() const {return std::get<NativeRecordValue::Array>(value_.data).elements.size();}
     NativeRecordValue release() && {return std::move(value_);}
@@ -57,6 +60,16 @@ class ResultFields {
           original_fields_(endpoint_.tensors.size()), original_carriers_(endpoint_.carriers.size()),
           fields_(endpoint_), scalar_(fields_.explicit_carrier(1)) {}
     std::uint64_t axis(std::size_t size) {return fields_.explicit_carrier(size);}
+    std::uint64_t stalk(rfc::storage::StableCellKey cell, std::size_t size) {
+        if (!rfc::storage::StableSourceIndex(endpoint_.source).cell(cell))
+            throw std::invalid_argument("scientific stalk source cell absent");
+        const auto key = fields_.explicit_carrier(size);
+        auto &carrier = endpoint_.carriers.back();
+        carrier.kind = rfc::storage::TemporalCarrierKind::CellStalk;
+        carrier.grade = cell.grade;
+        carrier.cell = cell;
+        return key;
+    }
     std::uint64_t source_grade(std::size_t grade, std::optional<std::uint64_t> preferred = {});
     ResultValue publication(const NativeRecord &owner) {
         std::uint64_t key = 1;
@@ -190,6 +203,7 @@ class ResultFields {
     void bind(ResultValue binding) {bindings_.push(std::move(binding));}
     NativeRecord finish(ResultValue view) {
         view = ResultValue(consume_staged(std::move(view).release()));
+        bindings_ = ResultValue(consume_staged(std::move(bindings_).release()));
         auto root = ResultValue::object();
         root.set("schema", ResultValue::string("gadget.scientific.fields.v1"));
         root.set("view", std::move(view));

@@ -273,6 +273,194 @@ void verify_green(const std::shared_ptr<const ScientificStudy> &study) {
     catch (const rfc::runtime::ExecutionLimitExceeded &error) {refused = error.resource() == "declared buffer bytes";}
     check(refused, "Green did not identify exhausted buffer resource");
 }
+Rational scalar(const NativeRecord &owner, const NativeRecord &descriptor) {
+    const auto coefficients = values(owner, descriptor);
+    check(coefficients.size() == 1, "native scalar shape differs");
+    return coefficients.front();
+}
+void verify_structural(const NativeRecord &publication) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner, view);
+    audit_fields(owner, owner.at("bindings"));
+    if (view.at("status").text() == "planned") return;
+    const auto &metric = *field(owner, view.at("metric"));
+    check(metric.role == rfc::storage::TemporalTensorRole::Metric, "structural metric lost role");
+    const auto states = view.at("states"), scenarios = view.at("scenarios");
+    const auto blocks = view.at("exchange_blocks");
+    for (std::size_t b = 0; b < blocks.size(); ++b) {
+        const auto coordinates = blocks.at(b).at("coordinates");
+        const auto assigned = values(owner, states.at(0).at("block_source_coordinates").at(b));
+        check(coordinates.size() > 0 && coordinates.size() == assigned.size(),
+              "exchange block coordinate witness lost original rows");
+        for (std::size_t i = 0; i < coordinates.size(); ++i)
+            check(Rational(coordinates.at(i).integer()) == assigned[i], "observed assignment differs from block coordinates");
+    }
+    bool missing = false, supported_zero = false;
+    for (std::size_t c = 0; c < scenarios.size(); ++c) {
+        const auto scenario = scenarios.at(c), records = scenario.at("statistics");
+        NativeRecord statistics = owner.at("bindings").at(0);
+        bool found = false;
+        for (std::size_t b = 0; b < owner.at("bindings").size(); ++b) {
+            const auto binding = owner.at("bindings").at(b);
+            if (binding.has("kind") && binding.at("kind").text() == "structural_reference_statistics" &&
+                binding.at("scenario").text() == scenario.at("id").text()) {
+                statistics = binding.at("statistics"); found = true; break;
+            }
+        }
+        check(found, "structural score family absent");
+        const auto &scores = *field(owner, statistics);
+        check(scores.input != scores.output, "reference states and hypotheses merged");
+        const auto hypotheses = scenario.at("hypotheses");
+        check(scores.tensor.domain().extents() == std::vector<std::size_t>{hypotheses.size(), states.size()},
+              "structural score axes changed");
+        for (std::size_t state_ = 0; state_ < states.size(); ++state_) {
+            const auto action = states.at(state_).at("assignment");
+            check(field(owner, action)->input == field(owner, action)->output,
+                  "assignment changed original row carrier");
+            const auto record = records.at(state_);
+            for (std::size_t h = 0; h < hypotheses.size(); ++h) {
+                const auto value = record.at("statistics").at(h);
+                const auto index = h * states.size() + state_;
+                check(scores.tensor.support().contains(index) == (value.kind() != NativeRecordKind::Null),
+                      "structural missing score became supported");
+                if (value.kind() == NativeRecordKind::Null) missing = true;
+                else {
+                    check(state(scores.tensor, index) == scalar(owner, value), "structural score owner differs");
+                    supported_zero = supported_zero || scalar(owner, value) == 0;
+                }
+            }
+            if (record.has("readings")) {
+                const auto fields = record.at("readings").at("fields");
+                for (std::size_t f = 0; f < fields.size(); ++f) {
+                    const auto value = fields.at(f);
+                    const auto original = values(owner, view.at("source_fields").at(value.at("source_field").text()));
+                    const auto full = values(owner, value.at("full"));
+                    check(apply(owner, action, original) == full, "assignment lost original full field");
+                    auto reconstructed = rfc::numeric::add(values(owner, value.at("gradient")),
+                        rfc::numeric::add(values(owner, value.at("curl")), values(owner, value.at("harmonic"))));
+                    check(reconstructed == full, "structural sectors do not reconstruct");
+                    check(field(owner, value.at("full"))->output == field(owner, view.at("source_fields").at(value.at("source_field").text()))->output,
+                          "structural field lost original carrier");
+                }
+            }
+        }
+        for (std::size_t h = 0; h < hypotheses.size(); ++h) {
+            const auto hypothesis = hypotheses.at(h);
+            if (hypothesis.at("reference_tail_mass").kind() == NativeRecordKind::Null) continue;
+            const auto threshold = scalar(owner, hypothesis.at("observed"));
+            Rational tail{0}, ties{0};
+            for (std::size_t state_ = 0; state_ < states.size(); ++state_) {
+                const auto value = state(scores.tensor, h * states.size() + state_);
+                const auto mass = scalar(owner, states.at(state_).at("mass"));
+                if (value >= threshold) tail += mass;
+                if (value == threshold) ties += mass;
+            }
+            check(tail == scalar(owner, hypothesis.at("reference_tail_mass")) &&
+                  ties == scalar(owner, hypothesis.at("tie_mass")), "native finite tail differs from complete counting law");
+        }
+    }
+    if (view.at("status").text() == "undefined_family_statistic") check(missing, "undefined law lost absent support");
+    if (view.at("source_fields").has("all.zero")) check(supported_zero || missing, "zero/undefined fixture lost");
+    if (view.has("scenario_sensitivity")) {
+        const auto summaries = view.at("scenario_sensitivity");
+        for (std::size_t h = 0; h < summaries.size(); ++h) {
+            const auto summary = summaries.at(h);
+            if (summary.at("status").text() != "completed") continue;
+            Rational mean{0}, variance{0};
+            for (std::size_t c = 0; c < scenarios.size(); ++c)
+                mean += scalar(owner, scenarios.at(c).at("weight")) * scalar(owner, scenarios.at(c).at("hypotheses").at(h).at("observed"));
+            for (std::size_t c = 0; c < scenarios.size(); ++c) {
+                const Rational delta = scalar(owner, scenarios.at(c).at("hypotheses").at(h).at("observed")) - mean;
+                variance += scalar(owner, scenarios.at(c).at("weight")) * delta * delta;
+            }
+            check(mean == scalar(owner, summary.at("weighted_mean")) && variance == scalar(owner, summary.at("weighted_variance")),
+                  "native scenario moments differ");
+        }
+    }
+}
+void verify_sections(const NativeRecord &publication) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner, view);
+    audit_fields(owner, owner.at("bindings"));
+    const auto stalks = owner.at("bindings").at(0).at("stalks");
+    std::set<std::uint64_t> axes;
+    for (std::size_t c = 0; c < stalks.size(); ++c) {
+        const auto stalk = stalks.at(c);
+        check(axes.insert(stalk.at("carrier").integer().get_ui()).second, "independent stalks share carriers");
+        const auto &inclusion = *field(owner, stalk.at("direct_sum_inclusion"));
+        check(inclusion.input == stalk.at("carrier").integer().get_ui(), "stalk inclusion lost actual domain");
+        check(inclusion.input != inclusion.output, "stalk/direct sum identified by dimension");
+        check(inclusion.tensor.support().count() == inclusion.tensor.domain().logical_size(), "stalk inclusion lost supported zero");
+    }
+    const auto index = rfc::storage::StableSourceIndex(owner.endpoint()->source);
+    const auto carrier_index = rfc::storage::temporal_endpoint_detail::carriers(*owner.endpoint());
+    const auto maps = view.at("maps");
+    for (std::size_t m = 0; m < maps.size(); ++m) {
+        const auto &map = *field(owner, maps.at(m).at("matrix"));
+        check(map.owner.kind == rfc::storage::TemporalOwnerKind::Occurrence, "section map lost occurrence owner");
+        const auto occurrence = map.owner.occurrence;
+        check(occurrence.upper_grade.value == maps.at(m).at("grade").integer() &&
+              occurrence.key.value == std::stoull(maps.at(m).at("key").text()), "section map flag identity differs");
+        const auto slot = index.occurrence(occurrence).value();
+        const auto &arena = owner.endpoint()->source.grade(occurrence.upper_grade);
+        const auto upper = rfc::storage::stable_cell_key(owner.endpoint()->source,
+            {occurrence.upper_grade, arena.upper_index[slot]});
+        const auto lower = rfc::storage::stable_cell_key(owner.endpoint()->source,
+            {{static_cast<std::uint16_t>(occurrence.upper_grade.value - 1u)}, arena.lower_index[slot]});
+        const bool upward = view.at("construction").text() == "cellular_sheaf";
+        check(carrier_index.at(*map.input)->cell == (upward ? lower : upper) &&
+              carrier_index.at(*map.output)->cell == (upward ? upper : lower), "section map directions/carriers differ");
+    }
+    const auto sections = view.at("sections");
+    for (std::size_t s = 0; s < sections.size(); ++s) {
+        const auto section = sections.at(s);
+        const auto input = values(owner, section.at("values"));
+        if (section.has("glued")) {
+            const auto glued = values(owner, section.at("glued")), residual = values(owner, section.at("residual"));
+            check(rfc::numeric::add(glued, residual) == input && rfc::numeric::dot(glued, residual) == 0,
+                  "native section reconstruction/orthogonality differs");
+            check(apply(owner, section.at("coboundary"), input) == values(owner, section.at("coboundary_defect")),
+                  "native section defect differs");
+            check(rfc::numeric::is_zero(apply(owner, section.at("coboundary"), glued)), "glued section has nonzero defect");
+            check(scalar(owner, section.at("residual_quadrance")) == rfc::numeric::dot(residual, residual), "native section quadrance differs");
+        }
+        if (section.has("relations")) {
+            const auto branches = section.at("relations");
+            for (std::size_t b = 0; b < branches.size(); ++b) {
+                const auto branch = branches.at(b), legs = branch.at("legs");
+                for (std::size_t l = 0; l < legs.size(); ++l) {
+                    const auto leg = legs.at(l);
+                    bool found = false;
+                    for (std::size_t m = 0; m < maps.size(); ++m) {
+                        const auto &map = *field(owner, maps.at(m).at("matrix"));
+                        if (map.owner.occurrence.upper_grade.value != section.at("grade").integer() ||
+                            index.occurrence(map.owner.occurrence).value() != leg.at("slot").integer()) continue;
+                        check(apply(owner, maps.at(m).at("matrix"), values(owner, branch.at("upper"))) == values(owner, leg.at("value")),
+                              "native relation leg differs from its actual ordered map");
+                        found = true; break;
+                    }
+                    check(found, "native relation leg lost occurrence map");
+                }
+            }
+        }
+        if (section.at("input_origin").text() == "admitted source fields") {
+            const auto sources = owner.at("bindings").at(1).at("sections");
+            bool found = false;
+            for (std::size_t b = 0; b < sources.size(); ++b) if (sources.at(b).at("id").text() == section.at("id").text()) {
+                rfc::numeric::RationalVector assembled(input.size());
+                const auto fields = sources.at(b).at("fields");
+                for (std::size_t f = 0; f < fields.size(); ++f) {
+                    const auto binding = fields.at(f);
+                    check(field(owner, binding.at("realization"))->input == field(owner, binding.at("field"))->output,
+                          "source section uses foreign field carrier");
+                    assembled = rfc::numeric::add(assembled, apply(owner, binding.at("realization"), values(owner, binding.at("field"))));
+                }
+                check(assembled == input, "native source section operand differs"); found = true;
+            }
+            check(found, "source section lost original field bindings");
+        }
+    }
+}
 void verify_replay(const NativeRecord &expected, const NativeRecord &actual) {
     const auto a = expected.endpoint(), b = actual.endpoint();
     check(a->tensors.size() == b->tensors.size(), "replay field family differs");
@@ -308,6 +496,8 @@ int main(int argc, char **argv) try {
         const auto result = session.execute_record(query);
         if (std::string(argv[4]) == "response") verify_response(result, original);
         else if (std::string(argv[4]) == "ensemble") verify_ensemble(result, original);
+        else if (std::string(argv[4]) == "structural") verify_structural(result);
+        else if (std::string(argv[4]) == "sections") verify_sections(result);
         else if (std::string(argv[4]) != "finite") verify_model(result, original);
         else {
             const auto fields = result.at("result").at("fields");
@@ -361,7 +551,12 @@ int main(int argc, char **argv) try {
     }
     check(request_refused, "query detached from original request owner was accepted");
     auto endpoint = *results.front().endpoint();
-    auto &tensor = endpoint.tensors.back().tensor;
+    const auto candidate = std::find_if(endpoint.tensors.rbegin(), endpoint.tensors.rend(), [](const auto &item) {
+        return item.role != rfc::storage::TemporalTensorRole::Metric && item.tensor.domain().logical_size() > 0 && item.tensor.support().contains(0);
+    });
+    check(candidate != endpoint.tensors.rend(), "tamper fixture has no supported result");
+    const auto tamper_index = static_cast<std::size_t>(std::distance(endpoint.tensors.begin(), candidate.base()) - 1);
+    auto &tensor = endpoint.tensors.at(tamper_index).tensor;
     const auto size = tensor.domain().logical_size();
     check(size > 0 && tensor.support().contains(0), "tamper fixture has no supported field");
     auto entries = tensor.values().entries();
@@ -379,7 +574,7 @@ int main(int argc, char **argv) try {
     try {(void)replay_scientific_record(forged);} catch (const std::invalid_argument &) {refused = true;}
     check(refused, "changed field replay accepted with unchanged source digest");
     auto absent_endpoint = *results.front().endpoint();
-    auto &absent = absent_endpoint.tensors.back().tensor;
+    auto &absent = absent_endpoint.tensors.at(tamper_index).tensor;
     auto stored = absent.values().entries();
     std::vector<rfc::numeric::SparseRationalEntry> retained;
     for (const auto &entry : stored) if (entry.index != 0) retained.push_back(entry);

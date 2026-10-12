@@ -16,6 +16,7 @@
 #include <gadget/research.hpp>
 #include <gadget/resources.hpp>
 #include <gadget/sections.hpp>
+#include "scientific_sections.hpp"
 #include <gadget/structure.hpp>
 #include <gadget/study.hpp>
 #include <mutex>
@@ -258,7 +259,7 @@ struct ScientificSession::State {
         if (native) { *native = record; return Json::object(); }
         return scientific_detail::result_fields_view(record);
     }
-    Json structural_calibration_query(const Json &query, bool validate) {
+    Json structural_calibration_query(const Json &query, bool validate, std::optional<NativeRecord> *native = nullptr) {
         const auto name = query.at("context").text();
         const auto axes = query.at("fields");
         source_array(axes, "structural fields");
@@ -317,19 +318,19 @@ struct ScientificSession::State {
             const auto &arena = complex.grade(retained->grade);
             const auto [begin, end] = arena.incidence_range(retained->index);
             std::set<std::size_t> participants;
-            auto occurrences = Json::array();
+            auto occurrences = scientific_detail::ResultValue::array();
             for (std::size_t slot = begin; slot < end; ++slot) {
                 if (arena.aspects.get(complex.signature().existence_aspect(), slot))
                     participants.insert(arena.lower_index[slot]);
                 const StableOccurrenceKey occurrence{retained->grade,
                                                      arena.occurrence_identities[slot]};
-                auto witness = Json::parse(source.occurrence_record(occurrence).dump_compact());
+                auto witness = scientific_detail::ResultValue(source.occurrence_record(occurrence));
                 witness.set("coordinate", cardinality(arena.lower_index[slot]));
                 witness.set("exists", Json::boolean(arena.aspects.get(
                                           complex.signature().existence_aspect(), slot)));
                 witness.set(
                     "coefficient",
-                    Json::string(complex.incidence_coefficient(retained->grade, slot).get_str()));
+                    scientific_detail::ResultValue(NativeRecordValue(complex.incidence_coefficient(retained->grade, slot))));
                 occurrences.push(witness);
             }
             const auto cells = declaration.at("cells");
@@ -349,17 +350,26 @@ struct ScientificSession::State {
             require(!declared.empty() && declared == participants,
                     "exchange block must retain every distinct existing occurrence participant, "
                     "including cancelled and supported-zero participants");
-            block.witness = Json::parse(declaration.dump_compact());
-            block.witness.set("coordinates", Json::array());
+            block.witness = scientific_detail::ResultValue(declaration);
+            auto coordinates = scientific_detail::ResultValue::array();
             for (const auto coordinate : block.coordinates)
-                block.witness.at("coordinates").push(cardinality(coordinate));
+                coordinates.push(scientific_detail::ResultValue::count(coordinate));
+            block.witness.set("coordinates", std::move(coordinates));
             block.witness.set("source_relation", source.cell_record(source.resolve_cell(relation)));
             block.witness.set("source_occurrences", occurrences);
             blocks.push_back(std::move(block));
         }
+        if (validate) {
+            (void)research_detail::structural_reference_calibration(
+                *prepared.study, query, grade, values, blocks, true, resources, nullptr);
+            return Json::object();
+        }
+        scientific_detail::ResultFields publication(owner->native_publication());
+        scientific_detail::ResultFieldContext binding(publication, owner->native_publication(),
+            prepared.to_ambient, std::pair<std::size_t, std::uint64_t>{grade.value, *tensor(first).output});
         auto result = research_detail::structural_reference_calibration(
-            *prepared.study, query, grade, values, blocks, validate, resources);
-        if (!validate) {
+            *prepared.study, query, grade, values, blocks, false, resources, &binding);
+        {
             result.set("native_carrier", Json::string(std::to_string(*tensor(first).output)));
             auto coordinates = Json::array();
             for (std::size_t i = 0; i < complex.grade(grade).cell_count(); ++i) {
@@ -373,7 +383,9 @@ struct ScientificSession::State {
             }
             result.set("coordinate_carrier", coordinates);
         }
-        return result;
+        const auto record = publication.finish(std::move(result));
+        if (native) {*native = record; return Json::object();}
+        return scientific_detail::result_fields_view(record);
     }
     void comparable(const std::string &old_name, const std::string &new_name) const {
         const auto &a = source.fields.at(old_name).declaration;
@@ -409,7 +421,8 @@ struct ScientificSession::State {
                 "native result/provenance coordinate budget");
         return analysis;
     }
-    Json local_declaration(const Json &query, bool legacy_budget = true) {
+    Json local_declaration(const Json &query, bool legacy_budget = true,
+        std::map<std::string, Vector> *native_operands = nullptr) {
         auto resolved = Json::parse(query.dump()), sections = Json::array();
         const auto name = query.at("context").text();
         auto &prepared = context(name);
@@ -446,16 +459,68 @@ struct ScientificSession::State {
                         require(stalk.at("axes").dump() == axes.dump(),
                                 "source section axes must follow their declared field bindings");
                 }
-                auto values = Json::array();
+                Vector values;
                 for (std::size_t c = 0; c < prepared.to_ambient.at(grade).size(); ++c)
-                    for (const auto &v : inputs)
-                        values.push(Json::string(v[c].get_str()));
-                item.set("values", values);
+                    for (const auto &v : inputs) values.push_back(v[c]);
+                if (native_operands) {
+                    require(native_operands->emplace(item.at("id").text(), std::move(values)).second,
+                        "duplicate native section operand");
+                } else {
+                    auto rendered = Json::array();
+                    for (const auto &value : values) rendered.push(Json::string(value.get_str()));
+                    item.set("values", rendered);
+                }
             }
             sections.push(item);
         }
         resolved.set("sections", sections);
         return resolved;
+    }
+    NativeRecord local_section_fields(const Json &query, bool validate = false) {
+        const auto name = query.at("context").text();
+        auto &prepared = context(name);
+        std::map<std::string, Vector> operands;
+        const auto declaration = local_declaration(query, false, &operands);
+        if (validate) {
+            (void)scientific_detail::analyze_local_section_fields(*prepared.study, declaration,
+                nullptr, &operands, true);
+            return owner->native_publication();
+        }
+        scientific_detail::ResultFields publication(owner->native_publication());
+        auto analysis = scientific_detail::analyze_local_section_fields(*prepared.study, declaration,
+            &publication, &operands);
+        auto source_binding = scientific_detail::ResultValue::object();
+        source_binding.set("kind", scientific_detail::ResultValue::string("local_section_source_fields"));
+        auto sections = scientific_detail::ResultValue::array();
+        for (std::size_t s = 0; s < query.at("sections").size(); ++s) {
+            const auto item = query.at("sections").at(s);
+            if (!item.has("fields")) continue;
+            const auto grade = static_cast<std::size_t>(item.at("grade").integer());
+            auto section = scientific_detail::ResultValue::object();
+            section.set("id", item.at("id"));
+            auto fields = scientific_detail::ResultValue::array();
+            for (std::size_t a = 0; a < item.at("fields").size(); ++a) {
+                const auto id = item.at("fields").at(a).text();
+                const auto &original = tensor(id);
+                const auto carrier = source.field_pins.at(original.key).carrier();
+                auto field = scientific_detail::ResultValue::object();
+                field.set("id", scientific_detail::ResultValue::string(id));
+                field.set("field", publication.stored(original.key, "vector"));
+                rfc::numeric::ExactMatrix realization(operands.at(item.at("id").text()).size(),
+                    carrier->domain.logical_size());
+                for (std::size_t c = 0; c < prepared.to_ambient.at(grade).size(); ++c)
+                    realization.set(c * item.at("fields").size() + a,
+                        prepared.to_ambient.at(grade)[c], Rational{1});
+                field.set("realization", scientific_detail::ResultFields::stage_matrix(realization,
+                    *original.output, analysis.grade_carriers.at(grade)));
+                fields.push(std::move(field));
+            }
+            section.set("fields", std::move(fields));
+            sections.push(std::move(section));
+        }
+        source_binding.set("sections", std::move(sections));
+        publication.bind(std::move(source_binding));
+        return publication.finish(std::move(analysis.view));
     }
     Json ablation_query(const Json &query, bool validate) {
         const auto name = query.at("context").text();
@@ -1310,8 +1375,7 @@ struct ScientificSession::State {
             return;
         }
         if (operation == "local_sections") {
-            (void)analyze_local_sections(*context(query.at("context").text()).study,
-                                         local_declaration(query), true);
+            (void)local_section_fields(query, true);
             return;
         }
         if (operation == "tensor_window") {
@@ -1851,9 +1915,16 @@ struct ScientificSession::State {
             operation != "hodge_frame_decomposition" && operation != "linear_response_observation" &&
             operation != "declared_response_transition" && operation != "metric_relative_novelty" &&
             operation != "observed_response_model" && operation != "constrained_response_model" &&
-            operation != "relational_field_ensemble")
+            operation != "relational_field_ensemble" && operation != "structural_reference_calibration" &&
+            operation != "local_sections")
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
+            if (operation == "local_sections") return local_section_fields(admitted);
+            if (operation == "structural_reference_calibration") {
+                std::optional<NativeRecord> result;
+                (void)structural_calibration_query(admitted, false, &result);
+                return *result;
+            }
             if (operation == "relational_field_ensemble") {
                 std::optional<NativeRecord> result;
                 (void)ensemble_query(admitted, false, &result);
@@ -1996,8 +2067,7 @@ struct ScientificSession::State {
             }
             result.set("result", out);
         } else if (operation == "local_sections") {
-            result.set("result", analyze_local_sections(*context(query.at("context").text()).study,
-                                                        local_declaration(query)));
+            result.set("result", scientific_detail::result_fields_view(local_section_fields(query)));
         } else if (operation == "tensor_window") {
             const auto id = query.at("field").text();
             const auto pin = source.field_pins.at(source.fields.at(id).tensor);

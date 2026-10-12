@@ -55,6 +55,17 @@ NativeRecordValue ResultFields::consume_staged(NativeRecordValue value) {
                 tensor.role = static_cast<rfc::storage::TemporalTensorRole>(key.get_ui());
             }
             tensor.interpretation = "scientific_result";
+            if (auto *interpretation = member("interpretation"))
+                tensor.interpretation = std::get<std::string>(interpretation->data);
+            if (member("occurrence_key")) {
+                const auto &grade = std::get<rfc::numeric::Integer>(member("occurrence_grade")->data);
+                const auto &key = std::get<rfc::numeric::Integer>(member("occurrence_key")->data);
+                if (grade <= 0 || grade > std::numeric_limits<std::uint16_t>::max() ||
+                    key <= 0 || !mpz_fits_ulong_p(key.get_mpz_t()))
+                    throw std::invalid_argument("staged scientific occurrence owner");
+                tensor.owner.kind = rfc::storage::TemporalOwnerKind::Occurrence;
+                tensor.owner.occurrence = {{static_cast<std::uint16_t>(grade.get_ui())}, {key.get_ui()}};
+            }
             tensor.tensor = std::move(std::get<rfc::numeric::SparseRationalTensor>(member("tensor")->data));
             std::optional<NativeRecordValue> coordinates;
             if (auto *item = member("coordinates")) {
@@ -185,6 +196,25 @@ Json result_tensor_view(const NativeRecord &record) {
             for (std::size_t i = 0; i < tensor.domain().logical_size(); ++i)
                 out.push(tensor.support().contains(i) ? Json::string(tensor.state(i)->get_str()) : Json{});
         }
+        return out;
+    }
+    if (display == "dense_matrix" || display == "matrix_values") {
+        if (tensor.domain().extents().size() != 2) throw std::invalid_argument("scientific matrix display");
+        const auto shape = tensor.domain().extents();
+        auto values = Json::array();
+        for (std::size_t i = 0; i < shape[0]; ++i) {
+            auto row = Json::array();
+            for (std::size_t j = 0; j < shape[1]; ++j) {
+                const auto value = tensor.state(i * shape[1] + j);
+                row.push(value ? Json::string(value->get_str()) : Json{});
+            }
+            values.push(row);
+        }
+        if (display == "matrix_values") return values;
+        auto out = Json::object();
+        out.set("rows", cardinality(shape[0]));
+        out.set("columns", cardinality(shape[1]));
+        out.set("values", values);
         return out;
     }
     if ((display != "sparse_matrix" && display != "declared_map") || tensor.domain().extents().size() != 2)
