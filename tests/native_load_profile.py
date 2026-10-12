@@ -44,7 +44,12 @@ def main():
         command = [profile, "--input", source, "--accessions", "--rewrite", rewritten, *extra]
         phases, values = observations(run(command).stdout)
         assert set(phases) == {"decode", "select", "account", "accessions",
-                               "accessions_reused", "rewrite", "verify_bytes"}
+                               "accessions_reused", "rewrite", "verify_bytes", "release", "total"}
+        assert values["process.cpu_ticks_per_second"] > 0
+        cpu = {key.split(".")[3]: value for key, value in values.items()
+               if key.startswith("phase.cpu.")}
+        if sys.platform == "linux":
+            assert set(cpu) == set(phases) and cpu["total"] >= cpu["decode"]
         assert values["source.grades"] == 4 and values["source.cells"] == 3
         assert values["source.occurrences"] == 130
         assert values["history.components"] == 3

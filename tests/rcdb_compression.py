@@ -38,8 +38,41 @@ if len(sys.argv) > 4 and sys.argv[4] == "--reopen":
 
 root.mkdir(parents=True, exist_ok=True)
 from rexgraph import io
+adapter.install_format(gadget=binary)
 adapter.install_compressed_format(gadget=binary, max_encoded_bytes=len(raw),
                                   max_output_bytes=len(raw))
+
+replacement_control = root / "replacement.json"
+replacement_control.write_text('{"purpose":"canonical replacement control"}')
+replacement_archive = root / "replacement.rfcxs"
+subprocess.run([str(binary), "native-record", "--input", str(replacement_control),
+                "--out", str(replacement_archive)], check=True)
+replacement = replacement_archive.read_bytes()
+source_copy = root / "changing-source.rfcxs"
+original_run = subprocess.run
+replacements = []
+
+
+def replace_source(command, **kwargs):
+    if command[1] == "native-record":
+        path = Path(command[command.index("--input") + 1])
+        if path == source_copy:
+            path.write_bytes(replacement)
+            replacements.append(path)
+    return original_run(command, **kwargs)
+
+
+for action in [lambda: io.load(source_copy),
+               lambda: adapter.compress_publication(source_copy, root / "changed.rcblob",
+                                                     gadget=binary, codec="zlib")]:
+    source_copy.write_bytes(raw)
+    subprocess.run = replace_source
+    try:
+        rejects(action)
+    finally:
+        subprocess.run = original_run
+assert len(replacements) == 2 and not (root / "changed.rcblob").exists()
+assert publication.read_bytes() == raw
 for name in ("zstd", "zlib"):
     path = root/(name+".rfcxs.rcblob")
     assert adapter.compress_publication(publication, path, gadget=binary, codec=name) == path

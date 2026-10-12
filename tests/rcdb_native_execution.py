@@ -2,6 +2,7 @@
 from contextlib import closing
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 
 from rcdb import LocalStore, RecordCodec
@@ -16,6 +17,42 @@ spec.loader.exec_module(adapter)
 binary, workspace, request, root = map(lambda x: Path(x).resolve(), sys.argv[1:5])
 compression = BlobCodecSpec(name=sys.argv[5] if len(sys.argv) > 5 else "none")
 root.mkdir(parents=True, exist_ok=True)
+workspace_bytes, request_bytes = workspace.read_bytes(), request.read_bytes()
+
+
+def rejects(action):
+    try:
+        action()
+    except ValueError:
+        return
+    raise AssertionError("Expected native execution refusal")
+
+
+for invalid in (b"invalid", bytearray(request_bytes), request_bytes[:-1]):
+    rejects(lambda: adapter.execute_publication(workspace_bytes, invalid, gadget=binary))
+    rejects(lambda: adapter.execute_publication(invalid, request_bytes, gadget=binary))
+
+# A canonical file replacement must not change the already captured query answer.
+original_run = subprocess.run
+replacements = []
+
+
+def replace_answer(command, **kwargs):
+    if command[1] == "native-record":
+        path = Path(command[command.index("--input") + 1])
+        if path.name == "result.rfcxs":
+            path.write_bytes(request_bytes)
+            replacements.append(path)
+    return original_run(command, **kwargs)
+
+
+subprocess.run = replace_answer
+try:
+    rejects(lambda: adapter.execute_publication(workspace_bytes, request_bytes, gadget=binary))
+finally:
+    subprocess.run = original_run
+assert len(replacements) == 1
+assert workspace.read_bytes() == workspace_bytes and request.read_bytes() == request_bytes
 codec = adapter.install_codec(gadget=binary, max_bytes=RecordCodec.__dataclass_fields__["max_bytes"].default)
 adapter.install_rcql_executor(gadget=binary)
 with closing(LocalStore(root/"execution.rcdb", compression=compression,
