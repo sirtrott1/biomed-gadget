@@ -3124,6 +3124,134 @@
         "boundary_policy"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "read_protocol_evidence"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resource_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "protocol": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 1
+            },
+            "count_unit": {
+              "const": "read_record_occurrence"
+            },
+            "segments": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "enum": [
+                      "barcode",
+                      "umi",
+                      "sequence"
+                    ]
+                  },
+                  "start": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "end": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "strand": {
+                    "enum": [
+                      "+",
+                      "-"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "role",
+                  "start",
+                  "end",
+                  "strand"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "barcode": {
+              "type": "object",
+              "properties": {
+                "segment": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "whitelist_resource": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "whitelist_sha256": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}$"
+                },
+                "objective": {
+                  "const": "minimum_substitutions"
+                },
+                "maximum_substitutions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "symbol_rule": {
+                  "const": "literal_iupac_tokens"
+                }
+              },
+              "required": [
+                "segment",
+                "whitelist_resource",
+                "whitelist_sha256",
+                "objective",
+                "maximum_substitutions",
+                "symbol_rule"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "evidence",
+            "count_unit",
+            "segments"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "resource_sha256",
+        "protocol"
+      ],
+      "additionalProperties": false
     }
   ]
 }
