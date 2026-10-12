@@ -89,3 +89,30 @@ A model clarification retains its original reason and marks the selected facts a
 unreported. The catalog already contains every selected value; a model
 clarification does not establish that the data is unavailable. Rational claim
 values must be literal strings, rather than objects carrying additional assertions.
+
+The C++ `check_certificate_claims_record` consumer checks an actual native
+scientific or biomedical operation without using its numerical display. Its
+request uses `gadget.claims.native.v1`, the operation's `source_namespace` as
+decimal text, its actual `cutoff` as an integer, and an `items` array. Each item
+declares `path`, `value_type`, `comparison` and `value`. Paths start within the
+scientific `result.fields.view` or biomedical `result.result`; they select native
+object members and array elements. Rational expectations may use literal fraction
+text. Rational observations must be typed values or actual encoded tensors.
+
+For a nonscalar tensor, add `coordinate` with its original flat coordinate.
+This selects the actual tensor axis, independently of any compact display's
+selected-coordinate order. A scalar descriptor supplies its own coordinate.
+Reported zero is comparable; absent support refuses a numerical claim. Counts
+and signed integers retain native arbitrary precision. Text and Boolean values
+support equality and inequality, and numerical types also support ordering.
+No units or clinical meaning are inferred from a coefficient or carrier.
+
+The resulting native receipt retains every observation, comparison and original
+request, with the complete supplying operation in `result.source_publication`.
+Tensor observations also retain their namespace, cutoff, encoding sequence,
+tensor, coordinate, actual carriers and interpretation. Moving or reopening the
+receipt preserves those owners. These literal checks do not replace computation
+replay or validate the biological interpretation of the selected quantity.
+An unmigrated numerical certificate or a mismatched namespace/cutoff is refused.
+The standalone C++ example in `native.cpp` accepts an operation RFCXS file,
+native or JSON control request, and a new RFCXS output path.
