@@ -77,7 +77,31 @@ int main(int argc, char **argv) {
         for (std::size_t i = 0; i < whitelist.size(); ++i)
             whitelist_bytes += ">w" + std::to_string(i) + " original dictionary\n" +
                                whitelist[i].substr(0, 1) + "\n" + whitelist[i].substr(1) + "\n";
-        const auto resources = images(read_bytes, whitelist_bytes);
+        const std::string repeated_bytes =
+            "@same first lane\r\naaAnn\r\n+same first lane\r\n!5I~!\r\n"
+            "@same second lane\nAAANN\n+\n!!!!!\n@same\nCCCNN\n+\n55555\n";
+        auto resources = images(read_bytes, whitelist_bytes);
+        resources.emplace("repeated_reads", ResourceImage{
+            Json::parse(R"({"format":"fastq"})"), repeated_bytes, {}});
+        auto repeated_query = query(repeated_bytes, whitelist_bytes);
+        repeated_query.set("resource", Json::string("repeated_reads"));
+        const auto repeated_fields = NativeRecord::create(read_protocol_fields(resources, repeated_query),
+                                                          new_native_record_namespace());
+        check(repeated_fields.at("record_count").integer() == 3,
+              "protocol merged repeated FASTQ identifiers");
+        for (std::size_t i = 0; i < 3; ++i) {
+            const auto row = repeated_fields.at("records").at(i);
+            check(row.at("record_index").integer() == i && row.at("read_id").text() == "same" &&
+                      row.at("segments").at(0).at("tokens").text() == (i < 2 ? "AAA" : "CCC") &&
+                      row.at("segments").at(1).at("tokens").text() == "NN" &&
+                      row.at("minimum_substitutions").integer() == 0 &&
+                      row.at("barcode_candidates").size() == (i < 2 ? 2 : 1),
+                  "repeated label changed original evidence or minimum candidate family");
+            if (i > 0)
+                check(row.at("source_start").integer() >
+                          repeated_fields.at("records").at(i - 1).at("source_end").integer(),
+                      "repeated original source occurrences overlap or reorder");
+        }
         for (const auto &strand : {"+", "-"})
             for (std::size_t budget = 0; budget <= 3; ++budget) {
                 auto request = query(read_bytes, whitelist_bytes);
@@ -195,7 +219,7 @@ int main(int argc, char **argv) {
 
         auto spec = Json::parse(R"({"schema":"gadget.assays.import.v1","id":"protocol","design":{"question":"Retain source bound protocol evidence","population":"Authored fixtures","selection":"All records","limitations":["No biological molecule inference"]},"assays":[],"resources":[],"links":[]})");
         for (const auto &[id, image] : resources) {
-            const auto name = id + (id == "reads" ? ".fastq" : ".fa");
+            const auto name = id + (image.declaration.at("format").text() == "fastq" ? ".fastq" : ".fa");
             write_text(root / name, image.bytes);
             auto resource = Json::parse(R"({"id":"","format":"","source":{"path":"","sha256":""},"method":"Authored complete fixture"})");
             resource.set("id", Json::string(id)); resource.set("format", image.declaration.at("format"));
@@ -204,10 +228,46 @@ int main(int argc, char **argv) {
             spec.at("resources").push(resource);
         }
         write_text(root / "import.json", spec.dump());
+        auto physical_spec = Json::parse(R"({"schema":"gadget.bioinformatics.file.v1","format":"fastq","source":{"path":"repeated_reads.fastq","sha256":""}})");
+        physical_spec.at("source").set("sha256", Json::string("sha256:" + sha256(repeated_bytes)));
+        write_text(root / "physical.json", physical_spec.dump());
+        const auto physical = inspect_bioinformatics_record(root / "physical.json");
+        const auto &physical_source = physical.endpoint()->source;
+        check(physical.at("result").at("records").integer() == 3 &&
+                  physical_source.grade({1}).cell_count() == 3 &&
+                  physical_source.grade({1}).incidence_count() == 3,
+              "native physical source merged repeated FASTQ labels");
+        const auto retained_bytes = physical.at("result").at("original").bytes();
+        check(retained_bytes.size() == repeated_bytes.size() &&
+                  std::equal(retained_bytes.begin(), retained_bytes.end(),
+                             reinterpret_cast<const std::byte *>(repeated_bytes.data())),
+              "native physical source changed original FASTQ headers or quality bytes");
+        for (std::size_t i = 0; i < 3; ++i)
+            check(physical_source.grade({1}).relation_identities.at(i).value == i + 1 &&
+                      physical_source.occurrence_identity({1}, i).value == i + 1,
+                  "native physical source occurrence identities differ from original order");
         import_assays(root / "import.json", root / "workspace");
         auto workspace = std::make_unique<AssayWorkspace>(root / "workspace/workspace.rfcxs");
         const auto request = admit_record_view(original_request);
         const auto result = workspace->execute_record(request);
+        const auto repeated_request = admit_record_view(repeated_query);
+        const auto repeated_result = workspace->execute_record(repeated_request);
+        check(same_values(repeated_result.at("result").at("result"), repeated_fields),
+              "owning workspace discarded repeated original read occurrences");
+        const auto assembly = Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"sequence_assembly_graph","resource":"repeated_reads","k":2,"ambiguity":"literal_tokens","evidence":"Every original repeated read occurrence"})");
+        const auto assembled = workspace->execute_record(admit_record_view(assembly));
+        const auto assembly_fields = assembled.at("result").at("result");
+        const auto source_read_key = assembly_fields.at("source_read").integer();
+        const rfc::storage::TemporalTensor *source_reads = nullptr;
+        for (const auto &tensor : assembled.endpoint()->tensors)
+            if (rfc::numeric::Integer(std::to_string(tensor.key)) == source_read_key)
+                source_reads = &tensor;
+        check(source_reads && source_reads->tensor.domain().logical_size() == 12 &&
+                  source_reads->tensor.support().count() == 12 && assembly_fields.at("reads").size() == 3,
+              "native assembly occurrence map merged repeated labels");
+        for (std::size_t i = 0; i < 12; ++i)
+            check(source_reads->tensor.state(i).value() == Rational(std::to_string(i / 4)),
+                  "native kmer occurrence lost its original read index");
         const auto before = workspace->native_publication().encode();
         check(result.at("result").at("result").at("schema").text() == "gadget.read.protocol.evidence.v1",
               "workspace did not retain the native protocol declaration");
@@ -223,6 +283,7 @@ int main(int argc, char **argv) {
         workspace.reset();
         fs::rename(root / "reads.fastq", root / "reads-away.fastq");
         fs::rename(root / "whitelist.fa", root / "whitelist-away.fa");
+        fs::rename(root / "repeated_reads.fastq", root / "repeated-reads-away.fastq");
         AssayWorkspace portable(root / "workspace/workspace.rfcxs");
         const auto replayed = portable.execute_record(request);
         check(portable.native_publication().encode() == before &&
@@ -234,6 +295,9 @@ int main(int argc, char **argv) {
         check(replayed_request.size() == request_bytes.size() &&
                   std::equal(replayed_request.begin(), replayed_request.end(), request_bytes.begin()),
               "portable replay changed the original native request owner");
+        check(same_values(portable.execute_record(repeated_request).at("result"),
+                          repeated_result.at("result")),
+              "relocated native replay merged repeated original read labels");
         std::cout << "{\"status\":\"PASS\",\"checks\":" << checks
                   << ",\"authored_read_occurrences\":127,\"whitelist_occurrences\":65}\n";
         return 0;

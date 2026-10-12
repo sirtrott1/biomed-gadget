@@ -93,3 +93,10 @@ build/gadget/gadget assay-query \
 Omitting `--out-record` renders the optional complete view. Record indices and
 original byte spans identify occurrences, while segment coordinates address
 positions within the original read.
+
+FASTQ headers are retained labels. Repeated headers remain separate original
+read occurrences, identified by their resource, record index and byte span.
+Sequence search matches and summaries expose `query_record_index` alongside
+`query_id`; use the index to distinguish reads that share a label. Protocol
+evidence and native assembly occurrence maps preserve these same indices.
+FASTA identifiers remain unique within a named reference resource.

@@ -198,7 +198,8 @@ Json reference_matches(const ResourceImages &images, const Json &request) {
     const Rational mismatch_bound{std::to_string(max_mismatches)};
     auto matches = Json::array(), summaries = Json::array();
     std::size_t oriented_position = 0;
-    for (const auto &q : queries) {
+    for (std::size_t query_index = 0; query_index < queries.size(); ++query_index) {
+        const auto &q = queries[query_index];
         std::size_t query_matches = 0;
         ExactMatrix count_map(1, q.bases.size());
         for (std::size_t i = 0; i < q.bases.size(); ++i)
@@ -231,6 +232,7 @@ Json reference_matches(const ResourceImages &images, const Json &request) {
                 ++query_matches;
                 auto m = Json::object(), blocks = Json::array();
                 m.set("query_id", Json::string(q.id));
+                m.set("query_record_index", cardinality(query_index));
                 m.set("reference_id", Json::string(reference.id));
                 m.set("strand", Json::string(strand));
                 m.set("mismatches", Json::string(mismatch.get_str()));
@@ -281,6 +283,7 @@ Json reference_matches(const ResourceImages &images, const Json &request) {
         }
         auto s = Json::object();
         s.set("query_id", Json::string(q.id));
+        s.set("query_record_index", cardinality(query_index));
         s.set("matches", cardinality(query_matches));
         s.set("status", Json::string(query_matches ? "matched" : "no_match_in_declared_universe"));
         summaries.push(s);

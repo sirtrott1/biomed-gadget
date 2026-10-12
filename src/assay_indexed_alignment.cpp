@@ -174,6 +174,7 @@ Json indexed_alignment(const ResourceImages &images, const Json &request) {
                         aligned_reference += operations[e] == 'I' ? '-' : reference[j];
                     }
                     m.set("query_id", Json::string(queries.id(q.read)));
+                    m.set("query_record_index", cardinality(q.read));
                     m.set("reference_id", Json::string(refs.id(r)));
                     m.set("strand", Json::string(q.strand));
                     m.set("start", cardinality(start));
@@ -214,6 +215,7 @@ Json indexed_alignment(const ResourceImages &images, const Json &request) {
     for (std::size_t q = 0; q < queries.size(); ++q) {
         auto row = Json::object();
         row.set("query_id", Json::string(queries.id(q)));
+        row.set("query_record_index", cardinality(q));
         row.set("matches", cardinality(query_matches[q]));
         summaries.push(row);
     }
