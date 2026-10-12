@@ -41,6 +41,8 @@ class Json {
     static Json integer(std::int64_t n) { return Json(json_object_new_int64(n)); }
     static Json number(double n);
     static Json boolean(bool b) { return Json(json_object_new_boolean(b)); }
+    // json-c grammar with complete input and representable member names.
+    // Escaped NUL string values are retained; NUL member names are refused.
     static Json parse(const std::string &s);
     json_object *raw() const { return value_.get(); }
     bool has(const std::string &key) const;

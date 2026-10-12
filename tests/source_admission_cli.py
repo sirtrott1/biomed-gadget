@@ -1,5 +1,5 @@
 """Versioned span/quote, retained-source, budget and malformed-table contracts."""
-import copy,json,shutil,subprocess,sys
+import copy,json,random,shutil,subprocess,sys
 from pathlib import Path
 repo=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(repo/'examples/bioinformatics/source-admission'))
@@ -10,7 +10,59 @@ spec_path=replay.authored(root/'original',7)
 result=replay.compare(binary,spec_path,root/'comparison')
 original=json.loads(spec_path.read_text())
 spans=root/'comparison/spans/study'
-subprocess.run([str(contracts),str(spans/'study.json')],check=True)
+corpus=[]
+def representable(value):
+ if isinstance(value,dict):return all('\0' not in key and representable(item) for key,item in value.items())
+ if isinstance(value,list):return all(map(representable,value))
+ return True
+def json_case(source):
+ try:
+  value=json.loads(source);admit=representable(value)
+ except (ValueError,RecursionError):
+  value=None;admit=False
+ case=dict(source=source,admit=admit)
+ if admit:case['value']=value
+ corpus.append(case)
+# An independent standard decoder decides every valid token's actual value and
+# whether any nested member name contains an unrepresentable NUL.
+for token in ['null','true','false','0','-17','9223372036854775807','""','"\\u0000"','[]','{}']:
+ for whitespace in ['', ' ', '\t\r\n']:
+  json_case(whitespace+token+whitespace)
+for slashes in range(1,17):
+ for whitespace in ['', ' ', '\t\r\n']:
+  json_case('{"prefix'+'\\'*slashes+'u0000suffix"'+whitespace+':"value"}')
+for name in ['', 'schema', 'β', 'quote"slash\\', 'name\\u0000']:
+ for position in range(len(name)+1):
+  key=name[:position]+'\0'+name[position:]
+  for wrap in [lambda x:x,lambda x:[x],lambda x:dict(outer=[dict(inner=x)])]:
+   json_case(json.dumps(wrap({key:'original'}),ensure_ascii=True))
+ for value in ['\0', 'before\0after', '\\u0000', '" : "\\u0000', 'β🙂\0tail']:
+  json_case(json.dumps({name:value},ensure_ascii=True))
+for source in ['{"schema\\u0000suffix":"control"}',
+               '{"\\u0073chema\\u0000suffix":"control"}',
+               '{"schema":"original","schema\\u0000suffix":"replacement"}',
+               '{"value":"\\\\u0000","other":[{"name":"\\u0000"}]}',
+               '{"quote\\\" : \\"\\u0000suffix":1}',
+               '{"value":"raw\0bytes"}', '{"raw\0key":1}',
+               '{"value":1}\0', '{"value":1}\0{"other":2}',
+               '', 'tru', '1e', '[', '{', '{"name":"\\u000',
+               '{"name":"\\z"}', '{"name":1} false', '/* comment */ {}']:
+ json_case(source)
+for depth in [31,32,33,64,96]:
+ for leaf in ['{"name":"\\u0000"}','{"name\\u0000suffix":1}']:
+  json_case('['*depth+leaf+']'*depth)
+rng=random.Random(971031)
+names=['', 'schema', 'value', 'β', '🙂', 'quoted"key', '\\u0000', 'nul\0name']
+values=[None,True,False,0,-17,971031,'', '\0','before\0after','quoted" : \\"text','β🙂','\\u0000']
+def authored(depth):
+ if depth==0 or rng.randrange(3)==0:return rng.choice(values)
+ if rng.randrange(2):return [authored(depth-1) for _ in range(rng.randrange(4))]
+ return {key:authored(depth-1) for key in rng.sample(names,rng.randrange(5))}
+for _ in range(512):
+ json_case(json.dumps(authored(rng.randrange(1,7)),ensure_ascii=rng.choice([True,False]),
+                      separators=rng.choice([(',',':'),(', ',': ')])))
+corpus_path=replay.save(root/'json-corpus.json',corpus)
+subprocess.run([str(contracts),str(spans/'study.json'),str(corpus_path)],check=True)
 refusals=[]
 def refuse(args):
  p=subprocess.run([str(binary),*map(str,args)],capture_output=True,text=True)
@@ -60,5 +112,7 @@ refuse(['import-table','--spec',spec_path,'--out',spans])
 for name,data in [('no-final-newline',raw.rstrip(b'\n')),('crlf',raw.replace(b'\n',b'\r\n'))]:
  (spec_path.parent/f'{name}.tsv').write_bytes(data);q={**original,'source':{**original['source'],'path':f'{name}.tsv','sha256':replay.digest(data)}}
  replay.compare(binary,replay.save(spec_path.parent/f'{name}.json',q),root/name)
-replay.save(root/'contracts.json',dict(**result,refusals=refusals,exact_caller_budgets=True,crlf_and_eof=True,immutable_original_bytes=True))
+replay.save(root/'contracts.json',dict(**result,refusals=refusals,exact_caller_budgets=True,crlf_and_eof=True,immutable_original_bytes=True,
+ json_corpus=dict(cases=len(corpus),admitted=sum(case['admit'] for case in corpus),refused=sum(not case['admit'] for case in corpus),
+                 original_bytes_retained=True,native_nul_names_preserved=True)))
 print('PASS: mapped retained source, versioned evidence, exact native parity, caller budgets and source refusals')

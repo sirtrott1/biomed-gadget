@@ -1,12 +1,74 @@
 #include <gadget/scientific.hpp>
+#include <gadget/record_view.hpp>
+#include <algorithm>
 #include <iostream>
 #include <thread>
+
+namespace {
+void json_admission(const gadget::fs::path &corpus_path) {
+    using namespace gadget;
+    const auto check = [](bool ok, const char *message) {
+        if (!ok) throw std::logic_error(message);
+    };
+    const auto rejects = [&](auto action) {
+        bool refused = false;
+        try { action(); } catch (const std::invalid_argument &) { refused = true; }
+        check(refused, "unrepresentable JSON operation admitted");
+    };
+    auto object = Json::parse(R"({"schema":"original","":"empty name"})");
+    const std::string name("schema\0suffix", 13);
+    rejects([&] { object.set(name, Json::string("replacement")); });
+    rejects([&] { (void)object.has(name); });
+    rejects([&] { (void)object.at(name); });
+    check(object.at("schema").text() == "original" && object.at("").text() == "empty name",
+          "invalid member access changed its C-string prefix or empty name");
+    const auto corpus = Json::parse(read_text(corpus_path));
+    for (std::size_t i = 0; i < corpus.size(); ++i) {
+        const auto item = corpus.at(i);
+        const auto bytes = item.at("source").text();
+        if (!item.at("admit").boolean()) {
+            rejects([&] { (void)Json::parse(bytes); });
+            rejects([&] { (void)decode_record(std::as_bytes(std::span(bytes.data(), bytes.size()))); });
+            continue;
+        }
+        const auto expected = item.at("value").dump_compact();
+        check(Json::parse(bytes).dump_compact() == expected,
+              "complete JSON differs from independent decoded control oracle");
+        const auto record = decode_record(std::as_bytes(std::span(bytes.data(), bytes.size())));
+        check(record.dump_compact() == expected,
+              "native admitted value differs from independent decoded control oracle");
+        const auto originals = record.native().raw_sources();
+        const auto original = std::find_if(originals.begin(), originals.end(),
+                                           [](const auto &source) { return source.key() == 1; });
+        check(original != originals.end() && original->bytes().size() == bytes.size() &&
+                  std::ranges::equal(original->bytes(),
+                                     std::as_bytes(std::span(bytes.data(), bytes.size()))),
+              "JSON admission changed complete original source bytes");
+    }
+    using N = NativeRecordValue;
+    const auto native = NativeRecord::create(N(N::Object{{{name, N(std::string("value\0bytes", 11))}}}),
+                                              971031);
+    check(native.names() == std::vector<std::string>{name} &&
+              native.at(name).text() == std::string("value\0bytes", 11),
+          "native names or values lost original NUL bytes");
+    const auto destination = corpus_path.parent_path() / "native-nul-name.rfcxs";
+    native.write(destination);
+    const auto reopened = NativeRecord::read(destination);
+    check(reopened.names() == native.names() && reopened.at(name).text() == native.at(name).text(),
+          "native NUL name or value changed after archive reopen");
+    rejects([&] { (void)render_record_view(reopened); });
+    std::cout << "PASS: " << corpus.size()
+              << " independent JSON corpus controls, complete original byte owners and native names\n";
+}
+} // namespace
 
 int main(int argc, char **argv) {
     try {
         using namespace gadget;
-        if (argc != 2)
-            throw std::invalid_argument("expected version-two study");
+        if (argc != 2 && argc != 3)
+            throw std::invalid_argument("expected version-two study and optional JSON corpus");
+        if (argc == 3)
+            json_admission(argv[2]);
         const fs::path path = argv[1];
         auto owner = std::make_shared<const ScientificStudy>(path);
         const auto original = read_text(path.parent_path() / "table.txt");
