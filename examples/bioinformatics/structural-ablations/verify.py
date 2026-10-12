@@ -9,7 +9,10 @@ import sympy as S
 
 def sparse(record):
     m = S.zeros(record['rows'], record['columns'])
-    for i,j,q in record['entries']: m[i,j] = S.Rational(q)
+    for entry in record['entries']:
+        i, j, q = ((entry['row'], entry['column'], entry['value'])
+                   if isinstance(entry, dict) else entry)
+        m[i,j] = S.Rational(q)
     return m
 
 

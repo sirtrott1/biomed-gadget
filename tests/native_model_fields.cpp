@@ -132,6 +132,11 @@ void audit_fields(const NativeRecord &owner, const NativeRecord &view) {
             if (tensor.input) check(tensor.tensor.domain().rank() == 2, "map lost ordered axes");
             return;
         }
+        if (view.has("schema") && view.at("schema").text() == "gadget.scientific.publication.view.v1") {
+            const auto child = NativeRecord::decode(view.at("publication").bytes());
+            audit_fields(child, child.at("view")); audit_fields(child, child.at("bindings"));
+            return;
+        }
         if (view.has("schema")) check(view.at("schema").text() != "gadget.scientific.tensor.stage.v1", "unpublished staged result escaped");
         for (const auto &name : view.names()) audit_fields(owner, view.at(name));
     } else if (view.kind() == NativeRecordKind::Array) {
@@ -462,6 +467,113 @@ void verify_sections(const NativeRecord &publication) {
         }
     }
 }
+void verify_ablation(const NativeRecord &publication) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner, view); audit_fields(owner, owner.at("bindings"));
+    for (std::size_t a = 0; a < view.at("ablations").size(); ++a) {
+        const auto variant = view.at("ablations").at(a);
+        bool source_changed = false;
+        for (std::size_t k = 0; k < variant.at("removed_cells").size(); ++k)
+            source_changed = source_changed || variant.at("removed_cells").at(k).size() != 0;
+        for (std::size_t g = 0; g < variant.at("grades").size(); ++g) {
+            const auto grade = variant.at("grades").at(g);
+            const auto &inclusion = *field(owner, grade.at("inclusion"));
+            const auto &restriction = *field(owner, grade.at("cochain_restriction"));
+            check(inclusion.input == restriction.output && inclusion.output == restriction.input,
+                  "ablation inclusion/restriction lost ordered source axes");
+            check((inclusion.input != inclusion.output) == source_changed, "actual source owner identity differs");
+            const auto &boundary = *field(owner, grade.at("boundary"));
+            check(boundary.input == inclusion.input, "retained boundary lost its actual source domain");
+            if (grade.has("harmonic_representatives")) {
+                const auto &harmonic = *field(owner, grade.at("harmonic_representatives"));
+                const auto &included = *field(owner, grade.at("included_representatives"));
+                check(harmonic.input == included.input && harmonic.output == inclusion.input &&
+                      included.output == inclusion.output, "complete homology family source axes differ");
+                const auto &kernel = *field(owner, grade.at("killed_class_coefficients"));
+                check(kernel.output == harmonic.input && kernel.input != kernel.output,
+                      "killed-class free axes merged with harmonic parameters");
+            }
+        }
+        for (std::size_t f = 0; f < variant.at("fields").size(); ++f) {
+            const auto record = variant.at("fields").at(f), sectors = record.at("sectors");
+            const auto full = values(owner, sectors.at("full"));
+            check(rfc::numeric::add(rfc::numeric::add(values(owner, sectors.at("gradient")),
+                  values(owner, sectors.at("curl"))), values(owner, sectors.at("harmonic"))) == full,
+                  "ablation full native sectors do not reconstruct");
+            check(full == values(owner, record.at("restricted_input")), "retained source input lost coefficients");
+            const auto quadrances = record.at("quadrances");
+            check(scalar(owner, quadrances.at("gradient")) + scalar(owner, quadrances.at("curl")) +
+                  scalar(owner, quadrances.at("harmonic")) == scalar(owner, quadrances.at("full")),
+                  "ablation complete quadrance budget differs");
+            const auto green = record.at("green");
+            check(rfc::numeric::add(values(owner, green.at("structure_term")), values(owner, green.at("field_term"))) ==
+                      values(owner, green.at("change")), "native Green cross-source terms do not reconstruct");
+            check(rfc::numeric::sub(values(owner, green.at("value")), values(owner, green.at("restricted_original"))) ==
+                      values(owner, green.at("change")), "Green transport lost actual retained coordinates");
+        }
+    }
+    for (std::size_t b = 0; b < owner.at("bindings").size(); ++b) {
+        const auto binding = owner.at("bindings").at(b);
+        if (binding.at("kind").text() != "actual_ablation_source_axes") continue;
+        const auto actual = NativeRecord::decode(binding.at("source").at("publication").bytes());
+        const auto grades = binding.at("grades");
+        for (std::size_t g = 0; g < grades.size(); ++g) {
+            const auto grade = grades.at(g);
+            check(grade.at("coordinate_carrier").integer() != grade.at("lattice_carrier").integer(),
+                  "integral and realized coordinates identified by dimension");
+            const auto &metric = *field(actual, actual.at("view").at("grades").at(g).at("metric"));
+            check(metric.role == rfc::storage::TemporalTensorRole::Metric &&
+                  metric.output == grade.at("source_carrier").integer().get_ui(), "actual source metric carrier missing");
+        }
+    }
+    if (!view.has("original_sheaf")) return;
+    auto request = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[]})");
+    request.set("source_namespace", Json::string(std::to_string(publication.source_namespace())));
+    request.set("cutoff", Json::integer(static_cast<std::int64_t>(publication.publication_history()->last_sequence())));
+    std::vector<NativeRecord> selected_fields;
+    for (const auto &path_text : {
+            R"(["original_sheaf","sections",0,"glued"])",
+            R"(["ablations",0,"sheaf","sections",0,"glued"])",
+            R"(["ablations",0,"sheaf","sections",0,"projection_order_defect"])",
+            R"(["ablations",0,"sheaf","sections",0,"projection_order_quadrance"])"}) {
+        const auto path = Json::parse(path_text);
+        const auto selected = select_scientific_result(view, admit_record_view(path));
+        const auto encoded = selected.encoded_tensor(selected.at("tensor").integer().get_ui());
+        check(encoded.has_value(), "archived or overlay claim lost actual tensor owner");
+        check(encoded->tensor().support().contains(0), "claim fixture has no original supported coordinate");
+        auto item = Json::object();
+        item.set("path", path); item.set("coordinate", Json::integer(0));
+        item.set("value_type", Json::string("rational")); item.set("comparison", Json::string("equal"));
+        item.set("value", Json::string(encoded->tensor().value(0)->get_str()));
+        request.at("items").push(item); selected_fields.push_back(selected);
+    }
+    const auto receipt = check_certificate_claims_record(publication, admit_record_view(request)).at("result");
+    check(receipt.at("matched").integer() == selected_fields.size() && receipt.at("contradicted").integer() == 0,
+          "native archived and overlay literal comparisons differ");
+    for (std::size_t i = 0; i < selected_fields.size(); ++i) {
+        const auto &selected = selected_fields[i];
+        const auto encoded = selected.encoded_tensor(selected.at("tensor").integer().get_ui());
+        const auto binding = receipt.at("checks").at(i).at("binding");
+        check(binding.at("source_namespace").text() == std::to_string(encoded->publication().source_namespace()) &&
+              binding.at("cutoff").integer() == encoded->publication().sequence(), "claim receipt changed actual selected owner");
+    }
+    check(selected_fields[0].source_namespace() != publication.source_namespace() &&
+          selected_fields[1].source_namespace() != publication.source_namespace(), "child publications became enclosing fields");
+    check(selected_fields[2].source_namespace() == publication.source_namespace(), "overlay additions lost enclosing field owner");
+    auto foreign = Json::parse(request.dump());
+    foreign.set("source_namespace", Json::string(std::to_string(selected_fields[0].source_namespace())));
+    bool refused = false;
+    try { (void)check_certificate_claims_record(publication, admit_record_view(foreign)); }
+    catch (const std::invalid_argument &) { refused = true; }
+    check(refused, "child namespace substituted for actual operation claim owner");
+    for (const auto &bad_path : {R"(["ablations",-1])", R"(["original_sheaf","sections",999999,"glued"])",
+                                 R"(["ablations",0,"sheaf","sections",0,"absent"])", R"(["ablations","0"])"}) {
+        refused = false;
+        try { (void)select_scientific_result(view, admit_record_view(Json::parse(bad_path))); }
+        catch (const std::exception &) { refused = true; }
+        check(refused, "invalid archived or overlay path accepted");
+    }
+}
 void verify_replay(const NativeRecord &expected, const NativeRecord &actual) {
     const auto a = expected.endpoint(), b = actual.endpoint();
     check(a->tensors.size() == b->tensors.size(), "replay field family differs");
@@ -522,7 +634,7 @@ int main(int argc, char **argv) try {
     if (argc != 5) throw std::invalid_argument("workspace, queries, output and mode required");
     const fs::path workspace_path(argv[1]), queries_path(argv[2]), output(argv[3]);
     fs::create_directories(output);
-    const auto study = std::string(argv[4]) == "study"
+    const auto study = std::string(argv[4]) == "study" || workspace_path.filename() == "study.json"
         ? std::make_shared<const ScientificStudy>(workspace_path)
         : AssayWorkspace(workspace_path).study("measurements");
     if (std::string(argv[4]) == "green") {
@@ -545,6 +657,7 @@ int main(int argc, char **argv) try {
         else if (std::string(argv[4]) == "ensemble") verify_ensemble(result, original);
         else if (std::string(argv[4]) == "structural") verify_structural(result);
         else if (std::string(argv[4]) == "sections") verify_sections(result);
+        else if (std::string(argv[4]) == "ablation") verify_ablation(result);
         else if (std::string(argv[4]) != "finite") verify_model(result, original);
         else {
             const auto fields = result.at("result").at("fields");

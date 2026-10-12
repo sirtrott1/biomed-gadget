@@ -44,6 +44,8 @@ class ResultFields {
     assay_detail::SourceGradeFields fields_;
     std::uint64_t scalar_;
     std::vector<RawByteSource> publications_;
+    struct ArchivedPublication { NativeRecord owner; ResultValue reference; };
+    std::map<std::pair<const void *, std::uint64_t>, ArchivedPublication> archived_;
     ResultValue bindings_{ResultValue::array()};
     ResultValue reference(NativeRecordValue key, std::string display,
                           std::optional<NativeRecordValue> coordinates = {}) {
@@ -72,6 +74,12 @@ class ResultFields {
     }
     std::uint64_t source_grade(std::size_t grade, std::optional<std::uint64_t> preferred = {});
     ResultValue publication(const NativeRecord &owner) {
+        if (!owner.is_root() || !owner.publication_history())
+            throw std::invalid_argument("scientific archive requires its actual root publication");
+        const auto identity = std::pair<const void *, std::uint64_t>{owner.endpoint().get(),
+            owner.publication_history()->last_sequence()};
+        const auto previous = archived_.find(identity);
+        if (previous != archived_.end()) return previous->second.reference;
         std::uint64_t key = 1;
         for (const auto &bytes : source_.raw_sources())
             key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
@@ -84,6 +92,7 @@ class ResultFields {
             NativeRecordValue::ByteSpan{key, 0, bytes.bytes().size(), false})));
         out.set("path", ResultValue::array());
         publications_.push_back(std::move(bytes));
+        archived_.emplace(identity, ArchivedPublication{owner, out});
         return out;
     }
     static ResultValue member(ResultValue publication, std::initializer_list<std::string> names) {
@@ -91,6 +100,19 @@ class ResultFields {
         for (const auto &name : names) path.push(ResultValue::string(name));
         publication.set("path", std::move(path));
         return publication;
+    }
+    static ResultValue member(ResultValue publication, std::size_t index) {
+        auto path = publication.at("path");
+        path.push(ResultValue::count(index));
+        publication.set("path", std::move(path));
+        return publication;
+    }
+    static ResultValue overlay(ResultValue base, ResultValue additions) {
+        auto value = ResultValue::object();
+        value.set("schema", ResultValue::string("gadget.scientific.view.overlay.v1"));
+        value.set("base", std::move(base));
+        value.set("additions", std::move(additions));
+        return value;
     }
     ResultValue stored(std::uint64_t key, std::string display) {
         if (std::none_of(endpoint_.tensors.begin(), endpoint_.tensors.end(),

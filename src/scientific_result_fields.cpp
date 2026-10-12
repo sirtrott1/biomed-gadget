@@ -121,6 +121,50 @@ ResultValue ResultFieldContext::field(const Vector &value, std::size_t k) const 
         rfc::numeric::SparseRationalVector(grade.size, std::move(entries)));
     return ResultFields::staged(std::move(tensor), {}, grade.source, "vector", grade.coordinate_field);
 }
+namespace {
+NativeRecord result_member(NativeRecord value, const NativeRecord &component) {
+    if (value.kind() == NativeRecordKind::Object && value.has("schema") &&
+        value.at("schema").kind() == NativeRecordKind::Text) {
+        const auto schema = value.at("schema").text();
+        if (schema == "gadget.scientific.publication.view.v1") {
+            auto selected = NativeRecord::decode(value.at("publication").bytes());
+            const auto path = value.at("path");
+            require(path.kind() == NativeRecordKind::Array, "scientific archived path type");
+            for (std::size_t i = 0; i < path.size(); ++i) selected = result_member(std::move(selected), path.at(i));
+            return result_member(std::move(selected), component);
+        }
+        if (schema == "gadget.scientific.view.overlay.v1") {
+            require(component.kind() == NativeRecordKind::Text, "scientific overlay object path type");
+            const auto additions = value.at("additions");
+            require(additions.kind() == NativeRecordKind::Object, "scientific overlay additions type");
+            if (additions.has(component.text())) return additions.at(component.text());
+            return result_member(value.at("base"), component);
+        }
+    }
+    if (component.kind() == NativeRecordKind::Text) {
+        require(value.kind() == NativeRecordKind::Object, "scientific native object path type");
+        return value.at(component.text());
+    }
+    require(component.kind() == NativeRecordKind::Integer && value.kind() == NativeRecordKind::Array,
+            "scientific native array path type");
+    const auto index = component.integer();
+    require(index >= 0 && mpz_fits_ulong_p(index.get_mpz_t()) && index < value.size(),
+            "scientific native array coordinate outside owner");
+    return value.at(index.get_ui());
+}
+NativeRecord result_leaf(NativeRecord value) {
+    while (value.kind() == NativeRecordKind::Object && value.has("schema") &&
+           value.at("schema").kind() == NativeRecordKind::Text &&
+           value.at("schema").text() == "gadget.scientific.publication.view.v1") {
+        const auto path = value.at("path");
+        auto selected = NativeRecord::decode(value.at("publication").bytes());
+        require(path.kind() == NativeRecordKind::Array, "scientific archived path type");
+        for (std::size_t i = 0; i < path.size(); ++i) selected = result_member(std::move(selected), path.at(i));
+        value = std::move(selected);
+    }
+    return value;
+}
+} // namespace
 Json result_fields_view(const NativeRecord &record) {
     std::map<std::pair<const void *, std::uint64_t>, NativeRecord> owners;
     const auto render = [&](const auto &self, const NativeRecord &value) -> Json {
@@ -137,9 +181,34 @@ Json result_fields_view(const NativeRecord &record) {
                     if (owner == owners.end())
                         owner = owners.emplace(id, NativeRecord::decode(bytes.bytes())).first;
                     auto selected = owner->second;
-                    for (std::size_t i = 0; i < value.at("path").size(); ++i)
-                        selected = selected.at(value.at("path").at(i).text());
+                    for (std::size_t i = 0; i < value.at("path").size(); ++i) {
+                        const auto component = value.at("path").at(i);
+                        if (component.kind() == NativeRecordKind::Text) {
+                            if (selected.kind() != NativeRecordKind::Object)
+                                throw std::invalid_argument("scientific publication object path type");
+                            selected = selected.at(component.text());
+                        } else {
+                            if (selected.kind() != NativeRecordKind::Array ||
+                                component.kind() != NativeRecordKind::Integer)
+                                throw std::invalid_argument("scientific publication array path type");
+                            const auto index = component.integer();
+                            if (index < 0 || !mpz_fits_ulong_p(index.get_mpz_t()) || index >= selected.size())
+                                throw std::invalid_argument("scientific publication array path coordinate");
+                            selected = selected.at(index.get_ui());
+                        }
+                    }
                     return self(self, selected);
+                }
+                if (schema == "gadget.scientific.view.overlay.v1") {
+                    auto base = self(self, value.at("base"));
+                    const auto additions = self(self, value.at("additions"));
+                    if (!json_object_is_type(base.raw(), json_type_object) ||
+                        !json_object_is_type(additions.raw(), json_type_object))
+                        throw std::invalid_argument("scientific view overlay requires object views");
+                    json_object_object_foreach(additions.raw(), name, child) {
+                        base.set(name, Json(json_object_get(child)));
+                    }
+                    return base;
                 }
             }
             auto out = Json::object();
@@ -259,6 +328,15 @@ NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeReco
 } // namespace gadget::scientific_detail
 
 namespace gadget {
+NativeRecord select_scientific_result(const NativeRecord &value, const NativeRecord &path) {
+    scientific_detail::require(path.kind() == NativeRecordKind::Array && path.size(),
+                               "scientific native path requires components");
+    auto selected = value;
+    for (std::size_t i = 0; i < path.size(); ++i)
+        selected = scientific_detail::result_member(std::move(selected), path.at(i));
+    return scientific_detail::result_leaf(std::move(selected));
+}
+
 namespace {
 void same_result_fields(const NativeRecord &a, const NativeRecord &b);
 void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_execution = false,

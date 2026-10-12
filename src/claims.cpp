@@ -172,21 +172,9 @@ ResultValue literal_result(const Literal &literal) {
     return std::visit([](const auto &value) { return ResultValue(N(value)); }, literal);
 }
 NativeRecord native_path(NativeRecord value, const NativeRecord &path) {
-    require(path.kind() == NativeRecordKind::Array && path.size(), "native claim path requires components");
-    for (std::size_t i = 0; i < path.size(); ++i) {
-        const auto part = path.at(i);
-        if (part.kind() == NativeRecordKind::Text) {
-            require(value.kind() == NativeRecordKind::Object, "native claim object path type");
-            value = value.at(part.text());
-        } else {
-            require(value.kind() == NativeRecordKind::Array, "native claim array path type");
-            const auto index = native_count(part, "native claim array index");
-            require(index < value.size(), "native claim array coordinate outside owner");
-            value = value.at(index);
-        }
-    }
-    return value;
+    return select_scientific_result(value, path);
 }
+
 } // namespace
 
 NativeRecord check_certificate_claims_record(const NativeRecord &certificate, const NativeRecord &request) {

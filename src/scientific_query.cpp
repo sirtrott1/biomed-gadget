@@ -1,4 +1,5 @@
 #include "research_ablation.hpp"
+#include "scientific_ablation_fields.hpp"
 #include "research_ensemble.hpp"
 #include "research_factored.hpp"
 #include "research_prepared.hpp"
@@ -37,7 +38,7 @@ bool has_native_scientific_publisher(std::string_view operation) noexcept {
            operation == "declared_response_transition" || operation == "metric_relative_novelty" ||
            operation == "observed_response_model" || operation == "constrained_response_model" ||
            operation == "relational_field_ensemble" || operation == "structural_reference_calibration" ||
-           operation == "local_sections";
+           operation == "local_sections" || operation == "source_structure_ablation";
 }
 namespace {
 using namespace scientific_detail;
@@ -530,7 +531,7 @@ struct ScientificSession::State {
         publication.bind(std::move(source_binding));
         return publication.finish(std::move(analysis.view));
     }
-    Json ablation_query(const Json &query, bool validate) {
+    Json ablation_query(const Json &query, bool validate, std::optional<NativeRecord> *native = nullptr) {
         const auto name = query.at("context").text();
         auto &prepared = context(name);
         const auto ids = query.at("fields");
@@ -558,8 +559,8 @@ struct ScientificSession::State {
             (void)source.evidence(declaration.at("evidence"));
             const auto kind = declaration.at("kind").text();
             research_detail::SourceAblationRole role;
-            role.witness = Json::parse(declaration.dump());
-            auto binding = Json::array();
+            role.witness = scientific_detail::ResultValue(declaration);
+            auto binding = scientific_detail::ResultValue::array();
             std::set<std::string> seen;
             if (kind == "source_cells") {
                 require(declaration.has("cells") && !declaration.has("fields"),
@@ -573,8 +574,8 @@ struct ScientificSession::State {
                     const auto cell = index.cell(source.resolve_cell(id));
                     require(cell.has_value(), "role cell is outside the actual context source");
                     role.cells.push_back(*cell);
-                    auto record = Json::parse(source.cell_record(source.resolve_cell(id)).dump());
-                    record.set("context_coordinate", cardinality(cell->index));
+                    auto record = scientific_detail::ResultValue(source.cell_record(source.resolve_cell(id)));
+                    record.set("context_coordinate", scientific_detail::ResultValue::count(cell->index));
                     binding.push(record);
                 }
             } else {
@@ -593,7 +594,8 @@ struct ScientificSession::State {
                             "span requires the identical actual observed field carrier");
                     fields.emplace(id, value.first);
                     role.fields.push_back(id);
-                    binding.push(source.fields.at(id).declaration);
+                    binding.push(scientific_detail::ResultValue(
+                        source.fields.at(id).declaration.native().unbound_value()));
                 }
             }
             role.witness.set("source_binding", binding);
@@ -601,43 +603,73 @@ struct ScientificSession::State {
                         .second,
                     "duplicate scientific role");
         }
-        auto witness = Json::object(), cells = Json::array(), occurrences = Json::array();
+        auto witness = scientific_detail::ResultValue::object(), cells = scientific_detail::ResultValue::array(), occurrences = scientific_detail::ResultValue::array();
         for (std::size_t k = 0; k < prepared.source->grade_count(); ++k) {
-            auto grade_cells = Json::array();
+            auto grade_cells = scientific_detail::ResultValue::array();
             const auto g = rfc::core::Grade{static_cast<std::uint16_t>(k)};
             const auto &arena = prepared.source->grade(g);
             for (std::size_t i = 0; i < arena.cell_count(); ++i) {
-                auto record = Json::parse(
-                    source.cell_record(stable_cell_key(*prepared.source, {g, static_cast<std::uint32_t>(i)}))
-                        .dump());
-                record.set("context_coordinate", cardinality(i));
-                record.set("ambient_coordinate", cardinality(prepared.to_ambient[k][i]));
+                auto record = scientific_detail::ResultValue(
+                    source.cell_record(stable_cell_key(*prepared.source, {g, static_cast<std::uint32_t>(i)})));
+                record.set("context_coordinate", scientific_detail::ResultValue::count(i));
+                record.set("ambient_coordinate", scientific_detail::ResultValue::count(prepared.to_ambient[k][i]));
                 grade_cells.push(record);
             }
             cells.push(grade_cells);
             for (std::size_t i = 0; i < arena.incidence_count(); ++i) {
                 auto record =
-                    Json::parse(source.occurrence_record({g, arena.occurrence_identities[i]}).dump());
-                record.set("exists", Json::boolean(arena.aspects.get(
+                    scientific_detail::ResultValue(source.occurrence_record({g, arena.occurrence_identities[i]}));
+                record.set("exists", scientific_detail::ResultValue::boolean(arena.aspects.get(
                                          prepared.source->signature().existence_aspect(), i)));
                 record.set("coefficient",
-                           Json::string(prepared.source->incidence_coefficient(g, i).get_str()));
+                           scientific_detail::ResultValue(NativeRecordValue(prepared.source->incidence_coefficient(g, i))));
                 occurrences.push(record);
             }
         }
         witness.set("cells", cells);
         witness.set("occurrences", occurrences);
         Json sheaf;
+        std::map<std::string, Vector> sheaf_operands;
         if (query.has("sheaf")) {
             sheaf = Json::parse(query.at("sheaf").dump());
             members(sheaf, {"stalks", "maps", "sections", "metric"});
             sheaf.set("operation", Json::string("local_sections"));
             sheaf.set("context", Json::string(name));
             sheaf.set("construction", Json::string("cellular_sheaf"));
-            sheaf = local_declaration(sheaf, false);
+            sheaf = local_declaration(sheaf, false, &sheaf_operands);
         }
-        return research_detail::source_structure_ablation(
-            *prepared.study, query, grade, fields, roles, witness, sheaf, validate, resources);
+        if (validate) {
+            (void)research_detail::source_structure_ablation(*prepared.study, query, grade, fields,
+                roles, witness, sheaf, true, resources, owner->native_publication(), sheaf_operands, nullptr);
+            return Json::object();
+        }
+        scientific_detail::ResultFields publication(owner->native_publication());
+        research_detail::AblationFields axes(publication, owner->native_publication());
+        const auto &source_axes = axes.source(*prepared.study);
+        auto inputs = scientific_detail::ResultValue::array();
+        for (const auto &[id, value] : fields) {
+            const auto &original = tensor(id);
+            const auto pin = source.field_pins.at(original.key).carrier();
+            rfc::numeric::ExactMatrix realization(value.size(), pin->domain.logical_size());
+            for (std::size_t i = 0; i < value.size(); ++i)
+                realization.set(i, prepared.to_ambient.at(grade.value).at(i), Rational{1});
+            auto input = scientific_detail::ResultValue::object();
+            input.set("id", scientific_detail::ResultValue::string(id));
+            input.set("source_field", publication.stored(original.key, "vector"));
+            input.set("realization", scientific_detail::ResultFields::stage_matrix(realization,
+                *original.output, source_axes.rows.at(grade.value)));
+            input.set("context_input", scientific_detail::ResultFields::stage_vector(value,
+                source_axes.rows.at(grade.value)));
+            inputs.push(std::move(input));
+        }
+        auto input_binding = scientific_detail::ResultValue::object();
+        input_binding.set("kind", scientific_detail::ResultValue::string("actual_ablation_source_fields"));
+        input_binding.set("fields", std::move(inputs)); publication.bind(std::move(input_binding));
+        auto view = research_detail::source_structure_ablation(*prepared.study, query, grade, fields,
+            roles, witness, sheaf, false, resources, owner->native_publication(), sheaf_operands, &axes);
+        const auto result = publication.finish(std::move(view));
+        if (native) { *native = result; return Json{}; }
+        return scientific_detail::result_fields_view(result);
     }
     Json response_query(const Json &query, bool validate, std::optional<NativeRecord> *native = nullptr) {
         const auto name = query.at("context").text();
@@ -1923,6 +1955,11 @@ struct ScientificSession::State {
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
             if (operation == "local_sections") return local_section_fields(admitted);
+            if (operation == "source_structure_ablation") {
+                std::optional<NativeRecord> result;
+                (void)ablation_query(admitted, false, &result);
+                return *result;
+            }
             if (operation == "structural_reference_calibration") {
                 std::optional<NativeRecord> result;
                 (void)structural_calibration_query(admitted, false, &result);
