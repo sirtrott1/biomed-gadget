@@ -29,7 +29,11 @@ class ResultValue {
             if (key == name) return ResultValue(value);
         throw std::invalid_argument("scientific result member absent");
     }
+    ResultValue at(std::size_t index) const {
+        return ResultValue(std::get<NativeRecordValue::Array>(value_.data).elements.at(index));
+    }
     std::string text() const {return std::get<std::string>(value_.data);}
+    std::size_t size() const {return std::get<NativeRecordValue::Array>(value_.data).elements.size();}
     NativeRecordValue release() && {return std::move(value_);}
 };
 
@@ -56,6 +60,17 @@ class ResultFields {
           original_fields_(endpoint_.tensors.size()), original_carriers_(endpoint_.carriers.size()),
           fields_(endpoint_), scalar_(fields_.explicit_carrier(1)) {}
     std::uint64_t axis(std::size_t size) {return fields_.explicit_carrier(size);}
+    std::uint64_t stalk(rfc::storage::StableCellKey cell, std::size_t size) {
+        if (!rfc::storage::StableSourceIndex(endpoint_.source).cell(cell))
+            throw std::invalid_argument("scientific stalk source cell absent");
+        const auto key = fields_.explicit_carrier(size);
+        auto &carrier = endpoint_.carriers.back();
+        carrier.kind = rfc::storage::TemporalCarrierKind::CellStalk;
+        carrier.grade = cell.grade;
+        carrier.cell = cell;
+        return key;
+    }
+    std::uint64_t source_grade(std::size_t grade, std::optional<std::uint64_t> preferred = {});
     ResultValue publication(const NativeRecord &owner) {
         std::uint64_t key = 1;
         for (const auto &bytes : source_.raw_sources())
@@ -91,6 +106,54 @@ class ResultFields {
     }
     ResultValue scalar(const Rational &value) {
         return reference(fields_.vector("scientific_scalar", scalar_, Vector{value}), "rational");
+    }
+    // Workers stage actual native tensors. Publication consumes them in result
+    // order after all workers join, preserving deterministic field identities.
+    static ResultValue staged(rfc::numeric::SparseRationalTensor tensor,
+                              std::optional<std::uint64_t> input, std::uint64_t output,
+                              std::string display,
+                              std::optional<NativeRecordValue> coordinates = {},
+                              std::optional<rfc::storage::TemporalTensorRole> role = {}) {
+        auto value = ResultValue::object();
+        value.set("schema", ResultValue::string("gadget.scientific.tensor.stage.v1"));
+        value.set("tensor", ResultValue(NativeRecordValue(std::move(tensor))));
+        if (input) value.set("input", ResultValue::count(*input));
+        value.set("output", ResultValue::count(output));
+        value.set("display", ResultValue::string(std::move(display)));
+        if (coordinates) value.set("coordinates", ResultValue(std::move(*coordinates)));
+        if (role) value.set("role", ResultValue::count(static_cast<std::size_t>(*role)));
+        return value;
+    }
+    ResultValue stage_scalar(const Rational &value) const {
+        return stage_vector(Vector{value}, scalar_, "rational");
+    }
+    static ResultValue stage_vector(const Vector &value, std::uint64_t carrier,
+                                    std::string display = "vector") {
+        return staged(assay_detail::SourceGradeFields::tensor(value.size(),
+            [&](auto i) {return value[i];}, rfc::numeric::StructuralSupport::full(value.size())),
+            {}, carrier, std::move(display));
+    }
+    static ResultValue stage_matrix(const rfc::numeric::ExactMatrix &value,
+                                    std::uint64_t input, std::uint64_t output,
+                                    std::optional<rfc::storage::TemporalTensorRole> role = {}) {
+        return staged(rfc::storage::temporal_matrix_tensor(value), input, output, "sparse_matrix", {}, role);
+    }
+    static ResultValue stage_selected(const Vector &value, std::uint64_t carrier,
+                                     std::size_t size, const std::vector<std::size_t> &rows) {
+        if (value.size() != rows.size()) throw std::invalid_argument("staged selected field shape");
+        std::vector<rfc::numeric::SparseRationalEntry> entries;
+        Vector coordinates;
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            coordinates.emplace_back(std::to_string(rows[i]));
+            if (value[i] != 0) entries.push_back({rows[i], value[i]});
+        }
+        rfc::numeric::SparseRationalTensor tensor(rfc::numeric::IndexDomain::linear(size),
+            rfc::numeric::StructuralSupport::sparse(size, rows),
+            rfc::numeric::SparseRationalVector(size, std::move(entries)));
+        return staged(std::move(tensor), {}, carrier, "vector", NativeRecordValue(
+            assay_detail::SourceGradeFields::tensor(coordinates.size(),
+                [&](auto i) {return coordinates[i];},
+                rfc::numeric::StructuralSupport::full(coordinates.size()))));
     }
     ResultValue vector(const Vector &value, std::uint64_t carrier) {
         return reference(fields_.vector("scientific_vector", carrier, value), "vector");
@@ -139,6 +202,8 @@ class ResultFields {
     }
     void bind(ResultValue binding) {bindings_.push(std::move(binding));}
     NativeRecord finish(ResultValue view) {
+        view = ResultValue(consume_staged(std::move(view).release()));
+        bindings_ = ResultValue(consume_staged(std::move(bindings_).release()));
         auto root = ResultValue::object();
         root.set("schema", ResultValue::string("gadget.scientific.fields.v1"));
         root.set("view", std::move(view));
@@ -157,6 +222,25 @@ class ResultFields {
         return NativeRecord::publish_fields(source_, new_native_record_namespace(), std::move(fields),
             std::move(root).release(), std::move(publications_), std::move(carriers));
     }
+  private:
+    NativeRecordValue consume_staged(NativeRecordValue value);
+};
+
+// Each derived row axis has an explicit lift to its original source grade.
+// Independent grades and coefficient axes are never identified by dimension.
+struct ResultFieldContext {
+    ResultFields &publication;
+    struct Grade {
+        std::uint64_t source, rows;
+        std::size_t size;
+        std::vector<std::size_t> coordinates;
+        NativeRecordValue coordinate_field;
+    };
+    std::vector<Grade> grades;
+    ResultFieldContext(ResultFields &fields, const NativeRecord &source,
+                       const std::vector<std::vector<std::uint32_t>> &coordinates,
+                       std::optional<std::pair<std::size_t, std::uint64_t>> field_carrier = {});
+    ResultValue field(const Vector &value, std::size_t grade) const;
 };
 Json result_tensor_view(const NativeRecord &record);
 Json result_fields_view(const NativeRecord &record);

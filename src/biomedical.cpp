@@ -1,4 +1,6 @@
 #include "scientific_detail.hpp"
+#include "scientific_result_fields.hpp"
+#include <cmath>
 #include <gadget/biomedical.hpp>
 #include <gadget/table.hpp>
 #include <rfc/database/interpretation_codec.hpp>
@@ -584,10 +586,21 @@ struct EvidenceStore::State {
         for(const auto &entry:native.lineage().assertions)records.emplace(entry.native_key,by_id.at(entry.origin.token));
         for(const auto &entry:native.lineage().subjects)entities.emplace(entry.native_key,publication.at("entities").at(entry.origin.token));
     }
-    Json record(std::uint64_t k) const {
-        auto j = Json::parse(records.at(k).dump());
-        j.set("native_assertion_key", Json::string(std::to_string(k)));
-        return j;
+    static ResultValue selected_value(const NativeRecord &record, const std::string &key_name,
+                                      std::uint64_t k,
+                                      const std::optional<std::string> &criterion = {}) {
+        using N = NativeRecordValue;
+        auto value = record.materialize_value();
+        auto *owner = std::get_if<N::Owned>(&value.data);
+        auto payload = owner ? ResultValue(*owner->payload) : ResultValue(value);
+        payload.set(key_name, ResultValue::string(std::to_string(k)));
+        if (criterion) payload.set("criterion", ResultValue::string(*criterion));
+        if (!owner) return payload;
+        owner->payload = std::make_shared<const N>(std::move(payload).release());
+        return ResultValue(std::move(value));
+    }
+    ResultValue record(std::uint64_t k, const std::optional<std::string> &criterion = {}) const {
+        return selected_value(records.at(k).native(), "native_assertion_key", k, criterion);
     }
 };
 EvidenceStore::EvidenceStore(const fs::path &directory)
@@ -595,6 +608,165 @@ EvidenceStore::EvidenceStore(const fs::path &directory)
 EvidenceStore::~EvidenceStore() = default;
 const NativeRecord &EvidenceStore::native_publication() const {return state_->publication;}
 std::string EvidenceStore::digest() const { return state_->receipt.at("source_digest").text(); }
+NativeRecord EvidenceStore::source_context(const NativeRecord &request) const {
+    using N = NativeRecordValue;
+    const auto control = render_record_view(request);
+    members(control, {"schema", "source_digest", "snapshot_sha256", "question", "assertion_keys"});
+    require(control.at("schema").text() == "gadget.biomedical.context.v1" &&
+                text(control.at("source_digest")) == digest() &&
+                text(control.at("snapshot_sha256")) == state_->manifest.at("snapshot_sha256").text(),
+            "biomedical context source/snapshot/schema mismatch");
+    const auto question = text(control.at("question"));
+    const auto keys = control.at("assertion_keys");
+    source_array(keys, "biomedical assertion selection");
+    require(keys.size() > 0, "biomedical context requires selected assertions");
+    N::Array records;
+    std::set<std::uint64_t> selected;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        const auto k = key(keys.at(i));
+        require(selected.insert(k).second && state_->records.contains(k),
+                "biomedical context assertion is unknown or repeated");
+        records.elements.emplace_back(N::Object{
+            {{"assertion_key", N(std::to_string(k))},
+             {"record", state_->records.at(k).native().materialize_value()}}});
+    }
+    N::Object context{{{"schema", N(std::string("gadget.biomedical.context.catalog.v1"))},
+        {"source_digest", N(digest())},
+        {"snapshot_sha256", state_->manifest.native().at("snapshot_sha256").materialize_value()},
+        {"question", N(question)},
+        {"question_sha256", N("sha256:" + sha256(question))},
+        {"context_sha256", N("sha256:" + sha256(digest() + "\n" + native_declaration_digest(request)))},
+        {"availability", N(N::Object{{{"kind", N(std::string("frozen_snapshot"))},
+            {"historical_availability_established", N(false)}}})},
+        {"records", N(std::move(records))}}};
+    return retain_operation(state_->publication, request, N(std::move(context)));
+}
+NativeRecord EvidenceStore::admit_proposal(const NativeRecord &context_request,
+                                         const NativeRecord &input,
+                                         const std::string &question) const {
+    using N = NativeRecordValue;
+    const auto context = source_context(context_request);
+    const auto catalog = context.at("result");
+    require(question == catalog.at("question").text(), "biomedical proposal question mismatch");
+    const auto proposal = render_record_view(input);
+    members(proposal, {"schema", "source_digest", "context_sha256", "question_sha256", "action"},
+            {"query", "mentions", "reason"});
+    require(proposal.at("schema").text() == "gadget.biomedical.proposal.v1" &&
+                text(proposal.at("source_digest")) == digest() &&
+                text(proposal.at("context_sha256")) == catalog.at("context_sha256").text() &&
+                text(proposal.at("question_sha256")) == catalog.at("question_sha256").text(),
+            "biomedical proposal source/context/question/schema mismatch");
+    std::set<std::uint64_t> selected;
+    for (std::size_t i = 0; i < catalog.at("records").size(); ++i)
+        selected.insert(key(render_record_view(catalog.at("records").at(i).at("assertion_key"))));
+    const auto action = text(proposal.at("action"));
+    auto mentions = Json::array();
+    if (action == "clarify") {
+        require(proposal.has("reason") && !proposal.has("query") && !proposal.has("mentions"),
+                "biomedical clarification requires only a reason");
+        (void)text(proposal.at("reason"));
+    } else if (action == "query") {
+        require(proposal.has("query") && !proposal.has("reason") && !proposal.has("mentions"),
+                "biomedical query proposal requires only a query");
+        const auto query = proposal.at("query");
+        validate(query);
+        const auto operation = query.at("operation").text();
+        if (operation == "compare")
+            require(selected.contains(key(query.at("left"))) &&
+                        selected.contains(key(query.at("right"))),
+                    "biomedical comparison lies outside the selected context");
+        if (operation == "neighbors") {
+            const auto subject = key(query.at("subject_key"));
+            const auto id = state_->entities.at(subject).at("id").text();
+            bool found = false;
+            for (const auto k : selected)
+                for (const auto *role : {"compound", "target", "assay", "document", "response"})
+                    found = found || state_->records.at(k).at(role).text() == id;
+            require(found, "biomedical subject lies outside the selected context");
+        }
+        if (operation == "affinity_evidence" || operation == "select") {
+            bool found = false;
+            for (const auto k : selected) {
+                const auto &record = state_->records.at(k);
+                if (operation == "affinity_evidence")
+                    found = found || (record.at("endpoint").text() == query.at("endpoint").text() &&
+                                      record.at("units").text() == query.at("units").text());
+                else
+                    found = found || record.at(query.at("field").text()).text() ==
+                                         query.at("value").text();
+            }
+            require(found, "biomedical query predicates lack selected source evidence");
+        }
+    } else {
+        require(action == "annotate" && proposal.has("mentions") && !proposal.has("query") &&
+                    !proposal.has("reason"), "unknown biomedical proposal action");
+        source_array(proposal.at("mentions"), "biomedical annotation mentions");
+        require(proposal.at("mentions").size() > 0, "biomedical annotation requires mentions");
+        const auto database = NativeRecord::decode(state_->publication.at("source_database").bytes());
+        std::map<std::string, Document> documents;
+        for (std::size_t i = 0; i < database.at("snapshot").at("records").size(); ++i) {
+            const auto record = database.at("snapshot").at("records").at(i);
+            const auto artifacts = database.at("artifacts");
+            for (std::size_t j = 0; j < artifacts.size(); ++j)
+                if (artifacts.at(j).at("path").text() == record.at("path").text()) {
+                    const auto bytes = artifacts.at(j).at("bytes").bytes();
+                    auto metadata = Json::object();
+                    metadata.set("format", Json::string("utf8"));
+                    metadata.set("sha256", render_record_view(record.at("sha256")));
+                    documents.emplace(record.at("request").at("id").text(), Document{
+                        metadata, {reinterpret_cast<const char *>(bytes.data()), bytes.size()}});
+                }
+        }
+        std::set<std::string> ids;
+        for (std::size_t i = 0; i < proposal.at("mentions").size(); ++i) {
+            auto mention = Json::parse(proposal.at("mentions").at(i).dump());
+            members(mention, {"id", "kind", "assertion_key", "polarity", "interpretation", "evidence"},
+                    {"role", "entity", "endpoint", "units", "relation", "value_token"});
+            require(ids.insert(text(mention.at("id"))).second, "duplicate biomedical mention");
+            const auto k = key(mention.at("assertion_key"));
+            require(selected.contains(k), "annotation assertion lies outside the selected context");
+            const auto &record = state_->records.at(k);
+            const auto kind = text(mention.at("kind"));
+            if (kind == "entity") {
+                require(mention.has("role") && mention.has("entity") && !mention.has("endpoint") &&
+                            !mention.has("units") && !mention.has("relation") && !mention.has("value_token"),
+                        "entity annotation requires only a role and identifier");
+                const auto role = text(mention.at("role"));
+                require(role == "compound" || role == "target" || role == "assay" ||
+                            role == "document" || role == "response", "unknown biomedical entity role");
+                require(text(mention.at("entity")) == record.at(role).text(),
+                        "biomedical annotation identifier differs from the original assertion role");
+            } else {
+                require(kind == "measurement" && record.at("kind").integer() == 10 &&
+                            !mention.has("role") && !mention.has("entity"),
+                        "measurement annotation requires a binding observation");
+                for (const auto *name : {"endpoint", "units", "relation", "value_token"})
+                    require(mention.has(name) && mention.at(name).text() == record.at(name).text(),
+                            "measurement annotation changes original endpoint/units/relation/value");
+            }
+            const auto polarity = text(mention.at("polarity"));
+            require(polarity == "asserted" || polarity == "negated" || polarity == "uncertain",
+                    "biomedical annotation polarity must be explicit");
+            (void)text(mention.at("interpretation"));
+            const auto evidence = source_evidence(mention.at("evidence"), documents, true);
+            for (std::size_t j = 0; j < evidence.size(); ++j)
+                require(evidence.at(j).at("document").text() ==
+                            record.at("source_receipt").at("request").at("id").text(),
+                        "biomedical annotation quote belongs to another response");
+            mention.set("evidence", evidence);
+            mention.set("interpretation_verified", Json::boolean(false));
+            mentions.push(mention);
+        }
+    }
+    N::Object receipt{{{"schema", N(std::string("gadget.biomedical.proposal.receipt.v1"))},
+        {"status", N(std::string(action == "clarify" ? "clarification" : "prospective"))},
+        {"context", catalog.materialize_value()},
+        {"mentions", import_record_view(mentions)},
+        {"scope", N(std::string("Source, question, identifiers, literal measurements and quotes admitted. "
+            "Interpretations remain unverified; queries require separate execution. "
+            "This snapshot establishes no historical availability or biological observation time."))}}};
+    return retain_operation(context, input, N(std::move(receipt)));
+}
 void EvidenceStore::validate(const Json &query) const {
     const auto op = query.at("operation").text();
     if (op == "inspect" || op == "coverage")
@@ -644,23 +816,26 @@ void EvidenceStore::validate(const Json &query) const {
     } else
         throw std::invalid_argument("unknown biomedical evidence query");
 }
-Json EvidenceStore::execute(const Json &input) const {
-    const auto query = Json::parse(input.dump());
+NativeRecord EvidenceStore::execute_record(const NativeRecord &input) const {
+    using R = ResultValue;
+    using N = NativeRecordValue;
+    const auto number = [](Rational value) {
+        const bool finite = std::isfinite(value.get_d());
+        return R(N(N::ExactNumber{std::move(value), finite}));
+    };
+    const auto query = render_record_view(input);
     validate(query);
     const auto op = query.at("operation").text();
-    auto result = Json::object();
+    auto result = R::object();
     if (op == "inspect") {
         members(query, {"operation"});
-        result.set("assertions", cardinality(state_->records.size()));
-        result.set("selected", cardinality(state_->records.size()));
-        auto entities = Json::array();
-        for (const auto &[k, j] : state_->entities) {
-            auto e = Json::parse(j.dump());
-            e.set("native_subject_key", Json::string(std::to_string(k)));
-            entities.push(e);
-        }
+        result.set("assertions", R::count(state_->records.size()));
+        result.set("selected", R::count(state_->records.size()));
+        auto entities = R::array();
+        for (const auto &[k, j] : state_->entities)
+            entities.push(State::selected_value(j.native(), "native_subject_key", k));
         result.set("entities", entities);
-        result.set("database_snapshot", state_->manifest);
+        result.set("database_snapshot", R(state_->manifest.native().materialize_value()));
     } else if (op == "select") {
         members(query, {"operation", "field", "comparison", "value"});
         const auto field = query.at("field").text();
@@ -692,28 +867,31 @@ Json EvidenceStore::execute(const Json &input) const {
                 "this query selects declared categories only");
         const auto selected =
             select_exact(state_->native, 10, p, state_->native.assertions(10).size());
-        auto rows = Json::array();
+        auto rows = R::array();
         for (const auto k : selected)
             rows.push(state_->record(k));
-        result.set("selected", cardinality(selected.size()));
+        result.set("selected", R::count(selected.size()));
         result.set("records", rows);
     } else if (op == "neighbors") {
         members(query, {"operation", "subject_key"});
         const auto subject = key(query.at("subject_key"));
         require(state_->entities.contains(subject), "unknown native biomedical subject");
-        auto rows = Json::array();
+        auto rows = R::array();
+        std::size_t selected = 0;
         for (const auto kind : {10u, 20u})
             for (const auto assertion : state_->native.assertions(kind)) {
                 bool found = false;
                 for (const auto role : {11u, 12u, 13u, 14u, 15u})
                     for (const auto &occurrence : state_->native.participants(assertion, role))
                         found = found || occurrence.participant().key == subject;
-                if (found)
+                if (found) {
                     rows.push(state_->record(assertion));
+                    ++selected;
+                }
             }
-        result.set("selected", cardinality(rows.size()));
+        result.set("selected", R::count(selected));
         result.set("records", rows);
-        result.set("subject", state_->entities.at(subject));
+        result.set("subject", R(state_->entities.at(subject).native().materialize_value()));
     } else if (op == "coverage") {
         members(query, {"operation"});
         const auto missing = select_exact(state_->native, 10, {{1}, ExactPredicateKind::IsNull, {}},
@@ -722,13 +900,13 @@ Json EvidenceStore::execute(const Json &input) const {
             select_exact(state_->native, 10, {{2}, ExactPredicateKind::Equal, V::symbol(1)},
                          state_->native.assertions(10).size());
         const auto all = state_->native.assertions(10).size();
-        result.set("reported", cardinality(all - missing.size()));
-        result.set("missing", cardinality(missing.size()));
-        result.set("equality_relation_records", cardinality(points.size()));
-        result.set("binding_records", cardinality(all));
+        result.set("reported", R::count(all - missing.size()));
+        result.set("missing", R::count(missing.size()));
+        result.set("equality_relation_records", R::count(points.size()));
+        result.set("binding_records", R::count(all));
         result.set(
             "scope",
-            Json::string(
+            R::string(
                 "Reported numerical tokens include censored bounds; equality count is a relation "
                 "count and does not imply comparable assays or a present numeric value."));
     } else if (op == "affinity_evidence") {
@@ -759,7 +937,7 @@ Json EvidenceStore::execute(const Json &input) const {
             as_set(select_exact(state_->native, 10, {{1}, ExactPredicateKind::IsNull, {}},
                                 state_->native.assertions(10).size()));
         std::size_t yes = 0, no = 0, unknown = 0;
-        auto rows = Json::array();
+        auto rows = R::array();
         for (const auto k : state_->native.assertions(10))
             if (endpoint.contains(k) && unit.contains(k)) {
                 const auto relation = state_->records.at(k).at("relation").text();
@@ -779,21 +957,19 @@ Json EvidenceStore::execute(const Json &input) const {
                     ++no;
                 else
                     ++unknown;
-                auto row = state_->record(k);
-                row.set("criterion", Json::string(classification));
-                rows.push(row);
+                rows.push(state_->record(k, classification));
             }
-        result.set("selected", cardinality(yes));
-        result.set("contradicted", cardinality(no));
-        result.set("indeterminate", cardinality(unknown));
-        result.set("eligible", cardinality(rows.size()));
+        result.set("selected", R::count(yes));
+        result.set("contradicted", R::count(no));
+        result.set("indeterminate", R::count(unknown));
+        result.set("eligible", R::count(yes + no + unknown));
         result.set("other_endpoint_or_units",
-                   cardinality(state_->native.assertions(10).size() - rows.size()));
-        result.set("maximum", exact_number(maximum));
+                   R::count(state_->native.assertions(10).size() - (yes + no + unknown)));
+        result.set("maximum", number(maximum));
         result.set("records", rows);
         result.set(
             "scope",
-            Json::string("Per-record reported interval entails, contradicts or leaves unknown x <= "
+            R::string("Per-record reported interval entails, contradicts or leaves unknown x <= "
                          "maximum under the explicit endpoint/unit. No pooled selectivity, "
                          "biological affinity certainty, efficacy or assay-comparability claim."));
     } else if (op == "compare") {
@@ -815,32 +991,36 @@ Json EvidenceStore::execute(const Json &input) const {
                    y = std::get<Rational>(std::get<V::Optional>(bv->data).element.at(0).data);
         result.set("left", state_->record(l));
         result.set("right", state_->record(r));
-        result.set("reported_difference", exact_number(Rational{x - y}));
-        result.set("reported_ratio", y == 0 ? Json{} : exact_number(Rational{x / y}));
+        result.set("reported_difference", number(Rational{x - y}));
+        result.set("reported_ratio", y == 0 ? R{} : number(Rational{x / y}));
         result.set("scope",
-                   Json::string("Exact arithmetic on two reported standard point tokens; shared "
+                   R::string("Exact arithmetic on two reported standard point tokens; shared "
                                 "assay ID does not establish independent experiments, full "
                                 "construct/condition comparability or biological disagreement."));
     } else
         throw std::invalid_argument("unknown biomedical evidence query");
-    auto cert = Json::object();
-    cert.set("schema", Json::string("gadget.biomedical.certificate.v1"));
-    cert.set("source_digest", Json::string(digest()));
-    cert.set("snapshot_sha256", state_->receipt.at("snapshot_sha256"));
-    cert.set("native_sha256", state_->receipt.at("native_sha256"));
-    auto execution = Json::object();
-    execution.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
-    execution.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
+    auto cert = R::object();
+    cert.set("schema", R::string("gadget.biomedical.certificate.v1"));
+    cert.set("source_digest", R::string(digest()));
+    cert.set("snapshot_sha256", R(state_->receipt.native().at("snapshot_sha256").materialize_value()));
+    cert.set("native_sha256", R(state_->receipt.native().at("native_sha256").materialize_value()));
+    auto execution = R::object();
+    execution.set("gadget_sources_sha256", R::string(GADGET_SOURCE_SHA256));
+    execution.set("rexgraph_headers_sha256", R::string(GADGET_REXGRAPH_SHA256));
     cert.set("compiled_sources", execution);
-    cert.set("query", query);
+    cert.set("query", R(query));
     cert.set("result", result);
     cert.set("arithmetic",
-             Json::string("RexGraph native role traversal, three-valued exact predicates and GMP "
+             R::string("RexGraph native role traversal, three-valued exact predicates and GMP "
                           "rationals; no inference or identity coercion"));
     cert.set("interpretation_limits",
-             Json::string("Source assertions and explicit cross-references only. Mapping is not "
+             R::string("Source assertions and explicit cross-references only. Mapping is not "
                           "identity equivalence, binding is not efficacy, omitted edges are not "
                           "negative evidence. API arrival is not biological time."));
-    return seal(cert, "certificate_sha256");
+    return retain_operation(state_->publication, input, std::move(cert).release());
+}
+Json EvidenceStore::execute(const Json &query) const {
+    const auto operation = execute_record(admit_record_view(query));
+    return seal(render_record_view(operation.at("result")), "certificate_sha256");
 }
 } // namespace gadget

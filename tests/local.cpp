@@ -1,5 +1,7 @@
 #include "../examples/scientific/fixture.hpp"
 #include <gadget/model.hpp>
+#include <gadget/biomedical.hpp>
+#include <gadget/record_view.hpp>
 #include <gadget/snapshot.hpp>
 #include <iostream>
 #include <sys/wait.h>
@@ -31,9 +33,64 @@ void agrees(const Json &response, const Workspace &study, const Json &query) {
     check(json_object_equal(response.at("certificate").raw(), explicit_certificate.raw()),
           "model result differs from the explicitly requested order");
 }
+void evidence_role(const fs::path &model, const fs::path &evidence_path,
+                   const fs::path &request_path) {
+    const fs::path root = fs::path(GADGET_LOCAL_TEST_BUILD) / "evidence-role";
+    fs::create_directories(root);
+    const auto evidence = std::make_shared<const EvidenceStore>(evidence_path);
+    const auto request = read_record(request_path).native();
+    const auto context = evidence->source_context(request).at("result");
+    LocalModelOptions options;
+    options.model = model;
+    options.threads = 2;
+    options.context_tokens = 8192;
+    options.output_tokens = 768;
+    LocalAgent agent(evidence, request, options);
+    check(!agent.prospective_publication(), "model fabricated an initial proposal");
+    const auto response = agent.ask(context.at("question").text());
+    write_text(root / "response.json", response.dump() + "\n");
+    check(response.at("status").text() == "prospective" &&
+              response.at("proposal").at("action").text() == "query",
+          "evidence model did not admit the requested prospective query");
+    const auto expected = Json::parse(
+        R"({"operation":"affinity_evidence","endpoint":"Ki","units":"nM","maximum":"0.5"})");
+    check(json_object_equal(response.at("proposal").at("query").raw(), expected.raw()),
+          "model substituted a different threshold question");
+    const auto publication = agent.prospective_publication();
+    check(publication.has_value(), "model lost its native prospective publication");
+    publication->write(root / "proposal.rfcxs");
+    const auto proposed = publication->at("request").at("query");
+    const auto executed = evidence->execute_record(proposed);
+    executed.write(root / "result.rfcxs");
+    const auto replay = NativeRecord::read(root / "proposal.rfcxs");
+    const auto disabled = evidence->execute_record(replay.at("request").at("query"));
+    check(json_object_equal(render_record_view(executed.at("result").at("result")).raw(),
+                            render_record_view(disabled.at("result").at("result")).raw()),
+          "model-disabled native query differs from retained proposal execution");
+    const auto original = evidence->native_publication().raw_sources();
+    const auto retained = executed.raw_sources();
+    for (const auto &source : original) {
+        const auto found = std::find_if(retained.begin(), retained.end(),
+                                       [&](const auto &row) { return row.key() == source.key(); });
+        check(found != retained.end() && std::ranges::equal(found->bytes(), source.bytes()),
+              "model query changed original provider byte owners");
+    }
+    bool rejected = false;
+    try { agent.ask("changed question"); }
+    catch (const std::invalid_argument &) { rejected = true; }
+    check(rejected, "model admitted an unbound question");
+    check(agent.prospective_publication()->encode() == publication->encode(),
+          "failed model call replaced the previously admitted publication");
+    std::cout << "PASS: real local evidence planning, native prospective owner, separate native "
+                 "execution, complete model-disabled equality, original bytes and replay\n";
+}
 } // namespace
 int main(int argc, char **argv) {
     try {
+        if (argc == 4) {
+            evidence_role(argv[1], argv[2], argv[3]);
+            return 0;
+        }
         if (argc != 2)
             throw std::invalid_argument("local test requires one existing GGUF path");
         const fs::path root = GADGET_LOCAL_TEST_BUILD;

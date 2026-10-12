@@ -88,3 +88,11 @@ uniqueness, quantity, units and complete field support are checked.
 See the [spatial expression experiment](../bioinformatics/spatial-expression.md)
 for a complete source, native chart construction and independent checks of
 section projection, Hodge and Green identities.
+
+`local_sections` publishes exact fields in `result.fields` when executed through
+`ScientificSession::execute_record`. Each stalk keeps its actual cell identity
+and a distinct native carrier. The bindings retain direct sum inclusions,
+identity metrics and the source field realization maps. Occurrence maps retain
+their original flag owner and direction. Compatible fields, residuals, defects
+and complete cohomology frames use native tensor keys; the JSON view is an
+optional rendering. Portable replay retains the original study and request.

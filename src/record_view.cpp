@@ -40,6 +40,7 @@ N import(const Json &value,const RecordByteBindings &bindings,std::size_t depth=
         json_object_object_foreach(value.raw(),key,entry) {
             (void)entry;const auto item=value.at(key);
             if(std::string_view(key)=="text" && value.has("document") && value.has("start") && value.has("end") &&
+               json_object_is_type(value.at("document").raw(),json_type_string) &&
                bindings.documents.contains(value.at("document").text())) {
                 const auto source=bindings.documents.at(value.at("document").text());
                 const auto start=value.at("start").integer(),end=value.at("end").integer();

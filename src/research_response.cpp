@@ -1,5 +1,6 @@
 #include "research_response.hpp"
 #include "research_fields.hpp"
+#include "scientific_result_fields.hpp"
 #include "scientific_model.hpp"
 #include "scientific_reference.hpp"
 #include "scientific_relational_field.hpp"
@@ -14,31 +15,10 @@ namespace gadget::research_detail {
 namespace {
 using Matrix = numeric::ExactMatrix;
 using Model = scientific_detail::PreparedObservedModel;
+using Value = scientific_detail::ResultValue;
+using Publication = scientific_detail::ResultFields;
+using Context = scientific_detail::ResultFieldContext;
 constexpr std::array<const char *, 4> sectors{"full", "gradient", "curl", "harmonic"};
-Json rat(Rational x) {
-    x.canonicalize();
-    return Json::string(x.get_str());
-}
-Json vec(const Vector &x) {
-    auto a = Json::array();
-    for (const auto &v : x)
-        a.push(rat(v));
-    return a;
-}
-Json mat(const Matrix &x) {
-    auto out = Json::object(), entries = Json::array();
-    out.set("rows", cardinality(x.rows()));
-    out.set("columns", cardinality(x.cols()));
-    for (const auto &[p, v] : x.entries()) {
-        auto e = Json::object();
-        e.set("row", cardinality(p.first));
-        e.set("column", cardinality(p.second));
-        e.set("value", rat(v));
-        entries.push(e);
-    }
-    out.set("entries", entries);
-    return out;
-}
 struct Response {
     std::string id, kind, field, denominator;
     Json declaration;
@@ -60,32 +40,33 @@ struct State {
 struct Prepared {
     Matrix readout;
     std::vector<std::unique_ptr<Model>> variants;
+    std::vector<std::uint64_t> coefficient_axes, frame_axes, kernel_axes;
 };
-Json reading(const scientific_detail::PreparedRelationalField &hodge, const Vector &x,
+Value reading(Context &context, const scientific_detail::PreparedRelationalField &hodge, const Vector &x,
              const std::optional<Rational> &lambda, const runtime::CpuTileStop &stop) {
-    auto out = Json::object(), fs = Json::object(), qs = Json::object();
+    auto out = Value::object(), fs = Value::object(), qs = Value::object();
     const auto parts = hodge.apply(x, [&] { stop.check(); });
     for (std::size_t k = 0; k < parts.size(); ++k) {
-        fs.set(sectors[k], vec(parts[k]));
-        qs.set(sectors[k], rat(hodge.metric.inner(parts[k], parts[k])));
+        fs.set(sectors[k], context.field(parts[k], hodge.grade.value));
+        qs.set(sectors[k], context.publication.stage_scalar(hodge.metric.inner(parts[k], parts[k])));
     }
     out.set("sectors", fs);
     out.set("quadrances", qs);
-    out.set("hodge_action", vec(hodge.study.hodge(hodge.grade).apply(x)));
+    out.set("hodge_action", context.field(hodge.study.hodge(hodge.grade).apply(x), hodge.grade.value));
     if (hodge.grade.value)
-        out.set("lower_boundary", vec(hodge.study.source().boundary_apply(hodge.grade, x)));
+        out.set("lower_boundary", context.field(hodge.study.source().boundary_apply(hodge.grade, x), hodge.grade.value - 1u));
     if (hodge.grade.value < hodge.study.source().max_grade().value) {
         const auto upper = core::Grade{static_cast<std::uint16_t>(hodge.grade.value + 1u)};
         out.set("upper_adjoint",
-                vec(field::BoundaryOperator(hodge.study.source(), upper)
-                        .adjoint(x, hodge.metric, hodge.study.tower().metrics()[upper.value])));
+                context.field(field::BoundaryOperator(hodge.study.source(), upper)
+                        .adjoint(x, hodge.metric, hodge.study.tower().metrics()[upper.value]), upper.value));
     }
     if (lambda) {
         const auto y = hodge.study.green_action(hodge.grade, *lambda, x).value;
         require(numeric::add(y, numeric::scale(*lambda, hodge.study.hodge(hodge.grade).apply(y))) ==
                     x,
                 "response Green action residual");
-        out.set("green", vec(y));
+        out.set("green", context.field(y, hodge.grade.value));
     }
     return out;
 }
@@ -132,10 +113,10 @@ std::set<std::string> response_model_field_ids(const Json &query) {
     return ids;
 }
 
-Json observed_response_model(const NativeStudy &study, const Json &query, core::Grade grade,
+Value observed_response_model(const NativeStudy &study, const Json &query, core::Grade grade,
                              const std::map<std::string, Vector> &fields,
                              const std::map<std::string, Json> &meanings, const Json &coordinates,
-                             bool validate, const std::shared_ptr<CpuResources> &resources) {
+                             bool validate, const std::shared_ptr<CpuResources> &resources, Context *context) {
     const bool constrained = query.at("operation").text() == "constrained_response_model";
     std::set<std::string> required{"operation", "context", "responses",
                                    "model",     "workers", "interpretation"};
@@ -374,6 +355,7 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
         Json declaration;
         Vector doses;
         Matrix means, lift, differences;
+        std::uint64_t group_axis{}, difference_axis{};
     };
     std::vector<Dose> doses;
     std::set<std::string> dose_ids;
@@ -468,12 +450,32 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
     if (validate) {
         auto out = Json::object();
         out.set("status", Json::string("validated"));
-        return out;
+        return Value(out);
     }
+    require(context != nullptr, "response native publication owner required");
+    auto &publication = context->publication;
+    const auto rows = context->grades.at(grade.value).rows;
+    const auto rat = [&](const Rational &value) {return publication.stage_scalar(value);};
+    const auto vec = [&](const Vector &value) {return context->field(value, grade.value);};
+    const auto mat = [&](const Matrix &value, std::uint64_t input, std::uint64_t output,
+                         std::optional<storage::TemporalTensorRole> role = {}) {
+        return Publication::stage_matrix(value, input, output, role);
+    };
     auto reservation = cpu->reserve(workers);
     const scientific_detail::PreparedRelationalField hodge(study, grade);
     std::map<std::string, std::unique_ptr<Prepared>> prepared;
-    auto preparation_records = Json::array();
+    for (auto &dose : doses) {
+        dose.group_axis = publication.axis(dose.means.rows());
+        dose.difference_axis = publication.axis(dose.differences.rows());
+        auto binding = Value::object();
+        binding.set("dose_comparison", dose.declaration.at("id"));
+        binding.set("source_row_carrier", Value::count(rows));
+        binding.set("group_carrier", Value::count(dose.group_axis));
+        binding.set("difference_carrier", Value::count(dose.difference_axis));
+        binding.set("groups", dose.declaration.at("groups"));
+        publication.bind(std::move(binding));
+    }
+    auto preparation_records = Value::array();
     for (const auto &r : responses) {
         if (prepared.contains(r.denominator))
             continue;
@@ -485,19 +487,19 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
         const auto e = Matrix::diagonal(exposure);
         auto p = std::make_unique<Prepared>();
         p->readout = Matrix::diagonal(inverse);
-        auto record = Json::object(), models = Json::array();
+        auto record = Value::object(), models = Value::array();
         record.set("denominator_field",
-                   r.denominator.empty() ? Json{} : Json::string(r.denominator));
+                   r.denominator.empty() ? Value{} : Value::string(r.denominator));
         record.set("exposure", vec(exposure));
-        record.set("readout", mat(p->readout));
-        record.set("readout_metric_pullback_map", mat(e));
+        record.set("readout", mat(p->readout, rows, rows));
+        record.set("readout_metric_pullback_map", mat(e, rows, rows));
         for (const auto &variant : variants) {
             std::vector<std::size_t> selected;
-            auto axis = Json::array();
+            auto axis = Value::array();
             for (std::size_t j = 0; j < column_ids.size(); ++j)
                 if (!variant.remove.contains(column_ids[j])) {
                     selected.push_back(j);
-                    axis.push(Json::string(column_ids[j]));
+                    axis.push(Value::string(column_ids[j]));
                 }
             Matrix a(n, selected.size());
             for (std::size_t j = 0; j < selected.size(); ++j)
@@ -505,20 +507,36 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                     a.set(i, j, all.get(i, selected[j]));
             p->variants.push_back(std::make_unique<Model>(e.multiply(a), metric));
             const auto &m = *p->variants.back();
-            auto model = Json::object();
-            model.set("id", Json::string(variant.id));
+            const auto coefficient_axis = publication.axis(m.design.cols());
+            const auto frame_axis = publication.axis(m.projection.frame.cols());
+            const auto kernel_axis = publication.axis(m.kernel.cols());
+            p->coefficient_axes.push_back(coefficient_axis);
+            p->frame_axes.push_back(frame_axis);
+            p->kernel_axes.push_back(kernel_axis);
+            auto binding = Value::object();
+            binding.set("denominator", Value::string(r.denominator));
+            binding.set("model", Value::string(variant.id));
+            binding.set("coefficient_carrier", Value::count(coefficient_axis));
+            binding.set("frame_carrier", Value::count(frame_axis));
+            binding.set("kernel_carrier", Value::count(kernel_axis));
+            binding.set("columns", axis);
+            binding.set("column_origins", publication.indices(selected, coefficient_axis));
+            binding.set("frame_column_origins", publication.indices(m.pivots, frame_axis));
+            publication.bind(std::move(binding));
+            auto model = Value::object();
+            model.set("id", Value::string(variant.id));
             model.set("columns", axis);
-            model.set("design", mat(m.design));
-            model.set("independent_frame", mat(m.projection.frame));
-            model.set("coefficient_kernel", mat(m.kernel));
-            model.set("rank", cardinality(m.pivots.size()));
-            model.set("coefficient_nullity", cardinality(m.kernel.cols()));
-            auto identified = Json::array();
+            model.set("design", mat(m.design, coefficient_axis, rows));
+            model.set("independent_frame", mat(m.projection.frame, frame_axis, rows));
+            model.set("coefficient_kernel", mat(m.kernel, kernel_axis, coefficient_axis));
+            model.set("rank", Value::count(m.pivots.size()));
+            model.set("coefficient_nullity", Value::count(m.kernel.cols()));
+            auto identified = Value::array();
             for (std::size_t j = 0; j < m.design.cols(); ++j) {
                 bool unique = true;
                 for (std::size_t k = 0; k < m.kernel.cols(); ++k)
                     unique = unique && m.kernel.get(j, k) == 0;
-                identified.push(Json::boolean(unique));
+                identified.push(Value::boolean(unique));
             }
             model.set("coefficient_identified", identified);
             models.push(model);
@@ -530,7 +548,7 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
     struct Job {
         Model::Fit fit;
         Vector readout;
-        Json record;
+        Value record;
     };
     const auto jobs = machine::checked_size_mul(
         machine::checked_size_mul(states.size(), axes.size()), variants.size());
@@ -552,39 +570,40 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
         const auto x = p.readout.apply(observations[s][a]);
         job.readout = p.readout.apply(job.fit.represented);
         const auto residual = p.readout.apply(job.fit.residual);
-        auto out = Json::object();
-        out.set("axis", Json::string(axis.id));
-        out.set("response", Json::string(r.id));
-        out.set("model", Json::string(variants[v].id));
+        auto out = Value::object();
+        out.set("axis", Value::string(axis.id));
+        out.set("response", Value::string(r.id));
+        out.set("model", Value::string(variants[v].id));
         out.set("readout_units", r.kind == "ordinal"
-                                     ? Json::string("dimensionless")
+                                     ? Value::string("dimensionless")
                                      : (!r.denominator.empty() ? r.declaration.at("rate_units")
                                                                : meanings.at(r.field).at("units")));
         out.set("objective_input", vec(observations[s][a]));
         out.set("objective_represented", vec(job.fit.represented));
         out.set("objective_residual", vec(job.fit.residual));
-        out.set("particular_coefficients", vec(job.fit.coefficients));
+        out.set("particular_coefficients", Publication::stage_vector(job.fit.coefficients, p.coefficient_axes[v]));
         out.set("residual_quadrance", rat(job.fit.quadrance));
         out.set("normal_equations",
-                vec(model.design.transpose().apply(metric.apply(job.fit.residual))));
-        out.set("observed", reading(hodge, x, lambda, stop));
-        out.set("represented", reading(hodge, job.readout, lambda, stop));
-        out.set("residual", reading(hodge, residual, lambda, stop));
-        auto violations = Json::array();
+                Publication::stage_vector(model.design.transpose().apply(metric.apply(job.fit.residual)), p.coefficient_axes[v]));
+        out.set("observed", reading(*context, hodge, x, lambda, stop));
+        out.set("represented", reading(*context, hodge, job.readout, lambda, stop));
+        out.set("residual", reading(*context, hodge, residual, lambda, stop));
+        auto violations = Value::array();
         if (!r.denominator.empty() || r.kind == "ordinal")
             for (std::size_t i = 0; i < n; ++i)
                 if (job.readout[i] < 0 ||
                     ((r.kind == "ordinal" || r.kind == "binomial_count") && job.readout[i] > 1)) {
-                    auto e = Json::object();
-                    e.set("coordinate", cardinality(i));
+                    auto e = Value::object();
+                    e.set("coordinate", Value::count(i));
                     e.set("value", rat(job.readout[i]));
                     violations.push(e);
                 }
         out.set("range_violations", violations);
-        out.set("range_admissible", Json::boolean(violations.size() == 0));
+        out.set("range_admissible", Value::boolean(violations.size() == 0));
         job.record = out;
     });
-    auto state_records = Json::array(), family = Json::array();
+    auto state_records = Value::array();
+    auto family = Json::array();
     std::vector<Vector> scores(states.size(), Vector(axes.size(), Rational{0}));
     std::vector<std::vector<bool>> defined(states.size(), std::vector<bool>(axes.size(), false));
     for (const auto &axis : axes) {
@@ -594,13 +613,13 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
         family.push(f);
     }
     for (std::size_t s = 0; s < states.size(); ++s) {
-        auto state = Json::object(), fits = Json::array(), comparisons = Json::array(),
-             categories = Json::array(), dose_records = Json::array();
-        state.set("id", Json::string(states[s].id));
-        state.set("mass", query.has("reference_law") ? rat(states[s].mass) : Json{});
-        auto bindings = Json::object();
+        auto state = Value::object(), fits = Value::array(), comparisons = Value::array(),
+             categories = Value::array(), dose_records = Value::array();
+        state.set("id", Value::string(states[s].id));
+        state.set("mass", query.has("reference_law") ? rat(states[s].mass) : Value{});
+        auto bindings = Value::object();
         for (std::size_t r = 0; r < responses.size(); ++r)
-            bindings.set(responses[r].id, Json::string(states[s].fields[r]));
+            bindings.set(responses[r].id, Value::string(states[s].fields[r]));
         state.set("response_fields", bindings);
         for (std::size_t a = 0; a < axes.size(); ++a) {
             for (std::size_t v = 0; v < variants.size(); ++v)
@@ -614,13 +633,13 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                     require(gain >= 0 && metric.inner(d, d) == gain &&
                                 metric.inner(d, full.residual) == 0,
                             "nested response projection reduction");
-                    auto c = Json::object();
-                    c.set("axis", Json::string(axes[a].id));
-                    c.set("reduced", Json::string(variants[v].id));
+                    auto c = Value::object();
+                    c.set("axis", Value::string(axes[a].id));
+                    c.set("reduced", Value::string(variants[v].id));
                     c.set("gain", rat(gain));
                     c.set("represented_change", vec(d));
                     c.set("fraction",
-                          reduced.quadrance > 0 ? rat(gain / reduced.quadrance) : Json{});
+                          reduced.quadrance > 0 ? rat(gain / reduced.quadrance) : Value{});
                     comparisons.push(c);
                     if (v == 0 && reduced.quadrance > 0) {
                         defined[s][a] = true;
@@ -635,9 +654,9 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                     if (axes[a].response == r)
                         cut_axes.push_back(a);
                 for (std::size_t v = 0; v < variants.size(); ++v) {
-                    auto c = Json::object(), fields_out = Json::array(), violations = Json::array();
-                    c.set("response", Json::string(responses[r].id));
-                    c.set("model", Json::string(variants[v].id));
+                    auto c = Value::object(), fields_out = Value::array(), violations = Value::array();
+                    c.set("response", Value::string(responses[r].id));
+                    c.set("model", Value::string(variants[v].id));
                     for (std::size_t k = 0; k < responses[r].codes.size(); ++k) {
                         Vector values(n, Rational{0});
                         for (std::size_t i = 0; i < n; ++i) {
@@ -649,9 +668,9 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                                                     : Rational{0};
                             values[i] = lower - upper;
                             if (values[i] < 0 || values[i] > 1) {
-                                auto e = Json::object();
-                                e.set("level", cardinality(k));
-                                e.set("coordinate", cardinality(i));
+                                auto e = Value::object();
+                                e.set("level", Value::count(k));
+                                e.set("coordinate", Value::count(i));
                                 e.set("value", rat(values[i]));
                                 violations.push(e);
                             }
@@ -660,18 +679,18 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                     }
                     c.set("level_fields", fields_out);
                     c.set("violations", violations);
-                    c.set("admissible", Json::boolean(violations.size() == 0));
+                    c.set("admissible", Value::boolean(violations.size() == 0));
                     categories.push(c);
                 }
             }
         for (const auto &dose : doses) {
-            auto dr = Json::object(), values = Json::array();
+            auto dr = Value::object(), values = Value::array();
             dr.set("id", dose.declaration.at("id"));
-            dr.set("dose_levels", vec(dose.doses));
+            dr.set("dose_levels", Publication::stage_vector(dose.doses, dose.group_axis));
             dr.set("dose_units", meanings.at(dose.declaration.at("field").text()).at("units"));
-            dr.set("mean_map", mat(dose.means));
-            dr.set("lift_map", mat(dose.lift));
-            dr.set("divided_difference_map", mat(dose.differences));
+            dr.set("mean_map", mat(dose.means, rows, dose.group_axis));
+            dr.set("lift_map", mat(dose.lift, dose.group_axis, rows));
+            dr.set("divided_difference_map", mat(dose.differences, dose.group_axis, dose.difference_axis));
             for (std::size_t a = 0; a < axes.size(); ++a) {
                 const auto &r = responses[axes[a].response];
                 const auto &p = *prepared.at(r.denominator);
@@ -680,10 +699,10 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                 const auto within = numeric::sub(x, dose.lift.apply(means));
                 require(numeric::is_zero(dose.means.apply(within)),
                         "dose within-group mean residual");
-                auto vr = Json::object();
-                vr.set("axis", Json::string(axes[a].id));
-                vr.set("means", vec(means));
-                vr.set("divided_differences", vec(slopes));
+                auto vr = Value::object();
+                vr.set("axis", Value::string(axes[a].id));
+                vr.set("means", Publication::stage_vector(means, dose.group_axis));
+                vr.set("divided_differences", Publication::stage_vector(slopes, dose.difference_axis));
                 vr.set("within_group_field", vec(within));
                 bool valid = true;
                 const auto direction = dose.declaration.at("direction").text();
@@ -691,7 +710,7 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                     valid = valid && (direction == "unrestricted" ||
                                       (direction == "nondecreasing" && v >= 0) ||
                                       (direction == "nonincreasing" && v <= 0));
-                vr.set("declared_direction_satisfied", Json::boolean(valid));
+                vr.set("declared_direction_satisfied", Value::boolean(valid));
                 values.push(vr);
             }
             dr.set("responses", values);
@@ -703,26 +722,28 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
         state.set("dose_comparisons", dose_records);
         state_records.push(state);
     }
-    auto out = Json::object();
-    out.set("status", Json::string("completed"));
-    out.set("grade", cardinality(grade.value));
-    auto dimensions = Json::object();
-    dimensions.set("gradient", cardinality(hodge.projections[0].frame.cols()));
-    dimensions.set("curl", cardinality(hodge.projections[1].frame.cols()));
-    dimensions.set("harmonic", cardinality(n - hodge.projections[0].frame.cols() -
+    auto out = Value::object();
+    out.set("status", Value::string("completed"));
+    out.set("grade", Value::count(grade.value));
+    out.set("metric", mat(metric.materialize(), rows, rows, storage::TemporalTensorRole::Metric));
+    auto dimensions = Value::object();
+    dimensions.set("gradient", Value::count(hodge.projections[0].frame.cols()));
+    dimensions.set("curl", Value::count(hodge.projections[1].frame.cols()));
+    dimensions.set("harmonic", Value::count(n - hodge.projections[0].frame.cols() -
                                            hodge.projections[1].frame.cols()));
     out.set("hodge_dimensions", dimensions);
-    auto boundaries = Json::array();
+    auto boundaries = Value::array();
     for (std::size_t k = 1; k < study.source().grade_count(); ++k)
         boundaries.push(mat(field::materialize_boundary_matrix(
-            study.source(), core::Grade{static_cast<std::uint16_t>(k)})));
+            study.source(), core::Grade{static_cast<std::uint16_t>(k)}),
+            context->grades.at(k).rows, context->grades.at(k - 1).rows));
     out.set("source_boundaries", boundaries);
     out.set("coordinates", coordinates);
     out.set("responses", declarations);
     out.set("columns", columns);
     out.set("preparations", preparation_records);
     out.set("states", state_records);
-    out.set("observed_state_index", cardinality(observed));
+    out.set("observed_state_index", Value::count(observed));
     if (constrained) {
         struct ShapeCarrier {
             Matrix frame, source_normals, normals;
@@ -731,6 +752,7 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
             field::ExactMetric gram;
             std::size_t family;
             std::vector<std::size_t> representatives;
+            std::uint64_t joint_axis, frame_axis, constraint_axis;
         };
         struct Shape {
             std::size_t response, variant;
@@ -738,8 +760,14 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
             std::shared_ptr<const ShapeCarrier> maps;
         };
         std::vector<Shape> shapes;
-        std::map<std::string, std::shared_ptr<const ShapeCarrier>> families;
-        auto shape_preparations = Json::array(), shape_families = Json::array();
+        struct FamilyKey {
+            std::string kind, denominator, model, rows;
+            Matrix normals;
+            Vector rhs;
+            std::shared_ptr<const ShapeCarrier> owner;
+        };
+        std::vector<FamilyKey> families;
+        auto shape_preparations = Value::array(), shape_families = Value::array();
         for (std::size_t r = 0; r < responses.size(); ++r) {
             const auto &response = responses[r];
             const auto &p = *prepared.at(response.denominator);
@@ -802,14 +830,14 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                     c.set(i, j, value);
             for (std::size_t v = 0; v < variants.size(); ++v) {
                 const auto &model = *p.variants[v];
-                auto signature = Json::array();
-                for (const auto &name : {response.kind, response.denominator, variants[v].id})
-                    signature.push(Json::string(name));
-                signature.push(mat(c));
-                signature.push(vec(rhs));
-                signature.push(row_records);
-                const auto key = signature.dump();
-                if (!families.contains(key)) {
+                const auto family_rows = row_records.dump();
+                const auto existing = std::find_if(families.begin(), families.end(), [&](const auto &key) {
+                    return key.kind == response.kind && key.denominator == response.denominator &&
+                        key.model == variants[v].id && key.rows == family_rows &&
+                        key.normals == c && key.rhs == rhs;
+                });
+                std::shared_ptr<const ShapeCarrier> family_owner;
+                if (existing == families.end()) {
                     const auto rank = model.projection.frame.cols();
                     Matrix frame(dimension, machine::checked_size_mul(rank, selected_axes.size()));
                     std::vector<field::ExactMetric> grams;
@@ -825,35 +853,59 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                     auto maps = std::make_shared<const ShapeCarrier>(ShapeCarrier{
                         frame, c, normals, rhs, row_records,
                         field::ExactMetric::block_diagonal(std::move(grams)), shape_families.size(),
-                        scientific_detail::physical_shape_representatives(normals, rhs)});
-                    auto owner = Json::object();
-                    owner.set("frame", mat(maps->frame));
-                    owner.set("source_normals", mat(maps->source_normals));
-                    owner.set("normals", mat(maps->normals));
-                    owner.set("rhs", vec(maps->rhs));
+                        scientific_detail::physical_shape_representatives(normals, rhs),
+                        publication.axis(dimension), publication.axis(frame.cols()),
+                        publication.axis(c.rows())});
+                    auto owner = Value::object();
+                    owner.set("frame", mat(maps->frame, maps->frame_axis, maps->joint_axis));
+                    owner.set("source_normals", mat(maps->source_normals, maps->joint_axis, maps->constraint_axis));
+                    owner.set("normals", mat(maps->normals, maps->frame_axis, maps->constraint_axis));
+                    owner.set("rhs", Publication::stage_vector(maps->rhs, maps->constraint_axis));
                     owner.set("constraint_rows", maps->rows);
-                    owner.set("gram", mat(maps->gram.materialize()));
-                    auto representatives = Json::array();
+                    owner.set("gram", mat(maps->gram.materialize(), maps->frame_axis, maps->frame_axis, storage::TemporalTensorRole::Metric));
+                    auto representatives = Value::array();
                     for (auto i : maps->representatives)
-                        representatives.push(cardinality(i));
+                        representatives.push(Value::count(i));
                     owner.set("constraint_representatives", representatives);
+                    auto binding = Value::object(), joint_fields = Value::array();
+                    binding.set("family", Value::count(maps->family));
+                    binding.set("model", Value::string(variants[v].id));
+                    binding.set("denominator", Value::string(response.denominator));
+                    binding.set("joint_carrier", Value::count(maps->joint_axis));
+                    binding.set("frame_carrier", Value::count(maps->frame_axis));
+                    binding.set("constraint_carrier", Value::count(maps->constraint_axis));
+                    for (std::size_t a = 0; a < selected_axes.size(); ++a) {
+                        Matrix select(n, dimension), frame_select(rank, frame.cols());
+                        for (std::size_t i = 0; i < n; ++i) select.set(i, a * n + i, 1);
+                        for (std::size_t i = 0; i < rank; ++i) frame_select.set(i, a * rank + i, 1);
+                        auto axis = Value::object();
+                        axis.set("response_axis", Value::string(axes[selected_axes[a]].id));
+                        axis.set("source_rows", publication.matrix(select, maps->joint_axis, rows));
+                        axis.set("model_frame", publication.matrix(frame_select, maps->frame_axis, p.frame_axes[v]));
+                        joint_fields.push(std::move(axis));
+                    }
+                    binding.set("axes", std::move(joint_fields));
+                    publication.bind(std::move(binding));
                     shape_families.push(owner);
-                    families.emplace(key, std::move(maps));
+                    family_owner = maps;
+                    families.push_back({response.kind, response.denominator, variants[v].id,
+                                        family_rows, c, rhs, std::move(maps)});
                 }
-                Shape shape{r, v, selected_axes, families.at(key)};
-                auto record = Json::object(), ids = Json::array();
-                record.set("response", Json::string(response.id));
-                record.set("model", Json::string(variants[v].id));
+                else family_owner = existing->owner;
+                Shape shape{r, v, selected_axes, std::move(family_owner)};
+                auto record = Value::object(), ids = Value::array();
+                record.set("response", Value::string(response.id));
+                record.set("model", Value::string(variants[v].id));
                 for (auto a : selected_axes)
-                    ids.push(Json::string(axes[a].id));
+                    ids.push(Value::string(axes[a].id));
                 record.set("axes", ids);
-                record.set("family", cardinality(shape.maps->family));
+                record.set("family", Value::count(shape.maps->family));
                 shape_preparations.push(record);
                 shapes.push_back(std::move(shape));
             }
         }
         const auto shape_jobs = machine::checked_size_mul(states.size(), shapes.size());
-        std::vector<Json> shape_results(shape_jobs);
+        std::vector<Value> shape_results(shape_jobs);
         std::vector<Rational> shape_objectives(shape_jobs);
         std::vector<Vector> shape_represented(shape_jobs);
         const auto shape_report = executor.run_tiles(
@@ -881,7 +933,7 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                 require(maps.normals.apply(fit.coordinates) ==
                             maps.source_normals.apply(represented),
                         "physical source/model constraint commutation");
-                auto result = Json::object(), fits = Json::array(), active = Json::array();
+                auto result = Value::object(), fits = Value::array(), active = Value::array();
                 Rational objective{0};
                 for (std::size_t a = 0; a < shape.axes.size(); ++a) {
                     Vector original(input.begin() + a * n, input.begin() + (a + 1) * n);
@@ -895,29 +947,29 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                             "physical optimizer coefficient fibre");
                     const auto quadrance = metric.inner(residual, residual);
                     objective += quadrance;
-                    auto f = Json::object();
-                    f.set("axis", Json::string(axes[shape.axes[a]].id));
+                    auto f = Value::object();
+                    f.set("axis", Value::string(axes[shape.axes[a]].id));
                     f.set("objective_represented", vec(predicted));
                     f.set("objective_residual", vec(residual));
-                    f.set("particular_coefficients", vec(coefficients));
-                    f.set("coefficient_kernel", mat(model.kernel));
+                    f.set("particular_coefficients", Publication::stage_vector(coefficients, p.coefficient_axes[shape.variant]));
+                    f.set("coefficient_kernel", mat(model.kernel, p.kernel_axes[shape.variant], p.coefficient_axes[shape.variant]));
                     f.set("residual_quadrance", rat(quadrance));
-                    f.set("represented", reading(hodge, p.readout.apply(predicted), lambda, stop));
-                    f.set("residual", reading(hodge, p.readout.apply(residual), lambda, stop));
+                    f.set("represented", reading(*context, hodge, p.readout.apply(predicted), lambda, stop));
+                    f.set("residual", reading(*context, hodge, p.readout.apply(residual), lambda, stop));
                     fits.push(f);
                 }
                 const auto correction = numeric::sub(fit.coordinates, v0);
                 require(objective == unbounded_objective + maps.gram.inner(correction, correction),
                         "physical original objective pullback identity");
                 for (auto i : fit.active)
-                    active.push(cardinality(i));
-                result.set("state", Json::string(states[s].id));
-                result.set("response", Json::string(response.id));
-                result.set("model", Json::string(variants[shape.variant].id));
-                result.set("preparation", cardinality(owner));
+                    active.push(Value::count(i));
+                result.set("state", Value::string(states[s].id));
+                result.set("response", Value::string(response.id));
+                result.set("model", Value::string(variants[shape.variant].id));
+                result.set("preparation", Value::count(owner));
                 result.set("fits", fits);
                 if (response.kind == "ordinal") {
-                    auto categories = Json::array();
+                    auto categories = Value::array();
                     for (std::size_t k = 0; k <= shape.axes.size(); ++k) {
                         Vector values(n, Rational{0});
                         for (std::size_t i = 0; i < n; ++i) {
@@ -935,24 +987,24 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                 result.set("joint_residual_quadrance", rat(objective));
                 result.set("unconstrained_joint_quadrance", rat(unbounded_objective));
                 result.set("constraint_cost", rat(objective - unbounded_objective));
-                result.set("coordinates", vec(fit.coordinates));
-                result.set("unconstrained_coordinates", vec(v0));
+                result.set("coordinates", Publication::stage_vector(fit.coordinates, maps.frame_axis));
+                result.set("unconstrained_coordinates", Publication::stage_vector(v0, maps.frame_axis));
                 result.set("active_rows", active);
-                result.set("active_rank", cardinality(fit.active.size()));
-                result.set("multipliers", vec(fit.multipliers));
-                result.set("slack", vec(fit.slack));
-                result.set("half_gradient_stationarity", vec(fit.stationarity));
-                result.set("tested_independent_faces", exact_count(fit.tested));
-                result.set("dependent_faces", exact_count(fit.dependent));
+                result.set("active_rank", Value::count(fit.active.size()));
+                result.set("multipliers", Publication::stage_selected(fit.multipliers, maps.constraint_axis, maps.normals.rows(), fit.active));
+                result.set("slack", Publication::stage_vector(fit.slack, maps.constraint_axis));
+                result.set("half_gradient_stationarity", Publication::stage_vector(fit.stationarity, maps.frame_axis));
+                result.set("tested_independent_faces", Value(NativeRecordValue(fit.tested)));
+                result.set("dependent_faces", Value(NativeRecordValue(fit.dependent)));
                 result.set(
                     "optimality",
-                    Json::string(
+                    Value::string(
                         "primal feasibility, nonnegative active duals and exact stationarity"));
                 shape_results[j] = result;
                 shape_objectives[j] = objective;
                 shape_represented[j] = represented;
             });
-        auto results = Json::array(), comparisons = Json::array();
+        auto results = Value::array(), comparisons = Value::array();
         for (const auto &result : shape_results)
             results.push(result);
         for (std::size_t s = 0; s < states.size(); ++s)
@@ -977,30 +1029,30 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
                     const Rational gain = shape_objectives[reduced] - shape_objectives[full];
                     require(gain >= 0 && gain == displacement + cross,
                             "nested physical objective finite cross-term identity");
-                    auto comparison = Json::object();
-                    comparison.set("state", Json::string(states[s].id));
-                    comparison.set("response", Json::string(responses[r].id));
-                    comparison.set("reduced", Json::string(variants[v].id));
+                    auto comparison = Value::object();
+                    comparison.set("state", Value::string(states[s].id));
+                    comparison.set("response", Value::string(responses[r].id));
+                    comparison.set("reduced", Value::string(variants[v].id));
                     comparison.set("joint_gain", rat(gain));
                     comparison.set("displacement_quadrance", rat(displacement));
                     comparison.set("residual_cross_term", rat(cross));
                     comparisons.push(comparison);
                 }
-        auto physical = Json::object();
+        auto physical = Value::object();
         physical.set("declaration", query.at("physical_shape"));
         physical.set("preparations", shape_preparations);
         physical.set("families", shape_families);
-        physical.set("prepared_families", cardinality(shape_families.size()));
+        physical.set("prepared_families", Value::count(shape_families.size()));
         physical.set("results", results);
         physical.set("nested_comparisons", comparisons);
-        physical.set("completed_tiles", cardinality(shape_report.completed_tiles));
-        physical.set("requested_workers", cardinality(shape_report.requested_workers));
+        physical.set("completed_tiles", Value::count(shape_report.completed_tiles));
+        physical.set("requested_workers", Value::count(shape_report.requested_workers));
         physical.set(
             "owner",
-            Json::string(
+            Value::string(
                 "rfc::path::least_quadrance_feasible, exact affine algebra and CpuTileExecutor"));
         physical.set("reference_calibration",
-                     Json::string("none; any top-level finite calibration describes the "
+                     Value::string("none; any top-level finite calibration describes the "
                                   "unconstrained reference objective"));
         out.set("physical_shape", physical);
     }
@@ -1008,20 +1060,21 @@ Json observed_response_model(const NativeStudy &study, const Json &query, core::
         Vector masses;
         for (const auto &state : states)
             masses.push_back(state.mass);
-        out.set("reference_calibration", scientific_detail::calibrate_finite_scores(
-                                             scores, defined, masses, observed, family, alpha));
+        out.set("reference_calibration", scientific_detail::calibrate_finite_scores_fields(
+            scores, defined, masses, observed, family, alpha, publication,
+            publication.axis(states.size()), publication.axis(axes.size())));
     }
-    auto execution = Json::object();
-    execution.set("model_carriers", cardinality(prepared.size()));
+    auto execution = Value::object();
+    execution.set("model_carriers", Value::count(prepared.size()));
     execution.set("model_preparations",
-                  cardinality(machine::checked_size_mul(prepared.size(), variants.size())));
-    execution.set("hodge_preparations", cardinality(2));
-    execution.set("requested_workers", cardinality(report.requested_workers));
-    execution.set("worker_slots", cardinality(report.worker_slots));
-    execution.set("completed_tiles", cardinality(report.completed_tiles));
+                  Value::count(machine::checked_size_mul(prepared.size(), variants.size())));
+    execution.set("hodge_preparations", Value::count(2));
+    execution.set("requested_workers", Value::count(report.requested_workers));
+    execution.set("worker_slots", Value::count(report.worker_slots));
+    execution.set("completed_tiles", Value::count(report.completed_tiles));
     execution.set(
         "owner",
-        Json::string("rfc::numeric::PreparedExactSolve and rfc::runtime::CpuTileExecutor"));
+        Value::string("rfc::numeric::PreparedExactSolve and rfc::runtime::CpuTileExecutor"));
     out.set("execution", execution);
     return out;
 }

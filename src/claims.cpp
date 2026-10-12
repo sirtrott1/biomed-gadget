@@ -1,5 +1,7 @@
 #include "claim_detail.hpp"
 #include "scientific_detail.hpp"
+#include "scientific_result_fields.hpp"
+#include <gadget/workflow.hpp>
 #include <limits>
 
 namespace gadget::claim_detail {
@@ -107,3 +109,184 @@ void verify_seal(const Json &value, const std::string &name) {
     require(supplied == "sha256:" + sha256(body.dump()), "invalid retained seal: " + name);
 }
 } // namespace gadget::claim_detail
+
+namespace gadget {
+namespace {
+using namespace scientific_detail;
+using N = NativeRecordValue;
+using Literal = std::variant<bool, rfc::numeric::Integer, Rational, std::string>;
+
+std::uint64_t native_count(const NativeRecord &value, const char *name) {
+    require(value.kind() == NativeRecordKind::Integer, std::string(name) + " requires an integer");
+    const auto n = value.integer();
+    require(n >= 0 && mpz_fits_ulong_p(n.get_mpz_t()), std::string(name) + " is outside native coordinates");
+    return n.get_ui();
+}
+Literal native_literal(const NativeRecord &value, const std::string &type, bool expected) {
+    if (type == "boolean") {
+        require(value.kind() == NativeRecordKind::Boolean, "native Boolean claim type");
+        return value.boolean();
+    }
+    if (type == "integer" || type == "count") {
+        require(value.kind() == NativeRecordKind::Integer, "native integer claim type");
+        const auto n = value.integer();
+        require(type != "count" || n >= 0, "native count must be nonnegative");
+        return n;
+    }
+    if (type == "text") {
+        require(value.kind() == NativeRecordKind::Text, "native text claim type");
+        const auto s = value.text();
+        require(s.find('\0') == std::string::npos, "native text claim contains NUL");
+        return s;
+    }
+    require(type == "rational", "native claim value type");
+    if (expected && value.kind() == NativeRecordKind::Text)
+        return exact_rational(value.text());
+    if (value.kind() == NativeRecordKind::Integer) return Rational(value.integer());
+    require(value.kind() == NativeRecordKind::Rational || value.kind() == NativeRecordKind::Decimal ||
+                value.kind() == NativeRecordKind::ExactNumber,
+            "native rational observation requires a typed value, not numerical display text");
+    return value.rational();
+}
+bool compare_native(const Literal &actual, const Literal &expected, const std::string &comparison) {
+    require(actual.index() == expected.index(), "native claim literal types differ");
+    const auto order = std::visit([&](const auto &a) {
+        const auto &b = std::get<std::decay_t<decltype(a)>>(expected);
+        return (a > b) - (a < b);
+    }, actual);
+    if (comparison == "equal") return order == 0;
+    if (comparison == "not_equal") return order != 0;
+    require(!std::holds_alternative<bool>(actual) && !std::holds_alternative<std::string>(actual),
+            "native Boolean/text claims require equality or inequality");
+    if (comparison == "greater") return order > 0;
+    if (comparison == "greater_equal") return order >= 0;
+    if (comparison == "less") return order < 0;
+    require(comparison == "less_equal", "native claim comparison operator");
+    return order <= 0;
+}
+ResultValue literal_result(const Literal &literal) {
+    return std::visit([](const auto &value) { return ResultValue(N(value)); }, literal);
+}
+NativeRecord native_path(NativeRecord value, const NativeRecord &path) {
+    require(path.kind() == NativeRecordKind::Array && path.size(), "native claim path requires components");
+    for (std::size_t i = 0; i < path.size(); ++i) {
+        const auto part = path.at(i);
+        if (part.kind() == NativeRecordKind::Text) {
+            require(value.kind() == NativeRecordKind::Object, "native claim object path type");
+            value = value.at(part.text());
+        } else {
+            require(value.kind() == NativeRecordKind::Array, "native claim array path type");
+            const auto index = native_count(part, "native claim array index");
+            require(index < value.size(), "native claim array coordinate outside owner");
+            value = value.at(index);
+        }
+    }
+    return value;
+}
+} // namespace
+
+NativeRecord check_certificate_claims_record(const NativeRecord &certificate, const NativeRecord &request) {
+    require(certificate.is_root() && certificate.at("schema").text() == "gadget.operation.native.v1",
+            "native claims require the actual owning operation publication");
+    require(request.kind() == NativeRecordKind::Object, "native claims request must be an object");
+    const auto names = request.names();
+    require(std::set<std::string>(names.begin(), names.end()) ==
+                std::set<std::string>({"cutoff", "items", "schema", "source_namespace"}),
+            "native claims request members");
+    require(request.at("schema").text() == "gadget.claims.native.v1", "native claims request schema");
+    require(request.at("source_namespace").kind() == NativeRecordKind::Text &&
+                request.at("source_namespace").text() == std::to_string(certificate.source_namespace()),
+            "native claims publication namespace mismatch");
+    const auto history = certificate.publication_history();
+    require(history.has_value(), "native claims require a retained publication cutoff");
+    const auto cutoff = native_count(request.at("cutoff"), "native claims cutoff");
+    require(cutoff == history->last_sequence(), "native claims publication cutoff mismatch");
+    const auto result = certificate.at("result");
+    const auto schema = result.at("schema").text();
+    require(schema == "gadget.scientific.result.fields.v1" || schema == "gadget.biomedical.certificate.v1",
+            "native claims refuse an unmigrated numerical certificate");
+    const bool scientific = schema == "gadget.scientific.result.fields.v1";
+    const auto metadata = scientific ? result.at("certificate") : result;
+    const auto values = scientific ? result.at("fields").at("view") : result.at("result");
+    if (scientific)
+        require(result.at("fields").at("schema").text() == "gadget.scientific.fields.v1",
+                "native claims require actual scientific fields");
+    const auto items = request.at("items");
+    require(items.kind() == NativeRecordKind::Array && items.size(), "native claims require items");
+    auto checks = ResultValue::array();
+    std::size_t matched{};
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        const auto item = items.at(i);
+        require(item.kind() == NativeRecordKind::Object, "native claim must be an object");
+        for (const auto &name : item.names())
+            require(name == "path" || name == "value_type" || name == "comparison" || name == "value" ||
+                        name == "coordinate", "unknown native claim member");
+        const auto type = item.at("value_type").text(), comparison = item.at("comparison").text();
+        const auto expected = native_literal(item.at("value"), type, true);
+        (void)compare_native(expected, expected, comparison);
+        const auto selected = native_path(values, item.at("path"));
+        auto check = ResultValue::object();
+        check.set("claim_index", ResultValue::count(i));
+        Literal actual;
+        if (selected.kind() == NativeRecordKind::Object && selected.has("schema") &&
+            selected.at("schema").kind() == NativeRecordKind::Text &&
+            selected.at("schema").text() == "gadget.scientific.tensor.view.v1") {
+            require(type == "rational", "native tensor observations require rational claims");
+            const auto key = native_count(selected.at("tensor"), "native claim tensor");
+            const auto field = selected.encoded_tensor(key);
+            require(field.has_value(), "native claim tensor has no original encoded owner");
+            const auto &tensor = field->tensor();
+            const auto coordinate = item.has("coordinate")
+                ? native_count(item.at("coordinate"), "native claim field coordinate")
+                : selected.has("index") ? native_count(selected.at("index"), "native scalar coordinate") : 0;
+            if (!item.has("coordinate"))
+                require(selected.at("display").text() == "rational" &&
+                            (selected.has("index") || tensor.domain().logical_size() == 1),
+                        "nonscalar native claims require an original flat coordinate");
+            require(coordinate < tensor.domain().logical_size(), "native claim coordinate outside field");
+            require(tensor.support().contains(coordinate), "native claim coordinate is missing");
+            actual = *tensor.value(coordinate);
+            const auto &pin = field->publication();
+            const auto &endpoint = pin.endpoint();
+            const auto descriptor = std::find_if(endpoint.tensors.begin(), endpoint.tensors.end(),
+                [&](const auto &t) { return t.key == key; });
+            require(descriptor != endpoint.tensors.end(), "native claim field descriptor missing");
+            auto binding = ResultValue::object();
+            binding.set("source_namespace", ResultValue::string(std::to_string(pin.source_namespace())));
+            binding.set("cutoff", ResultValue::count(pin.sequence()));
+            binding.set("encoding_sequence", ResultValue::count(field->encoding_sequence()));
+            binding.set("tensor", ResultValue::count(key));
+            binding.set("coordinate", ResultValue::count(coordinate));
+            binding.set("supported", ResultValue::boolean(true));
+            binding.set("input_carrier", descriptor->input ? ResultValue::count(*descriptor->input) : ResultValue());
+            binding.set("output_carrier", descriptor->output ? ResultValue::count(*descriptor->output) : ResultValue());
+            binding.set("interpretation", ResultValue::string(descriptor->interpretation));
+            check.set("binding", std::move(binding));
+        } else {
+            require(!item.has("coordinate"), "primitive native claim cannot name a tensor coordinate");
+            actual = native_literal(selected, type, false);
+        }
+        const bool agrees = compare_native(actual, expected, comparison);
+        matched += agrees;
+        check.set("observed", literal_result(actual));
+        check.set("agrees", ResultValue::boolean(agrees));
+        checks.push(std::move(check));
+    }
+    auto receipt = ResultValue::object();
+    receipt.set("schema", ResultValue::string("gadget.claims.native.receipt.v1"));
+    receipt.set("source_digest", ResultValue::string(metadata.at("source_digest").text()));
+    receipt.set("source_namespace", ResultValue::string(std::to_string(certificate.source_namespace())));
+    receipt.set("cutoff", ResultValue::count(cutoff));
+    receipt.set("checks", std::move(checks));
+    receipt.set("matched", ResultValue::count(matched));
+    receipt.set("contradicted", ResultValue::count(items.size() - matched));
+    receipt.set("scope", ResultValue::string("Literal comparisons against the supplied native operation; interpretation and computation replay are separate"));
+    std::uint64_t key = 1;
+    for (const auto &bytes : certificate.raw_sources())
+        key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+    auto archive = certificate.archive_source(key);
+    receipt.set("source_publication", ResultValue(N(N::ByteSpan{key, 0, archive.bytes().size(), false})));
+    const auto retained = certificate.derive(std::move(receipt).release(), {std::move(archive)});
+    return retain_operation(retained, request, retained.unbound_value());
+}
+} // namespace gadget

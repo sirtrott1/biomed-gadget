@@ -13,22 +13,9 @@ namespace gadget::research_detail {
 namespace {
 using Matrix = numeric::ExactMatrix;
 constexpr std::array<const char *, 4> sectors{"full", "gradient", "curl", "harmonic"};
-Json rational(Rational value) {
-    value.canonicalize();
-    return Json::string(value.get_str());
-}
-Json vector_json(const Vector &values) {
-    auto out = Json::array();
-    for (const auto &value : values)
-        out.push(rational(value));
-    return out;
-}
-Json indices_json(const std::vector<std::size_t> &indices) {
-    auto out = Json::array();
-    for (const auto index : indices)
-        out.push(cardinality(index));
-    return out;
-}
+using Value = scientific_detail::ResultValue;
+using Publication = scientific_detail::ResultFields;
+using Context = scientific_detail::ResultFieldContext;
 struct Hypothesis {
     std::string statistic;
     std::size_t axis, sector{0};
@@ -89,11 +76,11 @@ std::set<std::string> structural_calibration_field_ids(const Json &query) {
     }
     return ids;
 }
-Json structural_reference_calibration(const NativeStudy &study, const Json &query,
+Value structural_reference_calibration(const NativeStudy &study, const Json &query,
                                       core::Grade grade,
                                       const std::map<std::string, Vector> &fields,
                                       const std::vector<ExchangeBlock> &blocks, bool validate,
-                                      const std::shared_ptr<CpuResources> &resources) {
+                                      const std::shared_ptr<CpuResources> &resources, Context *context) {
     members(query,
             {"operation", "context", "fields", "law", "hypotheses", "workers", "execution",
              "reference_output"},
@@ -206,35 +193,41 @@ Json structural_reference_calibration(const NativeStudy &study, const Json &quer
         count(query.at("workers"), cpu->coordinator().capacity(), "structural workers");
     require(workers, "positive structural worker budget required");
     if (validate)
-        return Json::object();
-    auto out = Json::object(), cost = Json::object(), witnesses = Json::array();
-    out.set("schema", Json::string("gadget.structural.reference.calibration.v1"));
-    out.set("arithmetic", Json::string("exact_rational"));
+        return Value::object();
+    require(context != nullptr, "structural calibration requires native field ownership");
+    auto &publication = context->publication;
+    const auto rows = context->grades.at(grade.value).rows;
+    const auto rational = [&](const Rational &value) {return publication.stage_scalar(value);};
+    const auto exact = [](const numeric::Integer &value) {return Value(NativeRecordValue(value));};
+    const auto field_value = [&](const Vector &value) {return context->field(value, grade.value);};
+    auto out = Value::object(), cost = Value::object(), witnesses = Value::array();
+    out.set("schema", Value::string("gadget.structural.reference.calibration.v1"));
+    out.set("arithmetic", Value::string("exact_rational"));
     out.set("law", law);
-    out.set("grade", cardinality(grade.value));
-    cost.set("reference_states", exact_count(state_count));
-    cost.set("scenarios", cardinality(scenarios.size()));
+    out.set("grade", Value::count(grade.value));
+    cost.set("reference_states", exact(state_count));
+    cost.set("scenarios", Value::count(scenarios.size()));
     const numeric::Integer tasks = state_count * numeric::Integer{std::to_string(scenarios.size())};
     cost.set("field_applications",
-             exact_count(tasks * numeric::Integer{std::to_string(axes.size())}));
+             exact(tasks * numeric::Integer{std::to_string(axes.size())}));
     cost.set("statistics",
-             exact_count(tasks * numeric::Integer{std::to_string(hypotheses.size())}));
-    cost.set("assignment_coordinates", exact_count(state_count * assignment_coordinates));
+             exact(tasks * numeric::Integer{std::to_string(hypotheses.size())}));
+    cost.set("assignment_coordinates", exact(state_count * assignment_coordinates));
     cost.set("full_field_coordinates",
-             exact_count(profile == "full_fields"
+             exact(profile == "full_fields"
                              ? tasks * numeric::Integer{std::to_string(axes.size())} *
                                    numeric::Integer{std::to_string(metric.size())} * 4
                              : numeric::Integer{0}));
-    cost.set("reference_output", Json::string(profile));
+    cost.set("reference_output", Value::string(profile));
     cost.set("method",
-             Json::string("Complete product of factorial block assignments; native preparations "
+             Value::string("Complete product of factorial block assignments; native preparations "
                           "and exact bit growth have additional source-dependent costs"));
     for (const auto &block : blocks)
         witnesses.push(block.witness);
     out.set("exchange_blocks", witnesses);
     out.set("cost", cost);
     if (execution == "plan") {
-        out.set("status", Json::string("planned"));
+        out.set("status", Value::string("planned"));
         return out;
     }
     require(tasks <= numeric::Integer{std::to_string(std::numeric_limits<std::size_t>::max())},
@@ -277,13 +270,35 @@ Json structural_reference_calibration(const NativeStudy &study, const Json &quer
     // uint8_t storage permits independent task writes; vector<bool> packed bits do not.
     std::vector<std::vector<std::uint8_t>> defined(task_count,
                                                    std::vector<std::uint8_t>(hypotheses.size(), 1));
-    std::vector<Json> maps(states), details(profile == "full_fields" ? task_count : 0);
+    const auto state_axis = publication.axis(states), hypothesis_axis = publication.axis(hypotheses.size());
+    const auto scenario_axis = publication.axis(scenarios.size());
+    auto axes_binding = Value::object();
+    axes_binding.set("kind", Value::string("structural_reference_axes"));
+    axes_binding.set("states", Value::count(state_axis));
+    axes_binding.set("hypotheses", Value::count(hypothesis_axis));
+    axes_binding.set("hypothesis_declarations", family);
+    axes_binding.set("scenarios", Value::count(scenario_axis));
+    auto scenario_ids = Value::array(), source_fields = Value::object();
+    Vector scenario_weights;
+    for (const auto &scenario : scenarios) {
+        scenario_ids.push(Value::string(scenario.id));
+        scenario_weights.push_back(scenario.weight);
+    }
+    axes_binding.set("scenario_ids", std::move(scenario_ids));
+    axes_binding.set("scenario_weights", Publication::stage_vector(scenario_weights, scenario_axis));
+    publication.bind(std::move(axes_binding));
+    for (const auto &[id, value] : fields) source_fields.set(id, field_value(value));
+    out.set("source_fields", std::move(source_fields));
+    out.set("metric", Publication::stage_matrix(metric.materialize(), rows, rows, storage::TemporalTensorRole::Metric));
+    std::vector<std::uint64_t> block_axes;
+    for (const auto &block : blocks) block_axes.push_back(publication.axis(block.coordinates.size()));
+    std::vector<Value> maps(states), actions(states), details(profile == "full_fields" ? task_count : 0);
     runtime::CpuTileExecutor executor({workers, cpu->coordinator().capacity(), task_count});
     const auto report = executor.run_tiles(task_count, [&](std::size_t task, std::size_t,
                                                            const runtime::CpuTileStop &stop) {
         const auto scenario = task / states, state = task % states;
         Matrix action = Matrix::identity(metric.size());
-        auto map = Json::array();
+        auto map = Value::array();
         auto rank = state;
         for (std::size_t b = 0; b < blocks.size(); ++b) {
             const auto &coordinates = blocks[b].coordinates;
@@ -293,26 +308,30 @@ Json structural_reference_calibration(const NativeStudy &study, const Json &quer
                 action.set(coordinates[i], coordinates[i], Rational{0});
                 action.set(coordinates[i], assigned[i], Rational{1});
             }
-            map.push(indices_json(assigned));
+            Vector assigned_coordinates;
+            for (auto coordinate : assigned) assigned_coordinates.emplace_back(std::to_string(coordinate));
+            map.push(Publication::stage_vector(assigned_coordinates, block_axes[b], "indices"));
         }
-        if (scenario == 0)
-            maps[state] = map;
+        if (scenario == 0) {
+            maps[state] = std::move(map);
+            actions[state] = Publication::stage_matrix(action, rows, rows);
+        }
         std::vector<std::array<Vector, 4>> readings;
         for (const auto &field : scenarios[scenario].fields)
             readings.push_back(
                 prepared.apply(action.apply(fields.at(field)), [&] { stop.check(); }));
-        auto record = Json::object(), field_records = Json::array(),
-             hypothesis_records = Json::array();
+        auto record = Value::object(), field_records = Value::array(),
+             hypothesis_records = Value::array();
         if (profile == "full_fields")
             for (std::size_t a = 0; a < axes.size(); ++a) {
-                auto field = Json::object();
-                field.set("axis", Json::string(axes[a]));
-                field.set("source_field", Json::string(scenarios[scenario].fields[a]));
+                auto field = Value::object();
+                field.set("axis", Value::string(axes[a]));
+                field.set("source_field", Value::string(scenarios[scenario].fields[a]));
                 for (std::size_t c = 0; c < sectors.size(); ++c)
-                    field.set(sectors[c], vector_json(readings[a][c]));
-                field.set("reconstruction_exact", Json::boolean(true));
-                field.set("orthogonality_exact", Json::boolean(true));
-                field.set("harmonic_kernel_exact", Json::boolean(true));
+                    field.set(sectors[c], field_value(readings[a][c]));
+                field.set("reconstruction_exact", Value::boolean(true));
+                field.set("orthogonality_exact", Value::boolean(true));
+                field.set("harmonic_kernel_exact", Value::boolean(true));
                 field_records.push(field);
             }
         std::map<std::pair<std::size_t, Rational>, Vector> green_readings;
@@ -322,7 +341,7 @@ Json structural_reference_calibration(const NativeStudy &study, const Json &quer
             const auto &reading = readings[hypothesis.axis];
             const auto &x = reading[0];
             Rational denominator = metric.inner(x, x), numerator{0};
-            auto detail = Json::object();
+            auto detail = Value::object();
             if (hypothesis.statistic == "sector_fraction")
                 numerator = metric.inner(reading[hypothesis.sector], reading[hypothesis.sector]);
             else if (hypothesis.statistic == "probe_fraction") {
@@ -335,9 +354,9 @@ Json structural_reference_calibration(const NativeStudy &study, const Json &quer
                             numerator + metric.inner(residual, residual) == denominator,
                         "probe span orthogonality and quadrance budget");
                 if (profile == "full_fields") {
-                    detail.set("captured", vector_json(captured));
-                    detail.set("remaining", vector_json(residual));
-                    detail.set("orthogonality_exact", Json::boolean(true));
+                    detail.set("captured", field_value(captured));
+                    detail.set("remaining", field_value(residual));
+                    detail.set("orthogonality_exact", Value::boolean(true));
                 }
             } else {
                 const auto binding = std::make_pair(hypothesis.axis, hypothesis.lambda);
@@ -354,9 +373,9 @@ Json structural_reference_calibration(const NativeStudy &study, const Json &quer
                 const auto change = numeric::sub(x, green);
                 numerator = metric.inner(change, change);
                 if (profile == "full_fields") {
-                    detail.set("green", vector_json(green));
-                    detail.set("change", vector_json(change));
-                    detail.set("residual_exact", Json::boolean(true));
+                    detail.set("green", field_value(green));
+                    detail.set("change", field_value(change));
+                    detail.set("residual_exact", Value::boolean(true));
                 }
             }
             detail.set("numerator", rational(numerator));
@@ -381,45 +400,67 @@ Json structural_reference_calibration(const NativeStudy &study, const Json &quer
     auto serial = cpu->reserve(1);
     const Rational mass{numeric::Integer{1}, state_count};
     const Vector masses(states, mass);
-    auto state_records = Json::array();
+    auto state_records = Value::array();
     for (std::size_t s = 0; s < states; ++s) {
-        auto record = Json::object();
-        record.set("index", cardinality(s));
+        auto record = Value::object();
+        record.set("index", Value::count(s));
         record.set("mass", rational(mass));
         record.set("block_source_coordinates", maps[s]);
+        record.set("assignment", actions[s]);
         state_records.push(record);
     }
     out.set("states", state_records);
-    out.set("observed_state", cardinality(0));
+    out.set("observed_state", Value::count(0));
     out.set("map_contract",
-            Json::string(
+            Value::string(
                 "For each block, target coordinates are its declared coordinate list and source "
                 "coordinates are the state list; every other coordinate is fixed. One shared "
                 "assignment acts on all field axes. Probes and the source complex stay fixed. "
                 "These reassignments are not asserted to be chain maps or metric isometries."));
-    auto scenario_records = Json::array();
+    auto scenario_records = Value::array();
+    std::vector<scientific_detail::FiniteScoreValues> native_calibrations(scenarios.size());
     for (std::size_t s = 0; s < scenarios.size(); ++s) {
         std::vector<Vector> values;
         std::vector<std::vector<bool>> available;
-        auto records = Json::array();
+        auto records = Value::array();
         for (std::size_t state = 0; state < states; ++state) {
             const auto task = s * states + state;
             values.push_back(scores[task]);
             available.emplace_back(defined[task].begin(), defined[task].end());
-            auto record = Json::object(), statistics = Json::array();
-            record.set("state", cardinality(state));
+            auto record = Value::object(), statistics = Value::array();
+            record.set("state", Value::count(state));
             for (std::size_t h = 0; h < hypotheses.size(); ++h)
-                statistics.push(defined[task][h] ? rational(scores[task][h]) : Json{});
+                statistics.push(defined[task][h] ? rational(scores[task][h]) : Value{});
             record.set("statistics", statistics);
             if (profile == "full_fields")
                 record.set("readings", details[task]);
             records.push(record);
         }
         auto calibration =
-            scientific_detail::calibrate_finite_scores(values, available, masses, 0, family, alpha);
-        calibration.set("id", Json::string(scenarios[s].id));
+            scientific_detail::calibrate_finite_scores_fields(values, available, masses, 0, family, alpha,
+                publication, state_axis, hypothesis_axis, &native_calibrations[s]);
+        calibration.set("id", Value::string(scenarios[s].id));
         calibration.set("weight", rational(scenarios[s].weight));
         calibration.set("statistics", records);
+        std::vector<numeric::SparseRationalEntry> entries;
+        std::vector<std::size_t> support;
+        for (std::size_t state = 0; state < states; ++state)
+            for (std::size_t h = 0; h < hypotheses.size(); ++h) {
+                const auto coordinate = h * states + state;
+                if (available[state][h]) {
+                    support.push_back(coordinate);
+                    if (values[state][h] != 0) entries.push_back({coordinate, values[state][h]});
+                }
+            }
+        const auto size = machine::checked_size_mul(states, hypotheses.size());
+        numeric::SparseRationalTensor tensor(numeric::IndexDomain({hypotheses.size(), states}),
+            numeric::StructuralSupport::sparse(size, std::move(support)),
+            numeric::SparseRationalVector(size, std::move(entries)));
+        auto binding = Value::object();
+        binding.set("kind", Value::string("structural_reference_statistics"));
+        binding.set("scenario", Value::string(scenarios[s].id));
+        binding.set("statistics", Value(publication.observation(std::move(tensor), state_axis, hypothesis_axis)));
+        publication.bind(std::move(binding));
         scenario_records.push(calibration);
     }
     const auto observed = scenario_records.at(observed_scenario);
@@ -427,29 +468,29 @@ Json structural_reference_calibration(const NativeStudy &study, const Json &quer
     out.set("hypotheses", observed.at("hypotheses"));
     out.set("joint_family", observed.at("joint_family"));
     out.set("scenarios", scenario_records);
-    out.set("observed_scenario", Json::string(scenarios[observed_scenario].id));
+    out.set("observed_scenario", Value::string(scenarios[observed_scenario].id));
     if (alpha)
         out.set("alpha", rational(*alpha));
     if (query.has("uncertainty")) {
         out.set("uncertainty", query.at("uncertainty"));
-        auto sensitivity = Json::array();
+        auto sensitivity = Value::array();
         for (std::size_t h = 0; h < hypotheses.size(); ++h) {
-            auto summary = Json::object();
+            auto summary = Value::object();
             summary.set("hypothesis", family.at(h).at("id"));
             bool complete = true;
             Vector values, tails;
             Rational mean{0}, variance{0};
             for (std::size_t s = 0; s < scenarios.size(); ++s) {
-                const auto value = scenario_records.at(s).at("hypotheses").at(h);
-                if (!value.at("observed").raw() || !value.at("reference_tail_mass").raw()) {
+                const auto &values_ = native_calibrations[s];
+                if (!values_.observed[h] || !values_.reference_tail[h]) {
                     complete = false;
                     break;
                 }
-                values.push_back(exact_rational(value.at("observed").text()));
-                tails.push_back(exact_rational(value.at("reference_tail_mass").text()));
+                values.push_back(*values_.observed[h]);
+                tails.push_back(*values_.reference_tail[h]);
             }
             summary.set("status",
-                        Json::string(complete ? "completed" : "undefined_scenario_statistic"));
+                        Value::string(complete ? "completed" : "undefined_scenario_statistic"));
             if (complete) {
                 std::vector<Vector> samples;
                 Vector weights;
@@ -486,55 +527,59 @@ Json structural_reference_calibration(const NativeStudy &study, const Json &quer
         if (complete_observed)
             out.set(
                 "scenario_observable_ensemble",
-                scientific_detail::score_ensemble(observed_scores, scenario_weights,
+                scientific_detail::score_ensemble_fields(observed_scores, scenario_weights,
                                                   "declared joint sensitivity weights; separate "
-                                                  "from reference probability masses"));
+                                                  "from reference probability masses", publication, scenario_axis, hypothesis_axis));
         else {
-            auto status = Json::object();
-            status.set("status", Json::string("undefined_observed_scenario_statistic"));
+            auto status = Value::object();
+            status.set("status", Value::string("undefined_observed_scenario_statistic"));
             out.set("scenario_observable_ensemble", status);
         }
     }
-    auto chain = Json::array();
+    auto chain = Value::array();
     for (const auto &check : prepared.bianchi.interfaces) {
-        auto value = Json::object();
-        value.set("lower_boundary_grade", cardinality(check.lower_boundary_grade.value));
-        value.set("satisfied", Json::boolean(check.satisfied));
+        auto value = Value::object();
+        value.set("lower_boundary_grade", Value::count(check.lower_boundary_grade.value));
+        value.set("satisfied", Value::boolean(check.satisfied));
         chain.push(value);
     }
     out.set("chain_interfaces", chain);
-    auto frames = Json::object();
+    auto frames = Value::object();
     for (std::size_t p = 0; p < prepared.projections.size(); ++p) {
-        auto frame = Json::object();
-        frame.set("rank", cardinality(prepared.projections[p].frame.cols()));
-        frame.set("factor_entries", cardinality(prepared.projections[p].solve.stored_entries()));
+        auto frame = Value::object();
+        const auto axis = publication.axis(prepared.projections[p].frame.cols());
+        frame.set("basis", Publication::stage_matrix(prepared.projections[p].frame, axis, rows));
+        frame.set("rank", Value::count(prepared.projections[p].frame.cols()));
+        frame.set("factor_entries", Value::count(prepared.projections[p].solve.stored_entries()));
         frames.set(sectors[p + 1], frame);
     }
-    frames.set("harmonic_rank", cardinality(metric.size() - prepared.projections[0].frame.cols() -
+    frames.set("harmonic_rank", Value::count(metric.size() - prepared.projections[0].frame.cols() -
                                             prepared.projections[1].frame.cols()));
     out.set("frames", frames);
-    auto probes = Json::array();
+    auto probes = Value::array();
     for (std::size_t h = 0; h < hypotheses.size(); ++h)
         if (hypotheses[h].projection) {
-            auto record = Json::object();
+            auto record = Value::object();
             record.set("hypothesis", family.at(h).at("id"));
-            record.set("rank", cardinality(hypotheses[h].projection->frame.cols()));
+            const auto axis = publication.axis(hypotheses[h].projection->frame.cols());
+            record.set("basis", Publication::stage_matrix(hypotheses[h].projection->frame, axis, rows));
+            record.set("rank", Value::count(hypotheses[h].projection->frame.cols()));
             record.set("factor_entries",
-                       cardinality(hypotheses[h].projection->solve.stored_entries()));
+                       Value::count(hypotheses[h].projection->solve.stored_entries()));
             probes.push(record);
         }
     out.set("probe_frames", probes);
-    auto execution_record = Json::object();
-    execution_record.set("requested_workers", cardinality(report.requested_workers));
-    execution_record.set("worker_slots", cardinality(report.worker_slots));
-    execution_record.set("completed_tiles", cardinality(report.completed_tiles));
-    execution_record.set("projector_preparations", cardinality(2));
-    execution_record.set("probe_projector_preparations", cardinality(probe_preparations.size()));
-    execution_record.set("probe_field_decompositions", cardinality(probe_readings.size()));
+    auto execution_record = Value::object();
+    execution_record.set("requested_workers", Value::count(report.requested_workers));
+    execution_record.set("worker_slots", Value::count(report.worker_slots));
+    execution_record.set("completed_tiles", Value::count(report.completed_tiles));
+    execution_record.set("projector_preparations", Value::count(2));
+    execution_record.set("probe_projector_preparations", Value::count(probe_preparations.size()));
+    execution_record.set("probe_field_decompositions", Value::count(probe_readings.size()));
     out.set("execution", execution_record);
     out.set(
         "calibration_scope",
-        Json::string(
+        Value::string(
             "Inclusive conditional tails under the complete declared joint exchange law; source "
             "evidence records the assumptions without proving exchangeability. Scenario "
             "sensitivity keeps the declared measurement weights separate from the reference law."));

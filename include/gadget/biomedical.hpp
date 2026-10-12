@@ -18,7 +18,16 @@ class EvidenceStore {
     ~EvidenceStore();
     std::string digest() const;
     const NativeRecord &native_publication() const;
+    // The request selects original assertions and a question on this frozen
+    // snapshot. Native context retains those assertions and their byte owners.
+    NativeRecord source_context(const NativeRecord &request) const;
+    // Admit a prospective query or source annotation without executing it.
+    // Snapshot retrieval does not establish historical or biological time.
+    NativeRecord admit_proposal(const NativeRecord &context_request,
+                               const NativeRecord &proposal,
+                               const std::string &question) const;
     void validate(const Json &query) const;
+    NativeRecord execute_record(const NativeRecord &query) const;
     Json execute(const Json &query) const;
 };
 // Non-numerical model observations retain input identities and remain prospective.

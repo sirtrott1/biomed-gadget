@@ -101,7 +101,8 @@ ResultValue calibrate_finite_scores_fields(const std::vector<Vector> &scores,
                              const std::vector<std::vector<bool>> &defined, const Vector &weights,
                              std::size_t observed_state, const Json &family,
                              const std::optional<Rational> &alpha, ResultFields &fields,
-                             std::uint64_t state_carrier, std::uint64_t hypothesis_carrier) {
+                             std::uint64_t state_carrier, std::uint64_t hypothesis_carrier,
+                             FiniteScoreValues *native_values) {
     const auto rational = [&](const Rational &value) {return fields.scalar(value);};
     require(!scores.empty() && scores.size() == defined.size() && scores.size() == weights.size() &&
                 observed_state < scores.size() && family.size(),
@@ -124,6 +125,10 @@ ResultValue calibrate_finite_scores_fields(const std::vector<Vector> &scores,
             maxima[s] = *std::max_element(scores[s].begin(), scores[s].end());
     const std::optional<Tails> maximum_tails =
         complete ? std::optional<Tails>{Tails{maxima, weights}} : std::nullopt;
+    if (native_values) {
+        native_values->observed.assign(family.size(), std::nullopt);
+        native_values->reference_tail.assign(family.size(), std::nullopt);
+    }
     auto results = ResultValue::array();
     for (std::size_t h = 0; h < family.size(); ++h) {
         auto result = ResultValue(family.at(h));
@@ -131,6 +136,8 @@ ResultValue calibrate_finite_scores_fields(const std::vector<Vector> &scores,
         result.set("observed", defined.at(observed_state).at(h)
                                    ? rational(scores.at(observed_state).at(h))
                                    : ResultValue{});
+        if (native_values && defined.at(observed_state).at(h))
+            native_values->observed[h] = scores.at(observed_state).at(h);
         result.set("reference_tail_mass", ResultValue{});
         result.set("max_statistic_tail_mass", ResultValue{});
         if (available[h]) {
@@ -141,6 +148,7 @@ ResultValue calibrate_finite_scores_fields(const std::vector<Vector> &scores,
             const auto threshold = values[observed_state], tail = tails.at(threshold);
             require(tail >= weights[observed_state] && tail <= 1,
                     "inclusive finite tail retains observed state mass");
+            if (native_values) native_values->reference_tail[h] = tail;
             result.set("reference_tail_mass", rational(tail));
             result.set("tie_mass", rational(tails.masses.at(threshold)));
             result.set("strict_tail_mass", rational(Rational{tail - tails.masses.at(threshold)}));
