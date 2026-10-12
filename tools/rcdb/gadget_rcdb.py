@@ -13,6 +13,10 @@ _OPERATOR_NAME = "GADGET_PUBLICATION_BYTES"
 
 def validate_publication_file(path, *, gadget):
     """Check canonical native bytes without a complete Python archive buffer."""
+    return _validate_publication_file(path, gadget=gadget)
+
+
+def _validate_publication_file(path, *, gadget, expected=None):
     source = Path(path).resolve(strict=True)
     binary = str(Path(gadget).resolve(strict=True))
     with source.open("rb") as stream:
@@ -25,9 +29,22 @@ def validate_publication_file(path, *, gadget):
         if process.returncode:
             raise ValueError("GADGET native admission failed: " +
                              process.stderr.decode("utf-8", errors="replace").strip())
-        if process.stdout or not filecmp.cmp(source, canonical, shallow=False):
+        if expected is None:
+            unchanged = filecmp.cmp(source, canonical, shallow=False)
+        else:
+            with canonical.open("rb") as stream:
+                unchanged = all(stream.read(1024*1024) == expected[offset:offset+1024*1024]
+                                for offset in range(0, len(expected), 1024*1024))
+                unchanged = unchanged and not stream.read(1)
+        if process.stdout or not unchanged:
             raise ValueError("GADGET publication does not have canonical native bytes")
     return source
+
+
+def _read_publication_file(path, *, gadget):
+    raw = Path(path).read_bytes()
+    _validate_publication_file(path, gadget=gadget, expected=raw)
+    return raw
 
 
 def compress_publication(source, destination, *, gadget, codec, level=None):
@@ -38,7 +55,7 @@ def compress_publication(source, destination, *, gadget, codec, level=None):
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError(destination)
-    raw = validate_publication(Path(source).read_bytes(), gadget=gadget)
+    raw = _read_publication_file(source, gadget=gadget)
     encoded = compress_blob(raw, level=level, codec=codec)
     with destination.open("xb") as stream:
         stream.write(encoded)
@@ -87,7 +104,7 @@ def validate_publication(raw, *, gadget):
     with TemporaryDirectory(prefix="gadget-rcdb-") as folder:
         source = Path(folder)/"input.rfcxs"
         source.write_bytes(raw)
-        validate_publication_file(source, gadget=gadget)
+        _validate_publication_file(source, gadget=gadget, expected=raw)
     return raw
 
 
@@ -168,14 +185,17 @@ def install_rcql_operator():
 def execute_publication(workspace, request, *, gadget):
     """Execute an assay request with binary input and output publications."""
     binary = str(Path(gadget).resolve(strict=True))
-    validate_publication(workspace, gadget=binary)
-    validate_publication(request, gadget=binary)
+    for raw in (workspace, request):
+        if type(raw) is not bytes or not raw.startswith(_MAGIC):
+            raise ValueError("GADGET publication requires RFCXS bytes")
     with TemporaryDirectory(prefix="gadget-native-query-") as folder:
         workspace_path = Path(folder)/"workspace.rfcxs"
         request_path = Path(folder)/"request.rfcxs"
         output = Path(folder)/"result.rfcxs"
         workspace_path.write_bytes(workspace)
         request_path.write_bytes(request)
+        _validate_publication_file(workspace_path, gadget=binary, expected=workspace)
+        _validate_publication_file(request_path, gadget=binary, expected=request)
         process = subprocess.run([binary, "assay-query", "--workspace", str(workspace_path),
                                   "--request", str(request_path), "--out-record", str(output)],
                                  capture_output=True)
@@ -184,7 +204,7 @@ def execute_publication(workspace, request, *, gadget):
                              process.stderr.decode("utf-8", errors="replace").strip())
         if process.stdout:
             raise ValueError("GADGET binary query produced an unexpected display response")
-        return validate_publication(output.read_bytes(), gadget=binary)
+        return _read_publication_file(output, gadget=binary)
 
 
 def install_rcql_executor(*, gadget):
@@ -228,6 +248,6 @@ def install_format(*, gadget):
     binary = str(Path(gadget).resolve(strict=True))
 
     def load(path):
-        return validate_publication(Path(path).read_bytes(), gadget=binary)
+        return _read_publication_file(path, gadget=binary)
 
     return register_format("gadget-native", load=load, extensions=(".rfcxs",))

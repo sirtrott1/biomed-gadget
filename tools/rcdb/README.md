@@ -118,6 +118,12 @@ the selected input versions and output byte digest. The operation requires an
 explicit execution capability and declares temporary filesystem use. Numerical
 execution and source ownership stay in GADGET and RexGraphCpp.
 
+Execution stages each complete input once. Canonical admission compares its
+re-encoding with the supplied immutable byte buffer. Output and file-format
+admission compare the canonical file with the captured complete byte buffer
+without staging another archive copy. Every byte is checked in bounded transfer
+buffers; native admission and complete result ownership remain unchanged.
+
 To run the adapter contracts in an environment with RCDB and RCQL installed:
 
 ```sh
