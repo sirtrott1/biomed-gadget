@@ -1,6 +1,7 @@
 #include "scientific_detail.hpp"
 #include <chrono>
 #include <gadget/compute.hpp>
+#include <limits>
 #if GADGET_HAS_VULKAN
 #include <rfc/backend/mixed_binary_calibration.hpp>
 #include <rfc/backend/vulkan_workspace_cache.hpp>
@@ -63,37 +64,52 @@ PackedOperation::PackedOperation(rfc::backend::PreparedPackedBinary p, ComputeOp
     : state_(std::make_unique<State>(std::move(p), o)) {}
 PackedOperation::~PackedOperation() = default;
 PackedResult PackedOperation::execute(CpuResources &resources, const Json &query) {
+    return execute(resources, query, {});
+}
+PackedResult PackedOperation::execute(CpuResources &resources, const Json &query, std::stop_token stop) {
     using namespace rfc::backend;
     const auto backend = query.at("backend").text();
     require(backend == "cpu_tiles" || backend == "vulkan" || backend == "cpu_vulkan" ||
                 backend == "measured",
             "unknown packed backend");
-    const auto workers = query.has("workers") ? count(query.at("workers"), 32, "workers") : 1;
+    auto &coordinator = resources.coordinator();
+    const auto workers = query.has("workers")
+                             ? count(query.at("workers"), coordinator.capacity(), "workers") : 1;
     const auto tile =
-        query.has("tile_words") ? count(query.at("tile_words"), 20000, "tile words") : 64;
+        query.has("tile_words") ? count(query.at("tile_words"),
+                                        std::numeric_limits<std::size_t>::max(), "tile words") : 64;
     const auto &owner = state_->owner;
     require(workers && tile, "packed workers and tile words must be positive");
     if (query.has("gpu_words"))
         (void)count(query.at("gpu_words"), owner.words(), "GPU words");
     const auto start = std::chrono::steady_clock::now();
+    const auto check_stop = [&] {
+        if (stop.stop_requested()) throw rfc::runtime::ExecutionCancelled{};
+    };
+    check_stop();
     (void)resources.readmit();
-    auto &coordinator = resources.coordinator();
+    const auto bytes = rfc::machine::checked_size_mul(
+        rfc::machine::checked_size_mul(owner.words(), owner.outputs().size()), sizeof(std::uint64_t));
+    const auto verified_bytes = rfc::machine::checked_size_add(bytes, bytes);
+    std::optional<rfc::runtime::CpuResourceCoordinator::Reservation> reservation;
     PackedResult result;
     result.execution = Json::object();
     result.execution.set("backend", Json::string(backend));
-    const auto bytes = rfc::machine::checked_size_mul(owner.words(), sizeof(std::uint64_t));
+    result.execution.set("declared_output_bytes", Json::string(std::to_string(bytes)));
+    result.execution.set("declared_verification_bytes", Json::string(std::to_string(bytes)));
     if (backend == "cpu_tiles") {
         const auto num_tiles = rfc::machine::ceil_div(owner.words(), tile);
-        auto reservation =
-            coordinator.reserve(std::min(workers, std::max(std::size_t{1}, num_tiles)), bytes);
+        reservation.emplace(
+            coordinator.reserve(std::min(workers, std::max(std::size_t{1}, num_tiles)), verified_bytes));
         result.outputs = owner.empty_result(state_->options.allocation_byte_limit);
         rfc::runtime::CpuTileExecutor executor(
-            {reservation.workers(), coordinator.capacity(), 20000});
+            {reservation->workers(), coordinator.capacity(), coordinator.policy().tile_limit});
         const auto run_start = std::chrono::steady_clock::now();
-        auto report = executor.run_tiles(num_tiles, [&](auto i, auto, auto stop) {
-            stop.check();
+        auto report = executor.run_tiles(num_tiles, [&](auto i, auto, auto peers) {
+            peers.check();
+            check_stop();
             const auto begin = i * tile;
-            owner.cpu_words(begin, std::min(owner.words(), begin + tile), result.outputs);
+            owner.cpu_words(begin, begin + std::min(tile, owner.words() - begin), result.outputs, stop);
         });
         result.execution.set("cpu_run_ns", Json::string(std::to_string(
                                                std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -140,7 +156,8 @@ PackedResult PackedOperation::execute(CpuResources &resources, const Json &query
                 }
                 result.execution.set("calibration_reused", Json::boolean(reused));
                 result.execution.set("calibration", samples);
-                return calibration.execute(coordinator);
+                check_stop();
+                return calibration.execute(coordinator, stop);
             }
             if (!state_->workspace)
                 state_->workspace = std::make_unique<VulkanBinaryWorkspaceCache>(
@@ -152,7 +169,7 @@ PackedResult PackedOperation::execute(CpuResources &resources, const Json &query
                                  : owner.words() / 2;
             auto executed = state_->workspace->execute(
                 owner, coordinator,
-                {gpu, workers, tile, state_->options.allocation_byte_limit, {}, {}});
+                {gpu, workers, tile, state_->options.allocation_byte_limit, stop, {}});
             const auto stats = state_->workspace->stats();
             auto residency = Json::object();
             residency.set("creations", cardinality(stats.creations));
@@ -187,13 +204,18 @@ PackedResult PackedOperation::execute(CpuResources &resources, const Json &query
 #endif
     }
     // Canonical serial verification, separately timed; never silently substitute.
-    auto verification_reservation = coordinator.reserve(1);
+    check_stop();
+    if (reservation)
+        coordinator.resize(*reservation, 1, verified_bytes);
+    else
+        reservation.emplace(coordinator.reserve(1, verified_bytes));
     auto reference = owner.empty_result(state_->options.allocation_byte_limit);
-    owner.cpu_words(0, owner.words(), reference);
+    owner.cpu_words(0, owner.words(), reference, stop);
     require(reference.size() == result.outputs.size(), "packed output count mismatch");
     for (std::size_t i = 0; i < reference.size(); ++i)
         require(reference[i].words() == result.outputs[i].words(),
                 "packed exact CPU reference mismatch");
+    check_stop();
     result.execution.set("exact_cpu_reference_passed", Json::boolean(true));
     result.execution.set(
         "complete_verified_call_seconds",
