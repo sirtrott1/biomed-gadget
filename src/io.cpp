@@ -13,6 +13,49 @@
 #include <rfc/storage/file_io.hpp>
 
 namespace gadget {
+namespace {
+void validate_json_member_name(std::string_view name) {
+    if (name.find('\0') != std::string_view::npos)
+        throw std::invalid_argument("JSON member name exceeds json-c C-string representation");
+}
+void validate_json_source_names(std::string_view source) {
+    // json-c owns the grammar and decoding. Inspect only string-token escapes
+    // followed by a member colon, whose decoded NUL the key API cannot retain.
+    for (std::size_t position = 0; position < source.size();) {
+        const auto byte = source[position++];
+        if (byte == '\0')
+            throw std::invalid_argument("unescaped NUL in JSON source");
+        if (byte != '"')
+            continue;
+        bool nul = false, closed = false;
+        while (position < source.size()) {
+            const auto character = source[position++];
+            if (character == '\0')
+                throw std::invalid_argument("unescaped NUL in JSON source");
+            if (character == '"') {
+                closed = true;
+                break;
+            }
+            if (character == '\\' && position < source.size()) {
+                const auto escape = source[position++];
+                if (escape == '\0')
+                    throw std::invalid_argument("unescaped NUL in JSON source");
+                if (escape == 'u' && source.substr(position, 4) == "0000")
+                    nul = true;
+            }
+        }
+        if (!nul || !closed)
+            continue;
+        auto next = position;
+        while (next < source.size() &&
+               (source[next] == ' ' || source[next] == '\t' ||
+                source[next] == '\r' || source[next] == '\n'))
+            ++next;
+        if (next < source.size() && source[next] == ':')
+            throw std::invalid_argument("JSON member name exceeds json-c C-string representation");
+    }
+}
+} // namespace
 std::recursive_mutex &Json::mutex() {
     static std::recursive_mutex lock;
     return lock;
@@ -25,6 +68,7 @@ Json Json::number(double n) {
 Json Json::parse(const std::string &s) {
     if (s.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
         throw std::length_error("JSON input exceeds json-c integer representation");
+    validate_json_source_names(s);
     // Grow only when the codec reports insufficient stack depth. Every nested
     // container in valid JSON needs two source bytes; no second parser or
     // application nesting ceiling is needed to size the complete input.
@@ -37,26 +81,34 @@ Json Json::parse(const std::string &s) {
             throw std::bad_alloc{};
         json_tokener_set_flags(tok.get(), JSON_TOKENER_STRICT | JSON_TOKENER_VALIDATE_UTF8);
         Json result(json_tokener_parse_ex(tok.get(), s.c_str(), static_cast<int>(s.size())));
-        const auto error = json_tokener_get_error(tok.get());
+        auto error = json_tokener_get_error(tok.get());
+        const auto consumed = json_tokener_get_parse_end(tok.get());
+        if (error == json_tokener_continue && consumed == s.size()) {
+            // Scalar tokens need an explicit end-of-input notification. Keep
+            // the original source intact and let the same tokener finish it.
+            result = Json(json_tokener_parse_ex(tok.get(), "", 1));
+            error = json_tokener_get_error(tok.get());
+        }
         if (error == json_tokener_error_depth && depth < source_depth) {
             depth = std::min(depth * 2, source_depth);
             continue;
         }
         if (error != json_tokener_success)
             throw std::invalid_argument("invalid JSON");
-        const auto consumed = json_tokener_get_parse_end(tok.get());
         if (!trim(s.substr(consumed)).empty())
             throw std::invalid_argument("trailing JSON content");
         return result;
     }
 }
 bool Json::has(const std::string &key) const {
+    validate_json_member_name(key);
     std::lock_guard lock(mutex());
     json_object *out = nullptr;
     return json_object_is_type(raw(), json_type_object) &&
            json_object_object_get_ex(raw(), key.c_str(), &out);
 }
 Json Json::at(const std::string &key) const {
+    validate_json_member_name(key);
     std::lock_guard lock(mutex());
     json_object *out = nullptr;
     if (!json_object_is_type(raw(), json_type_object) ||
@@ -96,6 +148,7 @@ bool Json::boolean() const {
     return json_object_get_boolean(raw());
 }
 void Json::set(const std::string &key, const Json &value) {
+    validate_json_member_name(key);
     std::lock_guard lock(mutex());
     if (!json_object_is_type(raw(), json_type_object))
         throw std::logic_error("JSON object required");
