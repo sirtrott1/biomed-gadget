@@ -57,6 +57,17 @@ NativeRecordValue ResultFields::consume_staged(NativeRecordValue value) {
             tensor.interpretation = "scientific_result";
             if (auto *interpretation = member("interpretation"))
                 tensor.interpretation = std::get<std::string>(interpretation->data);
+            if (member("cell_key")) {
+                if (member("occurrence_key") || !member("cell_grade"))
+                    throw std::invalid_argument("staged scientific cell owner declaration");
+                const auto &grade = std::get<rfc::numeric::Integer>(member("cell_grade")->data);
+                const auto &key = std::get<rfc::numeric::Integer>(member("cell_key")->data);
+                if (grade < 0 || grade > std::numeric_limits<std::uint16_t>::max() ||
+                    key <= 0 || !mpz_fits_ulong_p(key.get_mpz_t()))
+                    throw std::invalid_argument("staged scientific cell owner");
+                tensor.owner.kind = rfc::storage::TemporalOwnerKind::Cell;
+                tensor.owner.cell = {{static_cast<std::uint16_t>(grade.get_ui())}, key.get_ui()};
+            }
             if (member("occurrence_key")) {
                 const auto &grade = std::get<rfc::numeric::Integer>(member("occurrence_grade")->data);
                 const auto &key = std::get<rfc::numeric::Integer>(member("occurrence_key")->data);
@@ -262,7 +273,7 @@ Json result_tensor_view(const NativeRecord &record) {
         }
         return out;
     }
-    if (display == "vector") {
+    if (display == "vector" || display == "vector_objects") {
         auto out = Json::array();
         if (record.has("coordinates")) {
             const auto &coordinates = assay_detail::retained_tensor(record, record.at("coordinates")).tensor;
@@ -278,7 +289,12 @@ Json result_tensor_view(const NativeRecord &record) {
             }
         } else {
             for (std::size_t i = 0; i < tensor.domain().logical_size(); ++i)
-                out.push(tensor.support().contains(i) ? Json::string(tensor.state(i)->get_str()) : Json{});
+                if (!tensor.support().contains(i)) out.push(Json{});
+                else if (display == "vector_objects") {
+                    auto value = Json::object();
+                    value.set("rational", Json::string(tensor.state(i)->get_str()));
+                    out.push(value);
+                } else out.push(Json::string(tensor.state(i)->get_str()));
         }
         return out;
     }
@@ -384,8 +400,14 @@ void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_e
             a.at("schema").text() == "gadget.scientific.publication.view.v1") {
             same_result_value(a.at("schema"), b.at("schema"));
             same_result_value(a.at("path"), b.at("path"));
-            same_result_fields(NativeRecord::decode(a.at("publication").bytes()),
-                               NativeRecord::decode(b.at("publication").bytes()));
+            const auto original = NativeRecord::decode(a.at("publication").bytes());
+            const auto replayed = NativeRecord::decode(b.at("publication").bytes());
+            if (original.kind() == NativeRecordKind::Object && original.has("schema") &&
+                original.at("schema").kind() == NativeRecordKind::Text &&
+                original.at("schema").text() == "gadget.scientific.fields.v1")
+                same_result_fields(original, replayed);
+            else scientific_detail::require(original.encode() == replayed.encode(),
+                                             "replayed original publication bytes differ");
             return;
         }
         for (const auto &name : a.names()) {

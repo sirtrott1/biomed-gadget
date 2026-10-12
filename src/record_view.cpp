@@ -188,6 +188,10 @@ Json render_record_view(const NativeRecord &record) {
                     out.set("output_grade", rendered.at("output_grade"));
                     for (const auto &name : {"green_iterations", "green_execution", "residual_verified"})
                         if (rendered.has(name)) out.set(name, rendered.at(name));
+                } else if (view.kind() == NativeRecordKind::Object && view.has("schema") &&
+                           view.at("schema").text() == "gadget.scientific.native.boundary.result.v1") {
+                    for (const auto &name : {"result", "field_set", "retained_occurrences", "mathematical_definition"})
+                        out.set(name, rendered.at(name));
                 } else out.set("result", rendered);
                 if (fields.has("execution"))
                     out.set("execution", render_record_view(fields.at("execution")));

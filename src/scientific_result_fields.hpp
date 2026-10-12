@@ -155,6 +155,19 @@ class ResultFields {
             [&](auto i) {return value[i];}, rfc::numeric::StructuralSupport::full(value.size())),
             {}, carrier, std::move(display));
     }
+    static ResultValue stage_cell_vector(const Vector &value, std::uint64_t carrier,
+                                         rfc::storage::StableCellKey cell,
+                                         std::string display = "vector") {
+        auto result = stage_vector(value, carrier, std::move(display));
+        result.set("cell_grade", ResultValue::count(cell.grade.value));
+        result.set("cell_key", ResultValue::count(cell.key));
+        return result;
+    }
+    ResultValue cell_vector(const Vector &value, std::uint64_t carrier,
+                            rfc::storage::StableCellKey cell, std::string display = "vector") {
+        return ResultValue(consume_staged(std::move(stage_cell_vector(value, carrier, cell,
+            std::move(display))).release()));
+    }
     static ResultValue stage_matrix(const rfc::numeric::ExactMatrix &value,
                                     std::uint64_t input, std::uint64_t output,
                                     std::optional<rfc::storage::TemporalTensorRole> role = {}) {
