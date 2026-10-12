@@ -1642,6 +1642,9 @@ std::shared_ptr<const ScientificStudy> AssayWorkspace::study(const std::string &
     return state_->sources.at(assay).at(partition);
 }
 Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> resources) const {
+    if (request.has("operation") && request.at("operation").text() == "read_protocol_evidence")
+        return render_record_view(execute_record(admit_record_view(request),
+                                                std::move(resources)).at("result"));
     members(request, {"schema", "operation"},
             {"assay",
              "query",
@@ -3022,6 +3025,29 @@ NativeRecord AssayWorkspace::execute_structured(
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
     const auto query = render_record_view(request);
+    if (query.has("operation") && query.at("operation").text() == "read_protocol_evidence") {
+        const auto protocol = query.at("protocol");
+        ResourceImages images;
+        const auto load = [&](const std::string &id) {
+            require(state_->physical.contains(id), "unknown read protocol resource");
+            if (images.contains(id)) return;
+            const auto resource = state_->physical.at(id);
+            images.emplace(id, ResourceImage{resource.at("declaration"),
+                                            state_->artifact(resource.at("original")), {}});
+        };
+        load(text(query.at("resource"), source_byte_limit()));
+        if (protocol.has("barcode"))
+            load(text(protocol.at("barcode").at("whitelist_resource"), source_byte_limit()));
+        if (!resources) resources = CpuResources::local();
+        auto reservation = resources->reserve(1);
+        auto fields = read_protocol_fields(std::move(images), query);
+        using N = NativeRecordValue;
+        return retain_operation(native_publication(), request, N(N::Object{{
+            {"schema", N(std::string("gadget.assay.result.v1"))},
+            {"source_digest", N(digest())}, {"query", import_record_view(query)},
+            {"result", std::move(fields)}, {"arithmetic", N(std::string("rational"))}
+        }}));
+    }
     if (query.has("operation") && (query.at("operation").text() == "constrained_allocations" ||
                                    query.at("operation").text() == "variant_genotypes" ||
                                    query.at("operation").text() == "chromatin_contrast" ||
@@ -3241,7 +3267,7 @@ Json bioinformatics_capabilities() {
     result.at("physical_formats").push(Json::string("salmon_eq"));
     result.at("physical_formats").push(Json::string("gff3"));
     for (const auto *op :
-         {"read_quality", "annotation_features", "chromatin_contrast", "controlled_coverage",
+         {"read_quality", "read_protocol_evidence", "annotation_features", "chromatin_contrast", "controlled_coverage",
           "spatial_relations", "aggregate_assay", "design_aggregation", "exact_sequence_alignment",
           "reference_sequence_matches", "sequence_assembly_graph", "constrained_allocations",
           "relational_persistence", "indexed_sequence_alignment", "sequence_splice_discovery",
@@ -3310,7 +3336,7 @@ Json bioinformatics_capabilities() {
         "spatial":["spatial_relations","green_response","hodge","local_sections"],
         "multi_omics":["field_transfer","assay_sections","aggregate_assay","typed_moment","local_sections"],
         "variant_calls":["variant_genotypes"],
-        "sequence_validation":["read_quality","exact_sequence_alignment","reference_sequence_matches"],
+        "sequence_validation":["read_quality","read_protocol_evidence","exact_sequence_alignment","reference_sequence_matches"],
         "assembly":["sequence_assembly_graph","hodge","green_response","relational_persistence"],
         "constrained_assignment":["constrained_allocations"],
         "persistent_structure":["relational_persistence","structure_transition"],

@@ -99,6 +99,7 @@ class SequenceSource {
     std::size_t size() const { return spans_.size(); }
     std::size_t length(std::size_t record) const { return spans_.at(record).length; }
     const std::string &digest() const { return digest_; }
+    const SequenceSpan &original_span(std::size_t record) const { return spans_.at(record); }
     std::string id(std::size_t record) const;
     Json evidence(std::size_t record) const;
     std::string bases(std::size_t record, std::size_t begin, std::size_t length) const;
@@ -107,6 +108,7 @@ class SequenceSource {
                 const std::function<void(std::size_t, std::string_view)> &visit) const;
 };
 std::vector<SequenceRecord> sequence_records(const ResourceImage &resource);
+NativeRecordValue read_protocol_fields(ResourceImages images, const Json &request);
 Json reference_matches(const ResourceImages &images, const Json &request);
 Json assembly_graph(const ResourceImage &resource, const Json &request,
                     std::optional<AssayFieldsSource> *retained = nullptr);
