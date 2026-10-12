@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.biomedical.context.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "source_digest", "snapshot_sha256", "question", "assertion_keys"],
+  "properties": {
+    "schema": {"const": "gadget.biomedical.context.v1"},
+    "source_digest": {"$ref": "#/$defs/digest"},
+    "snapshot_sha256": {"$ref": "#/$defs/digest"},
+    "question": {"type": "string", "minLength": 1},
+    "assertion_keys": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[1-9][0-9]*$"}}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}}
+}
