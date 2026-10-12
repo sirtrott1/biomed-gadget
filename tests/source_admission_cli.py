@@ -17,7 +17,8 @@ def representable(value):
  return True
 def json_case(source):
  try:
-  value=json.loads(source);admit=representable(value)
+  def invalid_constant(token):raise ValueError(token)
+  value=json.loads(source,parse_constant=invalid_constant);admit=representable(value)
  except (ValueError,RecursionError):
   value=None;admit=False
  case=dict(source=source,admit=admit)
@@ -48,6 +49,10 @@ for source in ['{"schema\\u0000suffix":"control"}',
                '', 'tru', '1e', '[', '{', '{"name":"\\u000',
                '{"name":"\\z"}', '{"name":1} false', '/* comment */ {}']:
  json_case(source)
+for token in ['NaN','Infinity','-Infinity']:
+ for source in [token,'['+token+']','{"outer":[{"value":'+token+'}]}']:
+  json_case(source)
+ json_case(json.dumps({'value':token,'names':[token]}))
 for depth in [31,32,33,64,96]:
  for leaf in ['{"name":"\\u0000"}','{"name\\u0000suffix":1}']:
   json_case('['*depth+leaf+']'*depth)

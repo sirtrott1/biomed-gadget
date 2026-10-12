@@ -50,6 +50,7 @@ class Json {
     Json at(std::size_t index) const;
     std::size_t size() const;
     std::string text() const;
+    // Signed access refuses an unsigned value outside this return type.
     std::int64_t integer() const;
     bool boolean() const;
     void set(const std::string &key, const Json &value);

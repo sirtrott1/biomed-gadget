@@ -55,6 +55,49 @@ void validate_json_source_names(std::string_view source) {
             throw std::invalid_argument("JSON member name exceeds json-c C-string representation");
     }
 }
+void validate_json_numeric_literals(json_object *root) {
+    struct Frame {
+        json_object *value;
+        std::size_t next{};
+        json_object_iterator current{}, end{};
+    };
+    std::vector<Frame> pending;
+    const auto enter = [&](json_object *value) {
+        if (json_object_is_type(value, json_type_object))
+            pending.push_back({value, 0, json_object_iter_begin(value), json_object_iter_end(value)});
+        else if (json_object_is_type(value, json_type_array))
+            pending.push_back({value});
+        else if (json_object_is_type(value, json_type_double) && !std::isfinite(json_object_get_double(value))) {
+            // json-c preserves a valid decimal literal even when its
+            // binary64 view overflows. Only its non-JSON extensions refuse.
+            const auto literal = json_object_to_json_string_ext(value, JSON_C_TO_STRING_PLAIN);
+            if (!literal) throw std::bad_alloc{};
+            if (std::string_view(literal) == "NaN" || std::string_view(literal) == "Infinity" ||
+                std::string_view(literal) == "-Infinity")
+                throw std::invalid_argument("non-JSON numeric literal");
+        }
+    };
+    enter(root);
+    while (!pending.empty()) {
+        auto &frame = pending.back();
+        json_object *child;
+        if (json_object_is_type(frame.value, json_type_array)) {
+            if (frame.next == json_object_array_length(frame.value)) {
+                pending.pop_back();
+                continue;
+            }
+            child = json_object_array_get_idx(frame.value, frame.next++);
+        } else {
+            if (json_object_iter_equal(&frame.current, &frame.end)) {
+                pending.pop_back();
+                continue;
+            }
+            child = json_object_iter_peek_value(&frame.current);
+            json_object_iter_next(&frame.current);
+        }
+        enter(child);
+    }
+}
 } // namespace
 std::recursive_mutex &Json::mutex() {
     static std::recursive_mutex lock;
@@ -97,6 +140,7 @@ Json Json::parse(const std::string &s) {
             throw std::invalid_argument("invalid JSON");
         if (!trim(s.substr(consumed)).empty())
             throw std::invalid_argument("trailing JSON content");
+        validate_json_numeric_literals(result.raw());
         return result;
     }
 }
@@ -139,6 +183,8 @@ std::int64_t Json::integer() const {
     std::lock_guard lock(mutex());
     if (!json_object_is_type(raw(), json_type_int))
         throw std::invalid_argument("expected JSON integer");
+    if (json_object_get_uint64(raw()) > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        throw std::length_error("JSON integer exceeds signed accessor representation");
     return json_object_get_int64(raw());
 }
 bool Json::boolean() const {
