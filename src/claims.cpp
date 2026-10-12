@@ -177,6 +177,61 @@ NativeRecord native_path(NativeRecord value, const NativeRecord &path) {
 
 } // namespace
 
+claim_detail::NativeLiteralObservation claim_detail::read_native_literal(
+    const NativeRecord &selected, const std::string &type,
+    std::optional<std::size_t> coordinate) {
+    auto binding = ResultValue::object();
+    binding.set("source_namespace", ResultValue::string(std::to_string(selected.source_namespace())));
+    const auto history = selected.publication_history();
+    require(history.has_value(), "native literal requires its actual publication");
+    binding.set("cutoff", ResultValue::count(history->last_sequence()));
+    if (selected.kind() == NativeRecordKind::Object && selected.has("schema") &&
+        selected.at("schema").text() == "gadget.scientific.tensor.view.v1") {
+        require(type == "rational", "native tensor facts require rational values");
+        const auto key = native_count(selected.at("tensor"), "native fact tensor");
+        rfc::storage::NativeAccessionRequest request;
+        request.subject = key;
+        const auto pin = selected.accession_directory()->pin(request);
+        require(pin.source_namespace() == selected.source_namespace() &&
+                    pin.sequence() == history->last_sequence(), "native fact accession owner mismatch");
+        const auto tensor = pin.tensor();
+        const auto descriptor = pin.tensor_declaration();
+        const auto index = coordinate ? *coordinate :
+            selected.has("index") ? native_count(selected.at("index"), "native fact scalar index") : 0;
+        if (!coordinate)
+            require((selected.at("display").text() == "rational" ||
+                         selected.at("display").text() == "rational_object") &&
+                        (selected.has("index") || tensor->domain().logical_size() == 1),
+                    "nonscalar native facts require an original flat coordinate");
+        require(index < tensor->domain().logical_size(), "native fact coordinate outside field");
+        const auto value = tensor->state(index);
+        require(value.has_value(), "native fact coordinate is missing");
+        binding.set("kind", ResultValue::string("native_tensor"));
+        binding.set("tensor", ResultValue::count(key));
+        binding.set("coordinate", ResultValue::count(index));
+        binding.set("supported", ResultValue::boolean(true));
+        binding.set("input_carrier", descriptor->input ? ResultValue::count(*descriptor->input) : ResultValue());
+        binding.set("output_carrier", descriptor->output ? ResultValue::count(*descriptor->output) : ResultValue());
+        binding.set("interpretation", ResultValue::string(descriptor->interpretation));
+        return {NativeRecordValue(*value), std::move(binding).release()};
+    }
+    require(!coordinate, "primitive native fact cannot name a tensor coordinate");
+    binding.set("kind", ResultValue::string("native_literal"));
+    return {literal_result(native_literal(selected, type, false)).release(), std::move(binding).release()};
+}
+
+bool claim_detail::compare_native_literal(const NativeRecord &actual, const Json &expected,
+    const std::string &type, const std::string &comparison) {
+    auto proposed = admit_record_view(expected);
+    if ((type == "count" || type == "integer") && proposed.kind() == NativeRecordKind::Text) {
+        const auto text = proposed.text();
+        require(!text.empty() && text.find_first_not_of("-0123456789") == std::string::npos,
+                "native integer fact proposal requires decimal integer text");
+        proposed = NativeRecord::create(N(rfc::numeric::Integer(text)) , new_native_record_namespace());
+    }
+    return compare_native(native_literal(actual, type, false), native_literal(proposed, type, true), comparison);
+}
+
 NativeRecord check_certificate_claims_record(const NativeRecord &certificate, const NativeRecord &request) {
     require(certificate.is_root() && certificate.at("schema").text() == "gadget.operation.native.v1",
             "native claims require the actual owning operation publication");

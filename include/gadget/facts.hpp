@@ -13,6 +13,9 @@ class ScientificFacts {
                     const fs::path &artifact_root = {});
     ScientificFacts(const AssayWorkspace &workspace, const NativeRecord &request,
                     const fs::path &artifact_root = {});
+    // Select typed values from an actual completed native operation. Workflow
+    // references keep their independent owners and original flat coordinates.
+    ScientificFacts(const NativeRecord &operation, const NativeRecord &request);
     ~ScientificFacts();
     ScientificFacts(const ScientificFacts &) = delete;
     ScientificFacts &operator=(const ScientificFacts &) = delete;

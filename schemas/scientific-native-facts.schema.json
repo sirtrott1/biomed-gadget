@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.scientific.facts.request.v2",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.scientific.facts.request.v2"
+    },
+    "source_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "source_namespace": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "cutoff": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "meaning": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "native"
+              },
+              "path": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "additionalProperties": false
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ]
+            },
+            "minItems": 1
+          },
+          "value_type": {
+            "enum": [
+              "boolean",
+              "count",
+              "integer",
+              "rational",
+              "text"
+            ]
+          },
+          "coordinate": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "meaning",
+          "from",
+          "path",
+          "value_type"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "source_digest",
+    "source_namespace",
+    "cutoff",
+    "question",
+    "facts"
+  ],
+  "additionalProperties": false
+}

@@ -110,6 +110,34 @@
                   "result"
                 ],
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "native"
+                  },
+                  "path": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path"
+                ],
+                "additionalProperties": false
               }
             ]
           },
@@ -146,6 +174,10 @@
           "owner_sha256": {
             "type": "string",
             "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "coordinate": {
+            "type": "integer",
+            "minimum": 0
           }
         },
         "required": [
@@ -187,8 +219,16 @@
             "then": {
               "properties": {
                 "value": {
-                  "type": "integer",
-                  "minimum": 0
+                  "oneOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9]+$"
+                    }
+                  ]
                 }
               }
             }
@@ -204,7 +244,15 @@
             "then": {
               "properties": {
                 "value": {
-                  "type": "integer"
+                  "oneOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^-?[0-9]+$"
+                    }
+                  ]
                 }
               }
             }
@@ -353,6 +401,61 @@
                   "answers_sha256",
                   "observable",
                   "reference"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "owner_sha256",
+              "kind",
+              "owner"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "owner_sha256": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "kind": {
+                "const": "native"
+              },
+              "owner": {
+                "type": "object",
+                "properties": {
+                  "enclosing_namespace": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$"
+                  },
+                  "enclosing_cutoff": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "operation_namespace": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]*$"
+                  },
+                  "operation_cutoff": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "source_digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  },
+                  "binding": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "enclosing_namespace",
+                  "enclosing_cutoff",
+                  "operation_namespace",
+                  "operation_cutoff",
+                  "source_digest",
+                  "binding"
                 ],
                 "additionalProperties": false
               }
