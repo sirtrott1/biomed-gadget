@@ -230,6 +230,31 @@ operation = run(
 result_bytes = operation.values[0]
 ```
 
+A stored native scientific operation can also be replayed from its retained
+original study and request. This calls GADGET's existing `replay-scientific`
+provider; it returns a fresh native operation, preserving the complete source,
+fields, supported zeroes and missing support. No numerical display is imported.
+
+```python
+from gadget_rcdb import install_rcql_scientific_replay
+
+install_rcql_scientific_replay(gadget="/absolute/path/to/gadget")
+replayed = run(
+    query(source("db"), call("GADGET_SCIENTIFIC_REPLAY", "operation", 1)),
+    sources={"db": BoundSource(store, SourcePolicy.allow(
+        "identity", "records", "files", "gadget_replay"))},
+)
+replayed_bytes = replayed.values[0]
+```
+
+The record version is required. The receipt records the selected literal ID,
+version, source state digest and replayed byte digest. `replay_publication(bytes,
+gadget=...)` offers the same native delegation without an RCQL query. A native
+archive without the admitted scientific source/request contract refuses replay.
+Input archives and complete returned archives undergo native admission and exact
+canonical byte checks. Replay uses a private temporary directory and leaves the
+RCDB source unchanged; publish returned bytes explicitly when they should persist.
+
 Both input versions are required. The executor admits their native archives,
 submits the retained request to GADGET, validates its native output, and records
 the selected input versions and output byte digest. The operation requires an

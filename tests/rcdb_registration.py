@@ -26,6 +26,7 @@ installers = {
     "GADGET_ASSAY_QUERY": lambda: adapter.install_rcql_executor(gadget=binary),
     "GADGET_NATIVE_FIELD": lambda: adapter.install_rcql_field_selector(
         selector=selector, gadget=binary),
+    "GADGET_SCIENTIFIC_REPLAY": lambda: adapter.install_rcql_scientific_replay(gadget=binary),
 }
 
 
@@ -111,12 +112,14 @@ aliased_selector = selector.parent / ".." / selector.parent.name / selector.name
 assert adapter.install_rcql_executor(gadget=aliased_binary) == "GADGET_ASSAY_QUERY"
 assert adapter.install_rcql_field_selector(
     selector=aliased_selector, gadget=aliased_binary) == "GADGET_NATIVE_FIELD"
+assert adapter.install_rcql_scientific_replay(gadget=aliased_binary) == "GADGET_SCIENTIFIC_REPLAY"
 for name, action in [
     ("GADGET_ASSAY_QUERY", lambda: adapter.install_rcql_executor(gadget=selector)),
     ("GADGET_NATIVE_FIELD", lambda: adapter.install_rcql_field_selector(
         selector=binary, gadget=binary)),
     ("GADGET_NATIVE_FIELD", lambda: adapter.install_rcql_field_selector(
         selector=selector, gadget=selector)),
+    ("GADGET_SCIENTIFIC_REPLAY", lambda: adapter.install_rcql_scientific_replay(gadget=selector)),
 ]:
     declaration, operator = lookup(name), get_operator(name)
     rejects(action)
