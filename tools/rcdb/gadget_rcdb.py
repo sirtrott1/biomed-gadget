@@ -13,6 +13,30 @@ _CODEC_NAME = "gadget.native-publication"
 _OPERATOR_NAME = "GADGET_PUBLICATION_BYTES"
 
 
+def _installed_format(name, binding, extensions):
+    """Inspect the canonical registry before reusing or installing a reader."""
+    from rexgraph.io import _FORMATS
+    for other_name, other in _FORMATS.items():
+        if other_name != name and set(extensions).intersection(getattr(other, "extensions", ())):
+            raise ValueError("GADGET format extension already has a different provider")
+    if name not in _FORMATS:
+        return None
+    installed = _FORMATS.get(name)
+    if (getattr(installed, "name", None) != name or getattr(installed, "save", None) is not None
+            or getattr(installed, "extensions", None) != extensions):
+        raise ValueError("GADGET format name already has a different declaration")
+    load = getattr(installed, "load", None)
+    if not callable(load) or getattr(load, "_gadget_format_binding", None) != binding:
+        raise ValueError("GADGET format name already has a different reader binding")
+    return installed
+
+
+def _positive_byte_budget(value, resource):
+    if type(value) is not int or value <= 0:
+        raise ValueError(resource + " byte budget must be a positive integer")
+    return value
+
+
 def _rcql_operator_installed(signature, binding):
     """Require a complete matching declaration and callable before reusing it."""
     from rcql.operators import get_operator
@@ -132,10 +156,8 @@ def compress_publication(source, destination, *, gadget, codec, level=None, publ
 def read_compressed_publication(path, *, gadget, max_encoded_bytes, max_output_bytes):
     """Admit an RCDB blob under explicit encoded and decoded byte budgets."""
     from rcdb.core import decompress_blob
-    if type(max_encoded_bytes) is not int or max_encoded_bytes <= 0:
-        raise ValueError("encoded byte budget must be a positive integer")
-    if type(max_output_bytes) is not int or max_output_bytes <= 0:
-        raise ValueError("decoded byte budget must be a positive integer")
+    _positive_byte_budget(max_encoded_bytes, "encoded")
+    _positive_byte_budget(max_output_bytes, "decoded")
     encoded = _read_regular_file(path, max_bytes=max_encoded_bytes,
                                  resource="compressed publication")
     try:
@@ -148,15 +170,22 @@ def read_compressed_publication(path, *, gadget, max_encoded_bytes, max_output_b
 def install_compressed_format(*, gadget, max_encoded_bytes, max_output_bytes):
     """Register RCDB-framed RFCXS files with RexGraph's format registry."""
     from rexgraph.io import register_format
+    _positive_byte_budget(max_encoded_bytes, "encoded")
+    _positive_byte_budget(max_output_bytes, "decoded")
     binary = str(Path(gadget).resolve(strict=True))
+    name, extensions = "gadget-native-compressed", (".rcblob",)
+    binding = ("gadget.native-compressed-file.v1", binary, max_encoded_bytes, max_output_bytes)
+    installed = _installed_format(name, binding, extensions)
+    if installed is not None:
+        return installed
 
     def load(path):
         return read_compressed_publication(path, gadget=binary,
                                             max_encoded_bytes=max_encoded_bytes,
                                             max_output_bytes=max_output_bytes)
 
-    return register_format("gadget-native-compressed", load=load,
-                           extensions=(".rcblob",))
+    load._gadget_format_binding = binding
+    return register_format(name, load=load, extensions=extensions)
 
 
 def validate_publication(raw, *, gadget):
@@ -311,11 +340,17 @@ def install_format(*, gadget):
     """Register RFCXS admission with RexGraph's existing file-format registry."""
     from rexgraph.io import register_format
     binary = str(Path(gadget).resolve(strict=True))
+    name, extensions = "gadget-native", (".rfcxs",)
+    binding = ("gadget.native-file.v1", binary)
+    installed = _installed_format(name, binding, extensions)
+    if installed is not None:
+        return installed
 
     def load(path):
         return _read_publication_file(path, gadget=binary)
 
-    return register_format("gadget-native", load=load, extensions=(".rfcxs",))
+    load._gadget_format_binding = binding
+    return register_format(name, load=load, extensions=extensions)
 
 
 def select_publication_field(publication, request, *, selector, gadget):
