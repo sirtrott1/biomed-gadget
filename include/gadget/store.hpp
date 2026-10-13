@@ -17,6 +17,9 @@ enum class StudyPreparationStage {
 using StudyPreparationHook = std::function<void(StudyPreparationStage)>;
 // Exclusive Linux local profile. Every operation opens the canonical coordinator.
 // Owning readers returned by load_store survive its closure and later publication.
+// Preparation preserves the required native archive and present, validated JSON
+// views byte for byte. A prepared transaction requires the same artifacts on retry.
+// Snapshot decoding and archive digest use the same opened byte owner.
 Json initialize_store(const fs::path &snapshot, const fs::path &destination,
                       rfc::storage::DurableFaultHook hook = {},
                       StudyPreparationHook preparation_hook = {});

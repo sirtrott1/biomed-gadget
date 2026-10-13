@@ -96,16 +96,28 @@ struct Frozen {
 Frozen freeze(const fs::path &path) {
     Frozen result{load_snapshot(path), {}};
     auto directory = durable_io::directory(path);
-    for (const auto &name : artifact_names)
-        if(fs::exists(path/name))result.artifacts.emplace(
-            name,
-            string_bytes(durable_io::read(directory.get(), name,
-                                          artifact_limit)));
     const auto &origin = result.workspace.snapshot_origin;
-    if(result.artifacts.contains("snapshot.json"))require("sha256:"+sha256(result.artifacts.at("snapshot.json"))==origin.at("completion_sha256").text(),"snapshot changed during preparation");
-    for(const auto &[name,data]:result.artifacts)if(name!="snapshot.json") {
-        const auto record=origin.at("artifacts").at(name);
-        require("sha256:"+sha256(data)==record.at("sha256").text() && data.size()==static_cast<std::size_t>(record.at("bytes").integer()),"snapshot artifact changed during preparation");
+    auto archive = string_bytes(durable_io::read(directory.get(), "study.rfcxs", artifact_limit));
+    const auto record = origin.at("artifacts").at("study.rfcxs");
+    require("sha256:" + sha256(archive) == record.at("sha256").text() &&
+                archive.size() == static_cast<std::size_t>(record.at("bytes").integer()),
+            "native snapshot changed during preparation");
+    result.artifacts.emplace("study.rfcxs", std::move(archive));
+    auto completion = Json::object();
+    for (const auto &key : origin.native().names()) {
+        if (key != "directory" && key != "completion_sha256")
+            completion.set(key, origin.at(key));
+    }
+    for (const auto &name : {"snapshot.json", "metadata.json"}) {
+        if (!fs::exists(fs::symlink_status(path / name)))
+            continue;
+        auto data = string_bytes(durable_io::read(directory.get(), name, artifact_limit));
+        const auto expected = std::string_view(name) == "snapshot.json"
+                                  ? completion
+                                  : render_record_view(result.workspace.native_publication->at("study"));
+        require(Json::parse(data).dump() == expected.dump(),
+                "optional snapshot view changed during preparation");
+        result.artifacts.emplace(name, std::move(data));
     }
     return result;
 }
@@ -126,6 +138,9 @@ void prepare(const fs::path &root, std::uint64_t transaction, const Frozen &froz
     const auto final = studies / hex(transaction);
     if (fs::exists(fs::symlink_status(final))) {
         auto directory = durable_io::directory(final);
+        for (const auto &name : artifact_names)
+            require(fs::exists(fs::symlink_status(final / name)) == frozen.artifacts.contains(name),
+                    "transaction already prepared with different snapshot artifacts");
         for (const auto &[name,artifact_data] : frozen.artifacts) {
             require(string_bytes(durable_io::read(directory.get(), name, artifact_limit)) ==
                         artifact_data,
