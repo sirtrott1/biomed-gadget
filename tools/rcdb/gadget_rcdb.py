@@ -128,15 +128,20 @@ def _publish_stream(stream, size, destination, publisher):
         raise ValueError("GADGET file publication produced an unexpected display")
 
 
-def copy_publication_file(source, destination, *, gadget, max_bytes, publisher=None):
-    """Copy a complete admitted native file through exclusive publication."""
-    _positive_byte_budget(max_bytes, "publication")
-    destination = Path(destination)
-    if os.path.lexists(destination):
-        raise FileExistsError(destination)
-    binary = Path(gadget).resolve(strict=True)
-    publisher = (binary.with_name("gadget_publish_file") if publisher is None else Path(publisher))
-    publisher = publisher.resolve(strict=True)
+@contextmanager
+def _admitted_open_file(path, *, gadget, max_bytes):
+    with _open_regular_file(path, max_bytes=max_bytes) as (stream, size):
+        before = _file_state(os.fstat(stream.fileno()))
+        _validate_publication_file(path, gadget=gadget)
+        if before != _file_state(os.fstat(stream.fileno())) or before != _file_state(Path(path).stat()):
+            raise ValueError("captured publication changed during native admission")
+        yield stream, size
+        if before != _file_state(os.fstat(stream.fileno())) or before != _file_state(Path(path).stat()):
+            raise ValueError("captured publication changed during native execution")
+
+
+@contextmanager
+def _captured_publication_file(source, *, gadget, max_bytes, publisher):
     with TemporaryDirectory(prefix="gadget-native-file-copy-") as folder:
         captured = Path(folder)/"source.rfcxs"
         with _open_regular_file(source, max_bytes=max_bytes) as (stream, size):
@@ -145,14 +150,28 @@ def copy_publication_file(source, destination, *, gadget, max_bytes, publisher=N
             after = os.fstat(stream.fileno())
             if _file_state(before) != _file_state(after):
                 raise ValueError("publication changed while capturing its original byte owner")
-        with _open_regular_file(captured, max_bytes=max_bytes) as (stream, size):
-            before = _file_state(os.fstat(stream.fileno()))
-            _validate_publication_file(captured, gadget=binary)
-            if before != _file_state(os.fstat(stream.fileno())) or before != _file_state(captured.stat()):
-                raise ValueError("captured publication changed during native admission")
-            _publish_stream(stream, size, destination, publisher)
-            if not _file_matches_stream(destination, stream, size):
-                raise ValueError("copied publication differs from its complete admitted bytes")
+        with _admitted_open_file(captured, gadget=gadget, max_bytes=max_bytes) as opened:
+            yield captured, *opened
+
+
+def _publication_writer(gadget, publisher):
+    binary = Path(gadget).resolve(strict=True)
+    publisher = binary.with_name("gadget_publish_file") if publisher is None else Path(publisher)
+    return binary, publisher.resolve(strict=True)
+
+
+def copy_publication_file(source, destination, *, gadget, max_bytes, publisher=None):
+    """Copy a complete admitted native file through exclusive publication."""
+    _positive_byte_budget(max_bytes, "publication")
+    destination = Path(destination)
+    if os.path.lexists(destination):
+        raise FileExistsError(destination)
+    binary, publisher = _publication_writer(gadget, publisher)
+    with _captured_publication_file(source, gadget=binary, max_bytes=max_bytes,
+                                    publisher=publisher) as (_, stream, size):
+        _publish_stream(stream, size, destination, publisher)
+        if not _file_matches_stream(destination, stream, size):
+            raise ValueError("copied publication differs from its complete admitted bytes")
     return destination
 
 
@@ -493,6 +512,38 @@ def select_publication_field(publication, request, *, selector, gadget):
         if process.stdout:
             raise ValueError("GADGET native field selection produced an unexpected display")
         return _read_publication_file(output, gadget=gadget)
+
+
+def select_publication_field_file(publication, request, destination, *, selector, gadget,
+                                  max_source_bytes, max_request_bytes, max_output_bytes,
+                                  publisher=None):
+    """Select original native fields using complete files and explicit byte budgets."""
+    for value, name in ((max_source_bytes, "source"), (max_request_bytes, "request"),
+                        (max_output_bytes, "output")):
+        _positive_byte_budget(value, name)
+    destination = Path(destination)
+    if os.path.lexists(destination):
+        raise FileExistsError(destination)
+    binary, publisher = _publication_writer(gadget, publisher)
+    selector = Path(selector).resolve(strict=True)
+    with TemporaryDirectory(prefix="gadget-native-field-files-") as folder:
+        output = Path(folder)/"selection.rfcxs"
+        with _captured_publication_file(publication, gadget=binary, max_bytes=max_source_bytes,
+                                        publisher=publisher) as (source, _, _):
+            with _captured_publication_file(request, gadget=binary, max_bytes=max_request_bytes,
+                                            publisher=publisher) as (control, _, _):
+                process = subprocess.run([str(selector), "--input", str(source), "--request", str(control),
+                                          "--out", str(output)], capture_output=True)
+                if process.returncode:
+                    raise ValueError("GADGET native field selection failed: " +
+                                     process.stderr.decode("utf-8", errors="replace").strip())
+                if process.stdout:
+                    raise ValueError("GADGET native field selection produced an unexpected display")
+        with _admitted_open_file(output, gadget=binary, max_bytes=max_output_bytes) as (stream, size):
+            _publish_stream(stream, size, destination, publisher)
+            if not _file_matches_stream(destination, stream, size):
+                raise ValueError("selected publication differs from its complete admitted bytes")
+    return destination
 
 
 def install_rcql_field_selector(*, selector, gadget):

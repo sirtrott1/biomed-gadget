@@ -86,6 +86,38 @@ artifacts, infer mathematical cell counts or weaken a socket admission budget.
 exclusive writers, real output exhaustion and complete large files with measured
 Python allocations.
 
+`select_publication_field_file` offers the same file ownership route for original
+field selection. Supply native source and request files, a fresh destination,
+the existing `gadget_native_field_query` executable and separate source, request
+and output byte budgets:
+
+```python
+from gadget_rcdb import select_publication_field_file
+
+select_publication_field_file(
+    "source.rfcxs", "request.rfcxs", "new-selection.rfcxs",
+    selector="/absolute/path/to/gadget_native_field_query",
+    gadget="/absolute/path/to/gadget",
+    max_source_bytes=your_source_byte_budget,
+    max_request_bytes=your_request_byte_budget,
+    max_output_bytes=your_output_byte_budget,
+)
+```
+
+The inputs are captured and admitted before invoking the native selector. The
+result retains the complete original selected publication, including every
+field, carrier, support flag and byte owner; a window changes the declared
+selection and its counts, rather than partitioning that mathematical source.
+The source namespace, native cutoff, tensor key, carriers, interpretation and
+optional window execution limits stay in the existing native request schema.
+Complete native output admission and byte comparison precede returning the new
+file. Output budget exhaustion leaves the requested destination absent.
+`tests/rcdb_field_files.py` checks complete source retention, independent window
+counts, changed controls, exclusive publication and measured Python allocations.
+Native reader and field computation memory remain separate from those Python
+allocations. This API neither creates a bulk encoded-field index nor raises the
+RCDB record size limit.
+
 An installed Agent can retrieve a publication that its local operator has already
 admitted to the store. Use the existing record interface and select the literal
 record ID and version:
