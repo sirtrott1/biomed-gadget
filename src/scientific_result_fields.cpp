@@ -317,13 +317,21 @@ Json result_tensor_view(const NativeRecord &record) {
         out.set("values", values);
         return out;
     }
-    if ((display != "sparse_matrix" && display != "declared_map") || tensor.domain().extents().size() != 2)
+    if ((display != "sparse_matrix" && display != "declared_map" && display != "matrix_triplets") || tensor.domain().extents().size() != 2)
         throw std::invalid_argument("scientific tensor display");
     auto out = Json::object(), entries = Json::array();
     const auto rows = tensor.domain().extents()[0], columns = tensor.domain().extents()[1];
     out.set("rows", cardinality(rows));
     out.set("columns", cardinality(columns));
     for (const auto &entry : tensor.values().entries()) {
+        if (display == "matrix_triplets") {
+            auto value = Json::array();
+            value.push(cardinality(entry.index / columns));
+            value.push(cardinality(entry.index % columns));
+            value.push(Json::string(entry.value.get_str()));
+            entries.push(value);
+            continue;
+        }
         auto value = Json::object();
         value.set("row", cardinality(entry.index / columns));
         value.set("column", cardinality(entry.index % columns));

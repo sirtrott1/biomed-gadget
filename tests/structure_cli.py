@@ -57,6 +57,12 @@ def main():
         req=dict(schema='gadget.assays.query.v1',operation='native_query',assay=assay,query=query)
         requests[name]=req;answer=run('assay-query','--workspace',ws,'--request',save(name+'-request.json',req))
         save(name+'-result.json',answer);results[name]=answer
+        if len(sys.argv) > 3:
+            native = subprocess.run([str(Path(sys.argv[3]).resolve()), str(ws),
+                str(save(name+'-native-queries.json', {name: query})), str(root/(name+'-native')), assay],
+                text=True, capture_output=True)
+            if native.returncode: raise RuntimeError(name+': '+native.stderr)
+            check(json.loads(native.stdout)['status']=='PASS', 'actual native structure and portable replay')
         return answer['result']['answers'][0]['certificate']['result']
     def chain(name,assay,values=None,domain='rational',field=None,grade=1):
         req=dict(operation='chain_certificate',context='all',grade=grade,coefficient_domain=domain)

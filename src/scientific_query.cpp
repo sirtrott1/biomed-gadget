@@ -1,6 +1,7 @@
 #include "research_ablation.hpp"
 #include "scientific_ablation_fields.hpp"
 #include "scientific_source_snapshot.hpp"
+#include "scientific_structure.hpp"
 #include "research_ensemble.hpp"
 #include "research_factored.hpp"
 #include "research_prepared.hpp"
@@ -41,7 +42,7 @@ bool has_native_scientific_publisher(std::string_view operation) noexcept {
            operation == "relational_field_ensemble" || operation == "structural_reference_calibration" ||
            operation == "local_sections" || operation == "source_structure_ablation" ||
            operation == "field_summary" || operation == "boundary" || operation == "adjoint" ||
-           operation == "hodge" || operation == "green_action" || operation == "censored_endpoint_bounds" || operation == "typed_moment" || operation == "temporal_moment_change" || operation == "tensor_window" || operation == "support_mask" || operation == "native_boundary" || operation == "green_response";
+           operation == "hodge" || operation == "green_action" || operation == "censored_endpoint_bounds" || operation == "typed_moment" || operation == "temporal_moment_change" || operation == "tensor_window" || operation == "support_mask" || operation == "native_boundary" || operation == "green_response" || operation == "chain_certificate" || operation == "realized_path_comparison";
 }
 namespace {
 using namespace scientific_detail;
@@ -1882,8 +1883,7 @@ struct ScientificSession::State {
             return;
         }
         if (operation == "chain_certificate") {
-            (void)analyze_chain(*context(query.at("context").text()).study,
-                                chain_declaration(query), true);
+            validate_chain_values(*context(query.at("context").text()).study, query, chain_operand(query));
             return;
         }
         if (operation == "realized_path_comparison") {
@@ -2403,26 +2403,77 @@ struct ScientificSession::State {
         coverage.set("observations", observations);
         return coverage;
     }
-    Json chain_declaration(const Json &query) {
-        members(query, {"operation", "context", "grade", "coefficient_domain"},
-                {"field", "values"});
-        require(query.has("field") != query.has("values"),
-                "chain requires values or a source field");
-        if (query.has("values"))
-            return query;
-        require(query.at("coefficient_domain").text() == "rational",
-                "source fields have rational coordinates");
-        const auto [v, g] = input(text(query.at("context")), text(query.at("field")));
-        require(
-            g == count(query.at("grade"), std::numeric_limits<std::uint16_t>::max(), "chain grade"),
-            "chain field grade mismatch");
-        auto resolved = Json::object(), values = Json::array();
-        for (const auto *name : {"operation", "context", "grade", "coefficient_domain"})
-            resolved.set(name, query.at(name));
-        for (const auto &x : v)
-            values.push(Json::string(x.get_str()));
-        resolved.set("values", values);
-        return resolved;
+    Vector chain_operand(const Json &query) {
+        members(query, {"operation", "context", "grade", "coefficient_domain"}, {"field", "values"});
+        require(query.has("field") != query.has("values"), "chain requires values or a source field");
+        auto &prepared = context(text(query.at("context")));
+        const auto grade = count(query.at("grade"), prepared.study->source().grade_count() - 1, "chain grade");
+        if (query.has("values")) return declared_chain_values(query, prepared.study->source().grade(
+            rfc::core::Grade{static_cast<std::uint16_t>(grade)}).cell_count());
+        require(text(query.at("coefficient_domain")) == "rational", "source fields have rational coordinates");
+        const auto [values, field_grade] = input(text(query.at("context")), text(query.at("field")));
+        require(field_grade == grade, "chain field grade mismatch");
+        return values;
+    }
+    NativeRecord structural_fields(const Json &query,
+        std::optional<rfc::runtime::ExecutionLease> native_lease = {}) {
+        const auto name = text(query.at("context"));
+        auto &prepared = context(name);
+        const auto lease = native_lease.value_or(source_execution_lease("scientific-structure"));
+        lease.check_cancelled();
+        const auto snapshot = source_snapshot_publication(*prepared.study,
+            owner->native_publication(), prepared.to_ambient);
+        ResultFields publication(snapshot.publication);
+        const auto grade = count(query.at("grade"), snapshot.grade_axes.size() - 1, "structural grade");
+        const bool chain = text(query.at("operation")) == "chain_certificate";
+        auto result = chain ? chain_fields(*prepared.study, query, chain_operand(query),
+            publication, snapshot.grade_axes, lease) : path_fields(*prepared.study, query,
+            publication, snapshot.grade_axes, lease);
+        auto decorated = ResultValue::array();
+        const auto original_coordinates = result.at("coordinates");
+        for (std::size_t i = 0; i < original_coordinates.size(); ++i) {
+            auto coordinate = original_coordinates.at(i);
+            const auto cell = source.coordinate(grade, prepared.to_ambient.at(grade).at(i));
+            coordinate.set("entity", ResultValue(source.cell_record(cell).at("id")));
+            coordinate.set("evidence", ResultValue(source.cell_record(cell).at("evidence")));
+            decorated.push(std::move(coordinate));
+        }
+        result.set("coordinates", std::move(decorated));
+        if (chain) {
+            auto occurrences = ResultValue::array();
+            const auto original = result.at("occurrences");
+            for (std::size_t i = 0; i < original.size(); ++i) {
+                auto occurrence = original.at(i);
+                const StableOccurrenceKey cell{rfc::core::Grade{static_cast<std::uint16_t>(grade)},
+                    rfc::core::OccurrenceKey{key(Json::string(occurrence.at("key").text()))}};
+                occurrence.set("evidence", ResultValue(source.occurrence_record(cell).at("evidence")));
+                occurrences.push(std::move(occurrence));
+            }
+            result.set("occurrences", std::move(occurrences));
+        }
+        auto binding = ResultValue::object();
+        binding.set("kind", ResultValue::string(chain ? "declared_chain_certificate" : "declared_path_family"));
+        binding.set("context", ResultValue::string(name));
+        binding.set("grade", ResultValue::count(grade));
+        binding.set("original_study_publication", ResultValue(snapshot.publication.at("bindings").at(0)
+            .at("original_study_publication").unbound_value()));
+        if (chain && query.has("field")) {
+            const auto &actual = tensor(text(query.at("field")));
+            const auto &pin = source.field_pins.at(actual.key);
+            binding.set("source_namespace", ResultValue::string(std::to_string(pin.source_namespace())));
+            binding.set("source_cutoff", ResultValue::count(pin.sequence()));
+            binding.set("source_tensor", ResultValue::count(actual.key));
+            binding.set("source_carrier", ResultValue::count(*actual.output));
+            const auto ambient = publication.axis(actual.tensor.domain().logical_size());
+            binding.set("source_field", ResultFields::staged(actual.tensor, {}, ambient, "vector"));
+            rfc::numeric::ExactMatrix lift(prepared.to_ambient.at(grade).size(), actual.tensor.domain().logical_size());
+            for (std::size_t i = 0; i < lift.rows(); ++i) lift.set(i, prepared.to_ambient.at(grade).at(i), 1);
+            binding.set("context_realization", ResultFields::stage_matrix(lift, ambient, snapshot.grade_axes.at(grade)));
+        }
+        binding.set("result", result);
+        publication.bind(std::move(binding));
+        lease.check_cancelled();
+        return publication.finish(std::move(result));
     }
     NativeRecord green_response_fields(const Json &query,
         std::optional<rfc::runtime::ExecutionLease> native_lease = {}) {
@@ -2819,6 +2870,7 @@ struct ScientificSession::State {
         if (!has_native_scientific_publisher(operation))
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
+            if (operation == "chain_certificate" || operation == "realized_path_comparison") return structural_fields(admitted);
             if (operation == "green_response") return green_response_fields(admitted);
             if (operation == "native_boundary") return native_boundary_fields(admitted);
             if (operation == "support_mask") return support_fields(admitted);
@@ -2988,29 +3040,7 @@ struct ScientificSession::State {
             return seal(result, "certificate_sha256");
         }
         if (operation == "chain_certificate" || operation == "realized_path_comparison") {
-            auto &prepared = context(query.at("context").text());
-            auto out = operation == "chain_certificate"
-                           ? analyze_chain(*prepared.study, chain_declaration(query))
-                           : compare_realized_paths(*prepared.study, query);
-            const auto grade = static_cast<std::uint16_t>(count(
-                query.at("grade"), std::numeric_limits<std::uint16_t>::max(), "structural grade"));
-            auto coordinates = out.at("coordinates");
-            for (std::size_t i = 0; i < coordinates.size(); ++i) {
-                const auto stable =
-                    source.coordinate(grade,prepared.to_ambient.at(grade).at(i));
-                coordinates.at(i).set("entity", source.cell_record(stable).at("id"));
-                coordinates.at(i).set("evidence", source.cell_record(stable).at("evidence"));
-            }
-            if (out.has("occurrences")) {
-                auto occurrences = out.at("occurrences");
-                for (std::size_t i = 0; i < occurrences.size(); ++i) {
-                    const StableOccurrenceKey stable{
-                        rfc::core::Grade{grade},
-                        rfc::core::OccurrenceKey{key(occurrences.at(i).at("key"))}};
-                    occurrences.at(i).set("evidence", source.occurrence_record(stable).at("evidence"));
-                }
-            }
-            result.set("result", out);
+            result.set("result", result_fields_view(structural_fields(query, native_lease)));
         } else if (operation == "local_sections") {
             result.set("result", scientific_detail::result_fields_view(local_section_fields(query)));
         } else if (operation == "tensor_window") {
