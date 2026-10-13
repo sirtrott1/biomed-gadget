@@ -4,6 +4,22 @@
 publication reader. It imports RCDB and RCQL from the active Python environment.
 It does not install either package or implement their storage codecs.
 
+Use matching RexGraph, RCDB and RCQL releases. The current package profile uses
+`rexgraph`, `rexgraph-rcdb` and `rexgraph-rcql` version 1.3.1. Build and
+install these independent distributions in a dedicated environment, then run
+the adapter contracts with that environment's interpreter. A noneditable wheel
+installation allows imports to be checked from outside the source checkouts:
+
+```sh
+python -m pip show rexgraph rexgraph-rcdb rexgraph-rcql
+python -I -c "import rexgraph, rcdb, rcql; print(rexgraph.__file__, rcdb.__file__, rcql.__file__)"
+```
+
+These native publication contracts require the Python core and storage/query
+packages. Zstandard tests also require `zstandard`; zlib is built into Python.
+Agent services, native Python bindings, model backends and physical device
+execution have separate prerequisites and qualification.
+
 The RCDB payload is the unchanged RFCXS archive. Its owning relational complex,
 occurrences, exact fields, declaration channel, raw byte sources and publication
 history remain in the C++ format. Admission invokes GADGET's native reader and
