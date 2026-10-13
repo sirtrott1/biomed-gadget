@@ -1221,9 +1221,9 @@ ResultValue research_detail::compare_prepared_structure_fields(
     const std::vector<std::vector<std::uint32_t>> &old_coordinates,
     const std::vector<std::vector<std::uint32_t>> &new_coordinates,
     const Vector &old_field, const Vector &new_field, const Rational &lambda,
-    const std::vector<Matrix> *declared_maps, bool factored_output, StructuralResultFields &fields) {
+    const std::vector<Matrix> *declared_maps, bool factored_output, StructuralResultFields &fields, bool sparse_output) {
     return compare_structure_values<ResultValue>(old_prepared,new_prepared,grade,old_coordinates,new_coordinates,
-        old_field,new_field,lambda,declared_maps,false,factored_output,&fields);
+        old_field,new_field,lambda,declared_maps,sparse_output,factored_output,&fields);
 }
 
 bool is_research_operation(const std::string &op) {

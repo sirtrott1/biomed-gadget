@@ -121,3 +121,14 @@ applies the latter to the original old field.
 for host admission and cancellation. Declared comparison stages and metrics
 must state their scientific meaning before a result is interpreted as change
 over biological time.
+
+`temporal_field_history` retains each original endpoint publication, its actual
+context complex and metrics, field producer cutoffs, coordinate lifts and
+reported support. Declared completions remain separate from observations.
+All grade maps, ordered word position defects and contributions, nine sector
+blocks, source occurrence changes and complete channel pairings remain native
+fields. Factored maps keep actual endpoint axes and ordered declarations.
+`execute_temporal_history` accepts a canonical execution lease for action and
+output admission and cancellation. Default sessions reuse their prepared
+endpoint owners. Recorded availability and biological observation time retain
+their separate declared meanings.
