@@ -75,9 +75,9 @@ replacements = []
 def replace_source(command, **kwargs):
     if command[1] == "native-record":
         path = Path(command[command.index("--input") + 1])
-        if path == source_copy:
-            path.write_bytes(replacement)
-            replacements.append(path)
+        if path == source_copy or path.name == "source.rfcxs":
+            source_copy.write_bytes(replacement)
+            replacements.append(source_copy)
     return original_run(command, **kwargs)
 
 
@@ -176,7 +176,7 @@ for name in ("zstd", "zlib"):
             resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
 
         def write_failure(command, **kwargs):
-            if Path(command[0]).resolve() == actual_publisher.resolve():
+            if Path(command[0]).resolve() == actual_publisher.resolve() and Path(command[2]) == failed:
                 kwargs["preexec_fn"] = limited
             return ordinary_run(command, **kwargs)
 
@@ -199,7 +199,7 @@ for name in ("zstd", "zlib"):
     actual_publisher = (binary.with_name("gadget_publish_file") if publisher is None else publisher)
 
     def alter_publisher_input(command, **kwargs):
-        if Path(command[0]).resolve() == actual_publisher.resolve():
+        if Path(command[0]).resolve() == actual_publisher.resolve() and Path(command[2]) == altered_output:
             body = kwargs["input"]
             kwargs["input"] = body[:-1] + bytes([body[-1] ^ 1])
         return ordinary_run(command, **kwargs)

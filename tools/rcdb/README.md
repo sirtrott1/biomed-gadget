@@ -414,6 +414,15 @@ archive = read_compressed_publication(
 )
 ```
 
+Compression passes a read-only mapping of the fixed admitted source to RCDB's
+existing compressor. It avoids a complete raw Python archive allocation and
+produces the same codec frame as byte input. The compressor still materializes
+its encoded output and may allocate its own output workspace; the mapping also
+uses address space and resident file pages. Original file identity is checked
+through compression, and final output uses the existing exclusive writer and
+complete byte comparison. `tests/rcdb_compression_profile.py` compares both codec
+frames and all decompressed original bytes against the prior byte-input profile.
+
 The adapter calls RCDB's `compress_blob` and `decompress_blob` functions. It
 retains the complete RFCXS publication, including raw source bytes, and requires
 canonical native admission. Compression changes storage bytes; decoding restores

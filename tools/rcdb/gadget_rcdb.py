@@ -2,6 +2,7 @@
 from pathlib import Path
 from contextlib import contextmanager
 import filecmp
+import mmap
 import os
 import stat
 import subprocess
@@ -216,11 +217,15 @@ def compress_publication(source, destination, *, gadget, codec, level=None, publ
     destination = Path(destination)
     if os.path.lexists(destination):
         raise FileExistsError(destination)
-    publisher = (Path(gadget).resolve(strict=True).with_name("gadget_publish_file")
-                 if publisher is None else Path(publisher))
-    publisher = publisher.resolve(strict=True)
-    raw = _read_publication_file(source, gadget=gadget)
-    encoded = compress_blob(raw, level=level, codec=codec)
+    binary, publisher = _publication_writer(gadget, publisher)
+    with _open_regular_file(source) as (original, size):
+        before = _file_state(os.fstat(original.fileno()))
+        with _captured_publication_file(source, gadget=binary, max_bytes=size,
+                                        publisher=publisher) as (_, stream, _):
+            with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as raw:
+                encoded = compress_blob(raw, level=level, codec=codec)
+        if before != _file_state(os.fstat(original.fileno())) or before != _file_state(Path(source).stat()):
+            raise ValueError("publication changed during compression")
     try:
         process = subprocess.run([str(publisher), "--out", str(destination), "--bytes", str(len(encoded))],
                                  input=encoded, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
