@@ -255,6 +255,20 @@ Input archives and complete returned archives undergo native admission and exact
 canonical byte checks. Replay uses a private temporary directory and leaves the
 RCDB source unchanged; publish returned bytes explicitly when they should persist.
 
+The same replay provider accepts retained scientific plans. Each ordered step
+keeps its complete native operation and original study/request owners; the native
+provider refuses missing steps, changed step identities and mixed study sources.
+Fresh replayed child publications can have different operational namespaces.
+Compare their actual fields, carriers, support and original source bytes rather
+than requiring their enclosing archive buffers to match.
+
+`tests/rcdb_scientific_plan.py` checks old and current plan versions under all
+three local compression profiles, repeated replay, checked restart, malformed
+plan refusal and canonical `copy_record` transfers. Its fixture uses public
+`ScientificStudy`/`ScientificSession` APIs and original native query declarations.
+The native comparison consumer checks every ordered child tensor and its exact
+original study/request bytes.
+
 Both input versions are required. The executor admits their native archives,
 submits the retained request to GADGET, validates its native output, and records
 the selected input versions and output byte digest. The operation requires an
