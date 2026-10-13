@@ -274,6 +274,36 @@ the original archive byte for byte. The destination must be new. Encoded and
 decoded admission budgets are supplied by the caller. This file transport does
 not change the installed RCDB generic-record bound.
 
+Compressed output uses `gadget_publish_file`, normally installed beside the
+resolved `gadget` executable. Set `publisher="/path/to/gadget_publish_file"` to
+select another installed location. If that helper is unavailable, compression
+refuses before creating output.
+
+The helper passes the complete encoded byte stream to the SDK's staged
+`CreateNew` operation. Short input, trailing input and ordinary write, flush or
+close failures refuse without publishing a partial destination; retry uses the
+same path. Concurrent exclusive writers produce one complete destination and
+refuse the others. Existing files, directories and symbolic links are preserved.
+After publication the adapter compares every output byte against the complete
+encoded buffer, using bounded reads rather than another whole output copy.
+
+This local profile requires trusted parent directories and filesystem hard-link
+support. It observes write, flush and close completion; it does not promise
+fsync durability. An abruptly stopped process can retain an unpublished staging
+directory. Its final destination stays absent or complete, and recovery of owned
+staging residue is a separate operator action.
+
+The generic helper also accepts a caller-declared exact byte stream:
+
+```sh
+gadget_publish_file --out new-file.bin --bytes 123 < complete-input.bin
+python -I tests/file_publication.py /path/to/gadget_publish_file \
+  /path/to/file-publication-contracts /new/test/directory
+```
+
+The byte count must equal the complete input size. The helper stores opaque bytes
+and does not infer a scientific format, build a complex or change its fields.
+
 File admission captures one opened regular file within its measured size. RCDB
 record admission checks the installed codec's byte budget on that descriptor
 before reading; compressed admission checks the caller's encoded byte budget.
