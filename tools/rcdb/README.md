@@ -38,6 +38,40 @@ sealed in the store header; reopening never chooses a different codec implicitly
 Existing stores must already declare the publication codec in their immutable headers.
 Every process reading these records must explicitly install the provider.
 
+Use RCDB's existing `copy_record` to transfer a selected native publication to
+another store. Both stores must declare the GADGET codec. The destination can
+use a different declared compression codec:
+
+```python
+from rcdb import copy_record
+
+selected = store.read_record("coverage", version=1)
+receipt = copy_record(
+    store, destination_store, selected.record,
+    expected_digest=selected.state_digest,
+    expected_cursor=destination_store.change_cursor,
+    preserve_signature=True, return_receipt=True,
+)
+```
+
+The source version is selected before destination publication. The digest binds
+that source object, and the destination cursor refuses a concurrent change.
+The copy retains native bytes, metadata, tags and validity intervals while
+allocating a destination record version. Its `CopyReceipt` names both store
+identities, record addresses, versions and object digests; `to_bytes` and
+`CopyReceipt.from_bytes` preserve that receipt. Native publication cutoffs stay
+inside the unchanged archive. Copying a record does not transplant a store's
+history or mutation commits. Generic native copies use the existing ungoverned
+profile; use the destination cursor to make publication conditional.
+
+`LocalStore.checkpoint()` creates a checked replay cache and retains the
+authoritative journal and historical payloads. On a failed copy, reopen and
+inspect the selected destination before retrying: a process can stop after
+journal publication but before returning its receipt. A torn journal tail
+requires explicit recovery through RCDB's `LocalJournal` provider; ordinary
+opening refuses it. Checkpoint corruption also refuses. The local profile
+requires trusted storage directories and cooperating provider writers.
+
 With an open store, RCQL retrieval returns a byte result:
 
 ```python
@@ -151,6 +185,15 @@ installation in fresh processes:
 ```sh
 python3 tests/rcdb_registration.py build/presets/cpu/gadget \
   build/presets/cpu/gadget_native_field_query
+```
+
+The native transfer contract accepts a canonical publication and a fresh output
+directory. It checks compressed destinations, checkpoints, conditional writers
+and POSIX process interruption around local publication:
+
+```sh
+python3 tests/rcdb_transfer.py build/presets/cpu/gadget \
+  coverage.rfcxs new-transfer-contracts
 ```
 
 Native files outside the generic-record profile can use RCDB's existing
