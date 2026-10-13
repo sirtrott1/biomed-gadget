@@ -1,8 +1,12 @@
 #include "research_ablation.hpp"
+#include "scientific_ablation_fields.hpp"
+#include "scientific_source_snapshot.hpp"
+#include "scientific_structure.hpp"
 #include "research_ensemble.hpp"
 #include "research_factored.hpp"
 #include "research_prepared.hpp"
 #include "research_linear.hpp"
+#include "research_comparisons.hpp"
 #include "research_calibration.hpp"
 #include "scientific_result_fields.hpp"
 #include "research_response.hpp"
@@ -31,6 +35,17 @@
 #include <rfc/temporal/operation_word.hpp>
 
 namespace gadget {
+bool has_native_scientific_publisher(std::string_view operation) noexcept {
+    return operation == "structure_transition" || operation == "paired_field_contrasts" || operation == "controlled_pairings" ||
+           operation == "linear_model_comparison" || operation == "finite_reference_calibration" ||
+           operation == "hodge_frame_decomposition" || operation == "linear_response_observation" ||
+           operation == "declared_response_transition" || operation == "metric_relative_novelty" ||
+           operation == "observed_response_model" || operation == "constrained_response_model" ||
+           operation == "relational_field_ensemble" || operation == "structural_reference_calibration" ||
+           operation == "local_sections" || operation == "source_structure_ablation" ||
+           operation == "field_summary" || operation == "boundary" || operation == "adjoint" ||
+           operation == "hodge" || operation == "green_action" || operation == "censored_endpoint_bounds" || operation == "typed_moment" || operation == "temporal_moment_change" || operation == "tensor_window" || operation == "support_mask" || operation == "native_boundary" || operation == "green_response" || operation == "chain_certificate" || operation == "realized_path_comparison";
+}
 namespace {
 using namespace scientific_detail;
 using namespace rfc::storage;
@@ -59,13 +74,6 @@ Json rational(const Rational &value) {
 
     auto result = Json::object();
     result.set("rational", Json::string(value.get_str()));
-    return result;
-}
-Json vector_json(const Vector &values) {
-    check_values(values);
-    auto result = Json::array();
-    for (const auto &value : values)
-        result.push(rational(value));
     return result;
 }
 struct PreparedContext {
@@ -522,7 +530,7 @@ struct ScientificSession::State {
         publication.bind(std::move(source_binding));
         return publication.finish(std::move(analysis.view));
     }
-    Json ablation_query(const Json &query, bool validate) {
+    Json ablation_query(const Json &query, bool validate, std::optional<NativeRecord> *native = nullptr) {
         const auto name = query.at("context").text();
         auto &prepared = context(name);
         const auto ids = query.at("fields");
@@ -550,8 +558,8 @@ struct ScientificSession::State {
             (void)source.evidence(declaration.at("evidence"));
             const auto kind = declaration.at("kind").text();
             research_detail::SourceAblationRole role;
-            role.witness = Json::parse(declaration.dump());
-            auto binding = Json::array();
+            role.witness = scientific_detail::ResultValue(declaration);
+            auto binding = scientific_detail::ResultValue::array();
             std::set<std::string> seen;
             if (kind == "source_cells") {
                 require(declaration.has("cells") && !declaration.has("fields"),
@@ -565,8 +573,8 @@ struct ScientificSession::State {
                     const auto cell = index.cell(source.resolve_cell(id));
                     require(cell.has_value(), "role cell is outside the actual context source");
                     role.cells.push_back(*cell);
-                    auto record = Json::parse(source.cell_record(source.resolve_cell(id)).dump());
-                    record.set("context_coordinate", cardinality(cell->index));
+                    auto record = scientific_detail::ResultValue(source.cell_record(source.resolve_cell(id)));
+                    record.set("context_coordinate", scientific_detail::ResultValue::count(cell->index));
                     binding.push(record);
                 }
             } else {
@@ -585,7 +593,8 @@ struct ScientificSession::State {
                             "span requires the identical actual observed field carrier");
                     fields.emplace(id, value.first);
                     role.fields.push_back(id);
-                    binding.push(source.fields.at(id).declaration);
+                    binding.push(scientific_detail::ResultValue(
+                        source.fields.at(id).declaration.native().unbound_value()));
                 }
             }
             role.witness.set("source_binding", binding);
@@ -593,43 +602,579 @@ struct ScientificSession::State {
                         .second,
                     "duplicate scientific role");
         }
-        auto witness = Json::object(), cells = Json::array(), occurrences = Json::array();
+        auto witness = scientific_detail::ResultValue::object(), cells = scientific_detail::ResultValue::array(), occurrences = scientific_detail::ResultValue::array();
         for (std::size_t k = 0; k < prepared.source->grade_count(); ++k) {
-            auto grade_cells = Json::array();
+            auto grade_cells = scientific_detail::ResultValue::array();
             const auto g = rfc::core::Grade{static_cast<std::uint16_t>(k)};
             const auto &arena = prepared.source->grade(g);
             for (std::size_t i = 0; i < arena.cell_count(); ++i) {
-                auto record = Json::parse(
-                    source.cell_record(stable_cell_key(*prepared.source, {g, static_cast<std::uint32_t>(i)}))
-                        .dump());
-                record.set("context_coordinate", cardinality(i));
-                record.set("ambient_coordinate", cardinality(prepared.to_ambient[k][i]));
+                auto record = scientific_detail::ResultValue(
+                    source.cell_record(stable_cell_key(*prepared.source, {g, static_cast<std::uint32_t>(i)})));
+                record.set("context_coordinate", scientific_detail::ResultValue::count(i));
+                record.set("ambient_coordinate", scientific_detail::ResultValue::count(prepared.to_ambient[k][i]));
                 grade_cells.push(record);
             }
             cells.push(grade_cells);
             for (std::size_t i = 0; i < arena.incidence_count(); ++i) {
                 auto record =
-                    Json::parse(source.occurrence_record({g, arena.occurrence_identities[i]}).dump());
-                record.set("exists", Json::boolean(arena.aspects.get(
+                    scientific_detail::ResultValue(source.occurrence_record({g, arena.occurrence_identities[i]}));
+                record.set("exists", scientific_detail::ResultValue::boolean(arena.aspects.get(
                                          prepared.source->signature().existence_aspect(), i)));
                 record.set("coefficient",
-                           Json::string(prepared.source->incidence_coefficient(g, i).get_str()));
+                           scientific_detail::ResultValue(NativeRecordValue(prepared.source->incidence_coefficient(g, i))));
                 occurrences.push(record);
             }
         }
         witness.set("cells", cells);
         witness.set("occurrences", occurrences);
         Json sheaf;
+        std::map<std::string, Vector> sheaf_operands;
         if (query.has("sheaf")) {
             sheaf = Json::parse(query.at("sheaf").dump());
             members(sheaf, {"stalks", "maps", "sections", "metric"});
             sheaf.set("operation", Json::string("local_sections"));
             sheaf.set("context", Json::string(name));
             sheaf.set("construction", Json::string("cellular_sheaf"));
-            sheaf = local_declaration(sheaf, false);
+            sheaf = local_declaration(sheaf, false, &sheaf_operands);
         }
-        return research_detail::source_structure_ablation(
-            *prepared.study, query, grade, fields, roles, witness, sheaf, validate, resources);
+        if (validate) {
+            (void)research_detail::source_structure_ablation(*prepared.study, query, grade, fields,
+                roles, witness, sheaf, true, resources, owner->native_publication(), sheaf_operands, nullptr);
+            return Json::object();
+        }
+        scientific_detail::ResultFields publication(owner->native_publication());
+        research_detail::AblationFields axes(publication, owner->native_publication());
+        const auto &source_axes = axes.source(*prepared.study);
+        auto inputs = scientific_detail::ResultValue::array();
+        for (const auto &[id, value] : fields) {
+            const auto &original = tensor(id);
+            const auto pin = source.field_pins.at(original.key).carrier();
+            rfc::numeric::ExactMatrix realization(value.size(), pin->domain.logical_size());
+            for (std::size_t i = 0; i < value.size(); ++i)
+                realization.set(i, prepared.to_ambient.at(grade.value).at(i), Rational{1});
+            auto input = scientific_detail::ResultValue::object();
+            input.set("id", scientific_detail::ResultValue::string(id));
+            input.set("source_field", publication.stored(original.key, "vector"));
+            input.set("realization", scientific_detail::ResultFields::stage_matrix(realization,
+                *original.output, source_axes.rows.at(grade.value)));
+            input.set("context_input", scientific_detail::ResultFields::stage_vector(value,
+                source_axes.rows.at(grade.value)));
+            inputs.push(std::move(input));
+        }
+        auto input_binding = scientific_detail::ResultValue::object();
+        input_binding.set("kind", scientific_detail::ResultValue::string("actual_ablation_source_fields"));
+        input_binding.set("fields", std::move(inputs)); publication.bind(std::move(input_binding));
+        auto view = research_detail::source_structure_ablation(*prepared.study, query, grade, fields,
+            roles, witness, sheaf, false, resources, owner->native_publication(), sheaf_operands, &axes);
+        const auto result = publication.finish(std::move(view));
+        if (native) { *native = result; return Json{}; }
+        return scientific_detail::result_fields_view(result);
+    }
+    NativeRecord field_summary_fields(const Json &query) {
+        using namespace scientific_detail;
+        auto reservation = cpu().reserve(1);
+        const auto id = query.at("field").text();
+        const auto &input_field = tensor(id);
+        ResultFields publication(owner->native_publication());
+        Vector values;
+        std::vector<std::size_t> coordinates;
+        input_field.tensor.support().for_each_active([&](std::size_t i) {
+            coordinates.push_back(i); values.push_back(*input_field.tensor.state(i));
+        });
+        check_values(values);
+        const Vector ones(values.size(), Rational{1});
+        const auto sum = rfc::numeric::dot(ones, values);
+        const auto squares = rfc::numeric::dot(values, values);
+        const auto row_axis = publication.axis(coordinates.size());
+        const auto scalar_view = [&](const Rational &value) {
+            auto field = publication.stage_scalar(value); field.set("display", ResultValue::string("rational_object")); return field;
+        };
+        auto view = ResultValue::object();
+        view.set("reported", ResultValue::count(coordinates.size()));
+        view.set("missing", ResultValue::count(input_field.tensor.domain().logical_size() - coordinates.size()));
+        view.set("coordinates", publication.indices(coordinates, row_axis));
+        view.set("sum", scalar_view(sum));
+        view.set("sum_of_squares", scalar_view(squares));
+        if (values.empty()) {
+            rfc::numeric::SparseRationalTensor absent(rfc::numeric::IndexDomain::linear(1),
+                rfc::numeric::StructuralSupport::sparse(1, {}), rfc::numeric::SparseRationalVector(1));
+            view.set("mean", ResultFields::staged(std::move(absent), {}, publication.axis(1), "rational_object"));
+        } else view.set("mean", scalar_view(sum / Rational(values.size())));
+        view.set("units", ResultValue(source.fields.at(id).declaration.at("units").native().unbound_value()));
+        auto binding = ResultValue::object();
+        binding.set("kind", ResultValue::string("actual_reported_field_summary"));
+        binding.set("id", ResultValue::string(id));
+        binding.set("source_field", publication.stored(input_field.key, "vector"));
+        binding.set("row_carrier", ResultValue::count(row_axis));
+        binding.set("row_coordinates", view.at("coordinates"));
+        binding.set("reported_values", ResultFields::stage_vector(values, row_axis));
+        binding.set("weights", ResultFields::stage_vector(ones, row_axis));
+        publication.bind(std::move(binding));
+        return publication.finish(std::move(view));
+    }
+    NativeRecord direct_action_fields(const Json &query) {
+        using namespace scientific_detail;
+        const auto operation = query.at("operation").text();
+        const auto name = query.at("context").text(), id = query.at("field").text();
+        auto &prepared = context(name);
+        const auto [values, grade] = input(name, id, false);
+        auto reservation = cpu().reserve(1);
+        const auto lease = source_execution_lease("scientific-direct-source-action");
+        lease.check_cancelled();
+        const auto snapshot = source_snapshot_publication(*prepared.study, owner->native_publication(), prepared.to_ambient);
+        ResultFields publication(snapshot.publication);
+        auto output_grade = grade;
+        rfc::field::OperatorRequest request;
+        request.grade = rfc::core::Grade{grade}; request.kind = rfc::field::OperatorKind::Hodge;
+        if (operation == "boundary") {request.kind = rfc::field::OperatorKind::Boundary; --output_grade;}
+        if (operation == "adjoint") {request.kind = rfc::field::OperatorKind::Adjoint; ++request.grade.value; ++output_grade;}
+        Vector output;
+        std::optional<rfc::field::ExactGreenResult> green;
+        if (operation == "green_action") {
+            const auto lambda = exact_rational(query.at("lambda").text());
+            green = prepared.study->green_action(rfc::core::Grade{grade}, lambda, values);
+            require(green->exact && rfc::numeric::is_zero(rfc::numeric::sub(
+                rfc::numeric::add(green->value, rfc::numeric::scale(lambda,
+                    prepared.study->hodge(rfc::core::Grade{grade}).apply(green->value))), values)),
+                "native direct Green reconstruction residual");
+            output = green->value;
+        } else output = prepared.study->execute(request, values);
+        lease.check_cancelled();
+        const auto output_field = publication.vector(output, snapshot.grade_axes.at(output_grade));
+        auto view = ResultValue::object(), result = ResultValue::array();
+        for (std::size_t i = 0; i < output.size(); ++i) {
+            const auto ambient = prepared.to_ambient.at(output_grade).at(i);
+            const auto cell = source.coordinate(output_grade, ambient);
+            auto record = ResultValue::object();
+            record.set("coordinate", ResultValue::count(i));
+            record.set("native_key", ResultValue::string(std::to_string(cell.key)));
+            record.set("entity", ResultValue(source.cell_record(cell).at("id")));
+            auto value = output_field;
+            value.set("display", ResultValue::string("rational_object"));
+            value.set("index", ResultValue::count(i));
+            record.set("value", std::move(value)); result.push(std::move(record));
+        }
+        view.set("schema", ResultValue::string("gadget.scientific.direct.result.v1"));
+        view.set("result", std::move(result)); view.set("output_grade", ResultValue::count(output_grade));
+        if (green) {
+            view.set("green_iterations", ResultValue::count(green->iterations));
+            view.set("green_execution", ResultValue::string("rfc::field::exact_green_apply; factored boundary and metric actions"));
+            view.set("residual_verified", ResultValue::boolean(true));
+        }
+        auto binding = ResultValue::object();
+        const auto &input_tensor = tensor(id);
+        binding.set("kind", ResultValue::string("actual_direct_source_action"));
+        binding.set("operation", ResultValue::string(operation));
+        binding.set("field", ResultValue::string(id));
+        binding.set("input_grade", ResultValue::count(grade));
+        binding.set("output_grade", ResultValue::count(output_grade));
+        binding.set("original_study_publication", ResultValue(snapshot.publication.at("bindings").at(0)
+            .at("original_study_publication").unbound_value()));
+        binding.set("input_source_namespace", ResultValue::string(std::to_string(source.field_pins.at(input_tensor.key).source_namespace())));
+        binding.set("input_cutoff", ResultValue::count(source.field_pins.at(input_tensor.key).sequence()));
+        binding.set("input_tensor", ResultValue::count(input_tensor.key));
+        binding.set("input_carrier", ResultValue::count(*input_tensor.output));
+        const auto input_axis = publication.axis(input_tensor.tensor.domain().logical_size());
+        binding.set("input_coordinate_carrier", ResultValue::count(input_axis));
+        rfc::numeric::ExactMatrix realization(values.size(), input_tensor.tensor.domain().logical_size());
+        for (std::size_t i = 0; i < values.size(); ++i) realization.set(i, prepared.to_ambient.at(grade).at(i), Rational{1});
+        binding.set("input_realization", ResultFields::stage_matrix(realization, input_axis, snapshot.grade_axes.at(grade)));
+        binding.set("context_input", ResultFields::stage_vector(values, snapshot.grade_axes.at(grade)));
+        binding.set("output", output_field);
+        binding.set("execution_scope", ResultValue::string("Canonical one shot action; CPU reservation and cancellation before and after the action"));
+        publication.bind(std::move(binding));
+        return publication.finish(std::move(view));
+    }
+    NativeRecord support_fields(const Json &query) {
+        using namespace scientific_detail;
+            using namespace rfc::composite;
+            const auto fields = query.at("fields");
+            const auto &first = tensor(fields.at(0).text());
+            const auto identity = fields.dump() + ":" + query.at("mode").text();
+            const bool reused = packed.contains(identity);
+            if (!reused) {
+                AspectSchema schema;
+                for (std::size_t i = 0; i < fields.size(); ++i)
+                    schema.add(fields.at(i).text());
+                AspectPlanes planes(schema, first.tensor.domain().logical_size());
+                for (std::size_t i = 0; i < fields.size(); ++i)
+                    tensor(fields.at(i).text())
+                        .tensor.support()
+                        .for_each_active([&](std::size_t coordinate) {
+                            planes.set(static_cast<AspectId>(i), coordinate);
+                        });
+                BinaryProgram program(2);
+                program.append({BinaryOpcode::LoadAspect, 0, 0, 0, 0, 0});
+                for (std::size_t i = 1; i < fields.size(); ++i) {
+                    program.append(
+                        {BinaryOpcode::LoadAspect, 1, 0, 0, 0, static_cast<AspectId>(i)});
+                    program.append({query.at("mode").text() == "all_reported" ? BinaryOpcode::And
+                                                                              : BinaryOpcode::Or,
+                                    0, 0, 1});
+                }
+                if (query.at("mode").text() == "none_reported")
+                    program.append({BinaryOpcode::Not, 0, 0});
+                packed.emplace(
+                    identity,
+                    std::make_unique<PackedOperation>(
+                        rfc::backend::PreparedPackedBinary(program, planes, {0}), compute));
+            }
+        const auto prepared = packed.at(identity)->prepared();
+        auto derived = packed.at(identity)->execute(cpu(), query);
+        derived.execution.set("prepared_operation_reused", Json::boolean(reused));
+        ResultFields publication(owner->native_publication());
+        const auto carrier = *first.output, size = first.tensor.domain().logical_size();
+        const auto bits = [&](const rfc::machine::PackedBits &mask) {
+            require(mask.size() == size, "packed native field domain");
+            std::vector<rfc::numeric::SparseRationalEntry> entries;
+            mask.for_each_set([&](auto i) {entries.push_back({i,Rational{1}});});
+            return ResultFields::staged(rfc::numeric::SparseRationalTensor(
+                rfc::numeric::IndexDomain::linear(size),rfc::numeric::StructuralSupport::full(size),
+                rfc::numeric::SparseRationalVector(size,std::move(entries))),{},carrier,"vector");
+        };
+        const auto words = [](const rfc::machine::PackedBits &mask) {
+            auto values = ResultValue::array();
+            for (const auto word : mask.words()) values.push(ResultValue::count(word));
+            return values;
+        };
+        auto binding = ResultValue::object(), inputs = ResultValue::array();
+        binding.set("kind",ResultValue::string("actual_packed_support_operation"));
+        binding.set("source_carrier",ResultValue::count(carrier));
+        binding.set("mode",ResultValue::string(query.at("mode").text()));
+        binding.set("slots",ResultValue::count(size));
+        binding.set("register_count",ResultValue::count(prepared.program().register_count()));
+        for (std::size_t i = 0; i < fields.size(); ++i) {
+            const auto id = fields.at(i).text();
+            const auto &field = tensor(id); const auto &pin = source.field_pins.at(field.key);
+            auto input = ResultValue::object();
+            input.set("id",ResultValue::string(id)); input.set("tensor",ResultValue::count(field.key));
+            input.set("source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));
+            input.set("cutoff",ResultValue::count(pin.sequence())); input.set("carrier",ResultValue::count(*field.output));
+            input.set("source_field",publication.stored(field.key,"vector"));
+            input.set("support_plane",bits(prepared.planes().plane(static_cast<AspectId>(i))));
+            input.set("packed_words",words(prepared.planes().plane(static_cast<AspectId>(i))));
+            input.set("meaning",ResultValue(source.fields.at(id).declaration)); inputs.push(std::move(input));
+        }
+        binding.set("inputs",std::move(inputs));
+        auto instructions = ResultValue::array(), outputs = ResultValue::array(), masks = ResultValue::array();
+        auto output_words = ResultValue::array();
+        for (const auto &instruction : prepared.program().instructions()) {
+            auto row = ResultValue::object();
+            row.set("opcode",ResultValue::count(static_cast<std::size_t>(instruction.opcode)));
+            row.set("dst",ResultValue::count(instruction.dst)); row.set("a",ResultValue::count(instruction.a));
+            row.set("b",ResultValue::count(instruction.b)); row.set("c",ResultValue::count(instruction.c));
+            row.set("aspect",ResultValue::count(instruction.aspect)); instructions.push(std::move(row));
+        }
+        for (std::size_t i = 0; i < prepared.outputs().size(); ++i) {
+            outputs.push(ResultValue::count(prepared.outputs()[i])); masks.push(bits(derived.outputs.at(i)));
+            output_words.push(words(derived.outputs.at(i)));
+        }
+        binding.set("instructions",std::move(instructions)); binding.set("outputs",std::move(outputs));
+        binding.set("output_masks",std::move(masks)); binding.set("output_words",std::move(output_words));
+        auto view = ResultValue::object(), rows = ResultValue::array();
+        view.set("coordinates",ResultValue::count(size));
+        view.set("selected",ResultValue::count(derived.outputs.at(0).count()));
+        view.set("native_carrier",ResultValue::string(std::to_string(carrier)));
+        const auto source_carrier = temporal_endpoint_detail::carriers(*source.directory->pin_snapshot()).at(carrier);
+        derived.outputs.at(0).for_each_set([&](auto i) {
+            const auto cell = source.coordinate(source_carrier->grade.value,i);
+            auto row = ResultValue::object(); row.set("coordinate",ResultValue::count(i));
+            row.set("entity",ResultValue(source.cell_record(cell).at("id")));
+            row.set("native_key",ResultValue::string(std::to_string(cell.key))); rows.push(std::move(row));
+        });
+        view.set("selection",std::move(rows)); publication.bind(std::move(binding));
+        const auto native = publication.finish(std::move(view));
+        auto retained = native.unbound_value();
+        std::get<NativeRecordValue::Object>(retained.data).members.emplace_back(
+            "execution",import_record_view(derived.execution));
+        return native.derive(std::move(retained));
+    }
+    NativeRecord window_fields(const Json &query,
+                              std::optional<rfc::runtime::ExecutionLease> native_lease = {}) {
+        using namespace scientific_detail;
+        const auto id = query.at("field").text();
+        const auto &input_tensor = tensor(id);
+        const auto pin = source.field_pins.at(input_tensor.key);
+        const rfc::runtime::WorkAvailability availability{pin.source_namespace(),
+            publication_cutoff(query.at("available_sequence"))};
+        auto key_query = Json::parse(query.dump()); key_query.set("preparation", Json::string("reuse"));
+        const auto cache_key = key_query.dump();
+        const bool retain = !query.has("preparation") || query.at("preparation").text() == "reuse";
+        const bool reused = retain && windows.contains(cache_key);
+        const auto lease = native_lease.value_or(source_execution_lease("scientific-tensor-window"));
+        std::optional<rfc::database::NativeTensorWindow> transient;
+        if (!reused) {
+            std::vector<std::size_t> lo, hi;
+            for (std::size_t a = 0; a < query.at("lower").size(); ++a) {
+                lo.push_back(static_cast<std::size_t>(query.at("lower").at(a).integer()));
+                hi.push_back(static_cast<std::size_t>(query.at("upper").at(a).integer()));
+            }
+            auto window = rfc::database::NativeTensorWindow::prepare(pin,lo,hi,availability,lease);
+            if (retain) windows.emplace(cache_key,std::move(window)); else transient.emplace(std::move(window));
+        }
+        const auto &window = retain ? windows.at(cache_key) : *transient;
+        const auto summary = window.summarize(availability,lease);
+        ResultFields publication(owner->native_publication());
+        auto view = ResultValue::object(), observations = ResultValue::array();
+        std::vector<std::size_t> source_coordinates;
+        const auto size = window.domain().logical_size(), window_axis = publication.axis(size);
+        const auto original = publication.stored(input_tensor.key,"vector");
+        for (std::size_t i = 0; i < size; ++i) {
+            lease.check_cancelled(); const auto coordinate = window.source_index(i);
+            source_coordinates.push_back(coordinate);
+            auto row = ResultValue::object(), value = original;
+            row.set("source_coordinate",ResultValue::count(coordinate));
+            row.set("reported",ResultValue::boolean(window.tensor_pin()->state(coordinate).has_value()));
+            value.set("display",ResultValue::string("rational_object")); value.set("index",ResultValue::count(coordinate));
+            row.set("value",std::move(value)); observations.push(std::move(row));
+        }
+        view.set("observations",std::move(observations));
+        view.set("reported",ResultValue::count(window.supported_count()));
+        view.set("missing",ResultValue::count(size-window.supported_count()));
+        ResultValue sum;
+        if (summary.sum()) sum=publication.stage_scalar(*summary.sum());
+        else sum=ResultFields::staged(rfc::numeric::SparseRationalTensor(
+            rfc::numeric::IndexDomain::linear(1),rfc::numeric::StructuralSupport::sparse(1,{}),
+            rfc::numeric::SparseRationalVector(1)),{},publication.axis(1),"rational_object");
+        sum.set("display",ResultValue::string("rational_object")); view.set("sum",std::move(sum));
+        view.set("lower",ResultValue(query.at("lower"))); view.set("upper",ResultValue(query.at("upper")));
+        view.set("source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));
+        view.set("source_sequence",ResultValue::string(std::to_string(pin.sequence())));
+        auto binding=ResultValue::object(); binding.set("kind",ResultValue::string("actual_native_tensor_window"));
+        binding.set("field",ResultValue::string(id)); binding.set("input_tensor",ResultValue::count(input_tensor.key));
+        binding.set("input_carrier",ResultValue::count(*input_tensor.output));
+        binding.set("source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));
+        binding.set("cutoff",ResultValue::count(pin.sequence())); binding.set("availability",ResultValue::count(availability.max_sequence));
+        binding.set("source_field",original); binding.set("window_carrier",ResultValue::count(window_axis));
+        binding.set("source_coordinates",publication.indices(source_coordinates,window_axis));
+        auto domain=ResultValue::array(); for (const auto extent:window.domain().extents()) domain.push(ResultValue::count(extent));
+        binding.set("window_extents",std::move(domain)); publication.bind(std::move(binding));
+        const auto native = publication.finish(std::move(view));
+        auto retained = native.unbound_value();
+        NativeRecordValue metadata(NativeRecordValue::Object{{
+            {"preparation_reused",NativeRecordValue(reused)},
+            {"preparation_retained",NativeRecordValue(retain)}}});
+        std::get<NativeRecordValue::Object>(retained.data).members.emplace_back("view_execution",std::move(metadata));
+        return native.derive(std::move(retained));
+    }
+    NativeRecord structure_transition_fields(const Json &query,
+        std::optional<rfc::runtime::ExecutionLease> requested_lease = {}) {
+        using namespace scientific_detail;
+        const auto lease = requested_lease ? *requested_lease : source_execution_lease("scientific-native-structure-transition");
+        lease.check_cancelled();
+        const auto old_name=query.at("context").text(), new_name=query.at("other_context").text();
+        auto &old_context=context(old_name); auto &new_context=context(new_name);
+        const auto [old_values,grade]=input(old_name,query.at("field").text(),false);
+        const auto new_values=input(new_name,query.at("new_field").text(),false).first;
+        const auto lambda=exact_rational(query.at("lambda").text());
+        std::size_t slots=0,entries=0,bits=0,dimension=0;
+        for (const auto &id : {query.at("field").text(),query.at("new_field").text()}) {
+            const auto &field=tensor(id);
+            slots=rfc::machine::checked_size_add(slots,field.tensor.support().count());
+            entries=rfc::machine::checked_size_add(entries,field.tensor.stored_nonzeros());
+            for (const auto &v : field.tensor.values().entries())
+                bits=rfc::machine::checked_size_add(bits,rfc::storage::native_execution_detail::integer_bits(v.value));
+        }
+        for (const auto *context : {&old_context,&new_context})
+            for (const auto &coordinates : context->to_ambient) dimension=std::max(dimension,coordinates.size());
+        rfc::runtime::admit_execution({2,slots,entries,1,bits},lease.policy());
+        const auto &policy=lease.policy().limits;
+        const rfc::numeric::ExactActionLimits limits{dimension,policy.sparse_entries,policy.scalar_work,policy.integer_bits};
+        const auto checkpoint=[lease] {lease.check_cancelled();};
+        rfc::numeric::ExactActionGuard guard(limits,checkpoint);
+        guard.vector(old_values);guard.vector(new_values);guard.value(lambda);
+        auto reservation=cpu().reserve(1);
+        const auto admit_matrix=[&](const rfc::numeric::ExactMatrix &matrix) {
+            research_detail::admit_structure_matrix(matrix,lease);
+        };
+        const auto old_snapshot=source_snapshot_publication(*old_context.study,owner->native_publication(),old_context.to_ambient,admit_matrix);
+        const auto new_snapshot=source_snapshot_publication(*new_context.study,owner->native_publication(),new_context.to_ambient,admit_matrix);
+        ResultFields publication(new_snapshot.publication);
+        research_detail::StructuralResultFields admission{publication,{},new_snapshot.grade_axes,lease};
+        auto binding=ResultValue::object(), old_grades=ResultValue::array();
+        binding.set("kind",ResultValue::string("actual_structure_transition_endpoints"));
+        binding.set("old_source",publication.publication(old_snapshot.publication));
+        binding.set("new_source",publication.publication(new_snapshot.publication));
+        binding.set("original_study_publication",publication.publication(owner->native_publication()));
+        std::vector<std::uint64_t> old_axes;
+        for (std::size_t k=0;k<old_context.to_ambient.size();++k) {
+            const auto axis=publication.axis(old_context.to_ambient[k].size());old_axes.push_back(axis);
+            auto record=ResultValue::object();record.set("grade",ResultValue::count(k));
+            record.set("source_carrier",ResultValue::count(old_snapshot.grade_axes[k]));
+            record.set("coordinate_carrier",ResultValue::count(axis));
+            record.set("original_source_namespace",ResultValue::string(std::to_string(source.grade_pins.at(k).source_namespace())));
+            record.set("original_source_cutoff",ResultValue::count(source.grade_pins.at(k).sequence()));
+            std::vector<std::size_t> coordinates(old_context.to_ambient[k].begin(),old_context.to_ambient[k].end());
+            record.set("original_coordinates",publication.indices(coordinates,axis));old_grades.push(std::move(record));
+        }
+        binding.set("old_grades",std::move(old_grades));
+        const auto retain_input=[&](const std::string &id,const Vector &values,std::uint64_t axis,
+            const std::vector<std::uint32_t> &coordinates) {
+            const auto &field=tensor(id);const auto &pin=source.field_pins.at(field.key);
+            auto input=ResultValue::object();input.set("id",ResultValue::string(id));
+            input.set("source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));
+            input.set("source_cutoff",ResultValue::count(pin.sequence()));
+            input.set("source_tensor",ResultValue::count(field.key));input.set("source_carrier",ResultValue::count(*field.output));
+            input.set("coordinate_carrier",ResultValue::count(axis));
+            const auto original_axis=publication.axis(field.tensor.domain().logical_size());
+            input.set("original_coordinate_carrier",ResultValue::count(original_axis));
+            rfc::numeric::ExactMatrix lift(values.size(),field.tensor.domain().logical_size());
+            for (std::size_t i=0;i<values.size();++i)lift.set(i,coordinates.at(i),Rational{1});
+            admission.admit(lift);admission.admit(values);
+            input.set("realization",ResultFields::stage_matrix(lift,original_axis,axis));
+            input.set("values",ResultFields::stage_vector(values,axis));
+            input.set("meaning",ResultValue(source.fields.at(id).declaration));return input;
+        };
+        binding.set("old_input",retain_input(query.at("field").text(),old_values,old_axes.at(grade),old_context.to_ambient.at(grade)));
+        binding.set("new_input",retain_input(query.at("new_field").text(),new_values,new_snapshot.grade_axes.at(grade),new_context.to_ambient.at(grade)));
+        binding.set("old_time",ResultValue(source.contexts.at(old_name).declaration.at("time")));
+        binding.set("new_time",ResultValue(source.contexts.at(new_name).declaration.at("time")));
+        admission.admit(lambda);binding.set("lambda",publication.stage_scalar(lambda));publication.bind(std::move(binding));
+        auto definitions=ResultValue::object();
+        definitions.set("kind",ResultValue::string("declared_structure_defect_meanings"));
+        definitions.set("green_operator_defect",ResultValue::string("L_new J - J L_old"));
+        definitions.set("green_response_defect",ResultValue::string("G_new J - J G_old, with G=(I+lambda L)^-1"));
+        definitions.set("operator_term",ResultValue::string("(G_new J - J G_old) applied to the original old field"));
+        publication.bind(std::move(definitions));
+        std::unique_ptr<PreparedTemporalStudy> leased_old,leased_new;
+        const auto prepare=[&](PreparedContext &context,std::unique_ptr<PreparedTemporalStudy> &leased) -> PreparedTemporalStudy & {
+            if (requested_lease) {
+                leased=std::make_unique<PreparedTemporalStudy>(*context.study,limits,checkpoint);
+                return *leased;
+            }
+            if (!context.temporal)
+                context.temporal=std::make_unique<PreparedTemporalStudy>(*context.study,limits,checkpoint);
+            return *context.temporal;
+        };
+        auto &old_prepared=prepare(old_context,leased_old),&new_prepared=prepare(new_context,leased_new);
+        research_detail::StructuralResultFields fields{publication,old_axes,new_snapshot.grade_axes,lease};
+        auto result=research_detail::compare_prepared_structure_fields(old_prepared,new_prepared,rfc::core::Grade{grade},
+            old_context.to_ambient,new_context.to_ambient,old_values,new_values,lambda,nullptr,
+            research_detail::FactoredTemporalMaps::requested(query),fields);
+        lease.check_cancelled();return publication.finish(std::move(result));
+    }
+    NativeRecord moment_fields(const Json &query) {
+        using namespace scientific_detail;
+        const auto name = query.at("context").text();
+        auto &old_context = context(name);
+        const auto [old_x, grade] = input(name, query.at("field").text(), false);
+        const auto old_y = input(name, query.at("other_field").text(), false).first;
+        const auto order = count(query.at("order"), std::numeric_limits<std::size_t>::max(), "moment order");
+        auto reservation = cpu().reserve(1);
+        const auto lease = source_execution_lease("scientific-native-moment");
+        lease.check_cancelled();
+        const auto old_snapshot = source_snapshot_publication(*old_context.study,
+            owner->native_publication(), old_context.to_ambient);
+        const auto retain_input = [&](ResultFields &publication, const std::string &id,
+                                      const Vector &values, std::uint64_t context_axis,
+                                      const std::vector<std::uint32_t> &coordinates) {
+            const auto &source_tensor = tensor(id);
+            const auto &pin = source.field_pins.at(source_tensor.key);
+            auto binding = ResultValue::object();
+            binding.set("id", ResultValue::string(id));
+            binding.set("tensor", ResultValue::count(source_tensor.key));
+            binding.set("source_namespace", ResultValue::string(std::to_string(pin.source_namespace())));
+            binding.set("cutoff", ResultValue::count(pin.sequence()));
+            binding.set("carrier", ResultValue::count(*source_tensor.output));
+            const auto axis = publication.axis(source_tensor.tensor.domain().logical_size());
+            binding.set("original_coordinate_carrier", ResultValue::count(axis));
+            binding.set("context_carrier", ResultValue::count(context_axis));
+            rfc::numeric::ExactMatrix realization(values.size(), source_tensor.tensor.domain().logical_size());
+            for (std::size_t i = 0; i < values.size(); ++i) realization.set(i, coordinates.at(i), Rational{1});
+            binding.set("realization", ResultFields::stage_matrix(realization, axis, context_axis));
+            binding.set("values", ResultFields::stage_vector(values, context_axis));
+            binding.set("meaning", ResultValue(source.fields.at(id).declaration));
+            return binding;
+        };
+        const auto scalar = [](ResultFields &publication, const Rational &value) {
+            auto field = publication.stage_scalar(value);
+            field.set("display", ResultValue::string("rational_object")); return field;
+        };
+        if (query.at("operation").text() == "typed_moment") {
+            ResultFields publication(old_snapshot.publication);
+            const auto axis = old_snapshot.grade_axes.at(grade);
+            const auto hodge = old_context.study->hodge(rfc::core::Grade{grade});
+            const auto powered = rfc::statistics::hodge_power_apply(hodge, order, old_y);
+            const auto value = hodge.metric().inner(old_x, powered);
+            auto binding = ResultValue::object(), inputs = ResultValue::array();
+            binding.set("kind", ResultValue::string("actual_typed_moment"));
+            binding.set("original_study_publication", ResultValue(old_snapshot.publication.at("bindings").at(0)
+                .at("original_study_publication").unbound_value()));
+            binding.set("grade", ResultValue::count(grade)); binding.set("order", ResultValue::count(order));
+            inputs.push(retain_input(publication, query.at("field").text(), old_x, axis, old_context.to_ambient.at(grade)));
+            inputs.push(retain_input(publication, query.at("other_field").text(), old_y, axis, old_context.to_ambient.at(grade)));
+            binding.set("inputs", std::move(inputs));
+            binding.set("powered_right_field", ResultFields::stage_vector(powered, axis));
+            publication.bind(std::move(binding));
+            lease.check_cancelled();
+            auto view = ResultValue::object();
+            view.set("rational", publication.stage_scalar(value));
+            return publication.finish(std::move(view));
+        }
+        const auto other_name = query.at("other_context").text();
+        auto &new_context = context(other_name);
+        const auto new_x = input(other_name, query.at("new_field").text(), false).first;
+        const auto new_y = input(other_name, query.at("new_other_field").text(), false).first;
+        const auto new_snapshot = source_snapshot_publication(*new_context.study,
+            owner->native_publication(), new_context.to_ambient);
+        ResultFields publication(new_snapshot.publication);
+        const auto old_axis = publication.axis(old_x.size()), new_axis = new_snapshot.grade_axes.at(grade);
+        const auto form = [&](const NativeStudy &study) {
+            const auto hodge = study.hodge(rfc::core::Grade{grade});
+            const auto power = rfc::field::materialize_action_matrix(hodge.metric(), [&](const Vector &v) {
+                return rfc::statistics::hodge_power_apply(hodge, order, v);
+            });
+            return study.tower().metrics().at(grade).materialize().multiply(power);
+        };
+        const auto old_form = form(*old_context.study), new_form = form(*new_context.study);
+        const auto comparison = query.has("correspondence")
+            ? temporal_map(name, other_name, grade, query.at("correspondence"))
+            : rfc::numeric::ExactMatrix::identity(old_x.size());
+        const auto change = rfc::temporal::changing_dimension_cross_moment(
+            old_x, old_y, old_form, new_x, new_y, new_form, comparison, comparison);
+        const auto old_value = old_context.study->moment(rfc::core::Grade{grade}, order, old_x, old_y);
+        const auto new_value = new_context.study->moment(rfc::core::Grade{grade}, order, new_x, new_y);
+        require(change.total == new_value - old_value, "native finite cross moment identity failed");
+        const auto old_time = source.contexts.at(name).declaration.at("time"),
+                   new_time = source.contexts.at(other_name).declaration.at("time");
+        const Rational interval = exact_decimal(new_time.at("position").text()) - exact_decimal(old_time.at("position").text());
+        auto view = ResultValue::object();
+        view.set("pullback_form", scalar(publication, change.pullback_form));
+        view.set("left_innovation", scalar(publication, change.left_innovation));
+        view.set("right_innovation", scalar(publication, change.right_innovation));
+        view.set("innovation_interaction", scalar(publication, change.innovation_interaction));
+        view.set("total", scalar(publication, change.total));
+        view.set("identity_verified", ResultValue::boolean(true));
+        view.set("interval", scalar(publication, interval));
+        view.set("time_unit", ResultValue(old_time.at("unit")));
+        view.set("finite_rate", scalar(publication, rfc::temporal::finite_rate(change.total, interval)));
+        auto binding = ResultValue::object(), inputs = ResultValue::array();
+        binding.set("kind", ResultValue::string("actual_temporal_moment_change"));
+        binding.set("old_context_publication", publication.publication(old_snapshot.publication));
+        binding.set("original_study_publication", ResultValue(new_snapshot.publication.at("bindings").at(0)
+            .at("original_study_publication").unbound_value()));
+        binding.set("old_grade_carrier", ResultValue::count(old_snapshot.grade_axes.at(grade)));
+        binding.set("old_coordinate_carrier", ResultValue::count(old_axis));
+        binding.set("new_grade_carrier", ResultValue::count(new_axis));
+        binding.set("grade", ResultValue::count(grade)); binding.set("order", ResultValue::count(order));
+        binding.set("old_time", ResultValue(old_time)); binding.set("new_time", ResultValue(new_time));
+        inputs.push(retain_input(publication, query.at("field").text(), old_x, old_axis, old_context.to_ambient.at(grade)));
+        inputs.push(retain_input(publication, query.at("other_field").text(), old_y, old_axis, old_context.to_ambient.at(grade)));
+        inputs.push(retain_input(publication, query.at("new_field").text(), new_x, new_axis, new_context.to_ambient.at(grade)));
+        inputs.push(retain_input(publication, query.at("new_other_field").text(), new_y, new_axis, new_context.to_ambient.at(grade)));
+        binding.set("inputs", std::move(inputs));
+        binding.set("old_form", ResultFields::stage_matrix(old_form, old_axis, old_axis));
+        binding.set("new_form", ResultFields::stage_matrix(new_form, new_axis, new_axis));
+        binding.set("comparison", ResultFields::stage_matrix(comparison, old_axis, new_axis));
+        const auto transported_x = comparison.apply(old_x), transported_y = comparison.apply(old_y);
+        binding.set("transported_left", ResultFields::stage_vector(transported_x, new_axis));
+        binding.set("transported_right", ResultFields::stage_vector(transported_y, new_axis));
+        binding.set("left_innovation", ResultFields::stage_vector(rfc::numeric::sub(new_x, transported_x), new_axis));
+        binding.set("right_innovation", ResultFields::stage_vector(rfc::numeric::sub(new_y, transported_y), new_axis));
+        binding.set("old_moment", scalar(publication, old_value)); binding.set("new_moment", scalar(publication, new_value));
+        publication.bind(std::move(binding));
+        lease.check_cancelled();
+        return publication.finish(std::move(view));
     }
     Json response_query(const Json &query, bool validate, std::optional<NativeRecord> *native = nullptr) {
         const auto name = query.at("context").text();
@@ -1281,7 +1826,7 @@ struct ScientificSession::State {
         }
         return research_detail::temporal_field_history(query, readings, maps, validate);
     }
-    Json censor_query(const Json &query, bool validate) {
+    Json censor_query(const Json &query, bool validate, std::optional<NativeRecord> *native = nullptr) {
         auto name = query.at("context").text();
         auto &p = context(name);
         std::set<std::string> ids;
@@ -1328,8 +1873,78 @@ struct ScientificSession::State {
                 for (std::size_t i = 0; i < family.at("constraints").size(); ++i)
                     (void)source.evidence(family.at("constraints").at(i).at("evidence"));
         }
-        return research_detail::censored_endpoint_bounds(
-            *p.study, query, fields, upper_support, meanings, temporal_coordinates(p, 0), validate);
+        if (validate) {
+            (void)research_detail::censored_endpoint_bounds(
+                *p.study, query, fields, upper_support, meanings, temporal_coordinates(p, 0), true);
+            return Json::object();
+        }
+        auto reservation = cpu().reserve(1);
+        const auto lease = source_execution_lease("scientific-censored-endpoint-family");
+        lease.check_cancelled();
+        const auto snapshot = scientific_detail::source_snapshot_publication(
+            *p.study, owner->native_publication(), p.to_ambient);
+        scientific_detail::ResultFields publication(snapshot.publication);
+        using scientific_detail::ResultValue;
+        using scientific_detail::ResultFields;
+        const auto group_axis = publication.axis(1 + query.at("strata").size());
+        const auto contrast_axis = publication.axis(query.has("contrasts") ? query.at("contrasts").size() : 0);
+        const auto input_axis = publication.axis(tensor(*ids.begin()).tensor.domain().logical_size());
+        auto binding = ResultValue::object(), inputs = ResultValue::array();
+        binding.set("kind", ResultValue::string("actual_censored_endpoint_inputs"));
+        binding.set("original_study_publication", ResultValue(snapshot.publication.at("bindings").at(0)
+            .at("original_study_publication").unbound_value()));
+        binding.set("input_carrier", ResultValue::count(*carrier));
+        binding.set("input_coordinate_carrier", ResultValue::count(input_axis));
+        binding.set("source_carrier", ResultValue::count(snapshot.grade_axes.at(0)));
+        rfc::numeric::ExactMatrix realization(p.to_ambient.at(0).size(), tensor(*ids.begin()).tensor.domain().logical_size());
+        for (std::size_t i = 0; i < p.to_ambient.at(0).size(); ++i)
+            realization.set(i, p.to_ambient.at(0).at(i), Rational{1});
+        binding.set("input_realization", ResultFields::stage_matrix(realization, input_axis, snapshot.grade_axes.at(0)));
+        for (const auto &id : ids) {
+            const auto &field = tensor(id);
+            const auto &pin = source.field_pins.at(field.key);
+            auto input = ResultValue::object();
+            input.set("id", ResultValue::string(id));
+            input.set("tensor", ResultValue::count(field.key));
+            input.set("source_namespace", ResultValue::string(std::to_string(pin.source_namespace())));
+            input.set("cutoff", ResultValue::count(pin.sequence()));
+            input.set("carrier", ResultValue::count(*field.output));
+            std::vector<std::size_t> supported;
+            Vector values;
+            for (std::size_t i = 0; i < p.to_ambient.at(0).size(); ++i) {
+                const auto coordinate = p.to_ambient.at(0).at(i);
+                if (field.tensor.support().contains(coordinate)) {
+                    supported.push_back(i); values.push_back(*field.tensor.state(coordinate));
+                }
+            }
+            input.set("context_values", ResultFields::stage_selected(values, snapshot.grade_axes.at(0),
+                p.to_ambient.at(0).size(), supported));
+            input.set("meaning", ResultValue(source.fields.at(id).declaration));
+            inputs.push(std::move(input));
+        }
+        binding.set("inputs", std::move(inputs));
+        auto groups = ResultValue::array(), contrasts = ResultValue::array();
+        groups.push(ResultValue::string("selected_population"));
+        for (std::size_t i = 0; i < query.at("strata").size(); ++i) groups.push(ResultValue(query.at("strata").at(i)));
+        if (query.has("contrasts"))
+            for (std::size_t i = 0; i < query.at("contrasts").size(); ++i) contrasts.push(ResultValue(query.at("contrasts").at(i)));
+        binding.set("group_carrier", ResultValue::count(group_axis)); binding.set("groups", std::move(groups));
+        binding.set("contrast_carrier", ResultValue::count(contrast_axis)); binding.set("contrasts", std::move(contrasts));
+        const auto time_axis = publication.axis(query.at("times").size());
+        Vector times;
+        for (std::size_t i = 0; i < query.at("times").size(); ++i) times.push_back(exact_rational(query.at("times").at(i).text()));
+        binding.set("time_carrier", ResultValue::count(time_axis));
+        binding.set("evaluation_times", ResultFields::stage_vector(times, time_axis));
+        binding.set("origin", publication.stage_scalar(exact_rational(query.at("origin").text())));
+        binding.set("execution_scope", ResultValue::string("Canonical family actions; CPU reservation and cancellation before and after execution"));
+        publication.bind(std::move(binding));
+        research_detail::CensoredResultFields axes{publication, snapshot.grade_axes.at(0), group_axis, contrast_axis};
+        auto result = research_detail::censored_endpoint_bounds(
+            *p.study, query, fields, upper_support, meanings, temporal_coordinates(p, 0), false, &axes);
+        lease.check_cancelled();
+        const auto record = publication.finish(std::move(result));
+        if (native) { *native = record; return Json::object(); }
+        return scientific_detail::result_fields_view(record);
     }
     void admit(const Json &query) {
         const auto operation = query.at("operation").text();
@@ -1366,8 +1981,7 @@ struct ScientificSession::State {
             return;
         }
         if (operation == "chain_certificate") {
-            (void)analyze_chain(*context(query.at("context").text()).study,
-                                chain_declaration(query), true);
+            validate_chain_values(*context(query.at("context").text()).study, query, chain_operand(query));
             return;
         }
         if (operation == "realized_path_comparison") {
@@ -1565,7 +2179,7 @@ struct ScientificSession::State {
                             .declaration.at("quantity")
                             .text(),
                     "structure field quantity");
-            require(exact_decimal(query.at("lambda").text()) > 0,
+            require(exact_rational(query.at("lambda").text()) > 0,
                     "structure lambda must be positive");
             const auto t0 = source.contexts.at(a).declaration.at("time"),
                        t1 = source.contexts.at(b).declaration.at("time");
@@ -1887,39 +2501,494 @@ struct ScientificSession::State {
         coverage.set("observations", observations);
         return coverage;
     }
-    Json chain_declaration(const Json &query) {
-        members(query, {"operation", "context", "grade", "coefficient_domain"},
-                {"field", "values"});
-        require(query.has("field") != query.has("values"),
-                "chain requires values or a source field");
-        if (query.has("values"))
-            return query;
-        require(query.at("coefficient_domain").text() == "rational",
-                "source fields have rational coordinates");
-        const auto [v, g] = input(text(query.at("context")), text(query.at("field")));
-        require(
-            g == count(query.at("grade"), std::numeric_limits<std::uint16_t>::max(), "chain grade"),
-            "chain field grade mismatch");
-        auto resolved = Json::object(), values = Json::array();
-        for (const auto *name : {"operation", "context", "grade", "coefficient_domain"})
-            resolved.set(name, query.at(name));
-        for (const auto &x : v)
-            values.push(Json::string(x.get_str()));
-        resolved.set("values", values);
-        return resolved;
+    Vector chain_operand(const Json &query) {
+        members(query, {"operation", "context", "grade", "coefficient_domain"}, {"field", "values"});
+        require(query.has("field") != query.has("values"), "chain requires values or a source field");
+        auto &prepared = context(text(query.at("context")));
+        const auto grade = count(query.at("grade"), prepared.study->source().grade_count() - 1, "chain grade");
+        if (query.has("values")) return declared_chain_values(query, prepared.study->source().grade(
+            rfc::core::Grade{static_cast<std::uint16_t>(grade)}).cell_count());
+        require(text(query.at("coefficient_domain")) == "rational", "source fields have rational coordinates");
+        const auto [values, field_grade] = input(text(query.at("context")), text(query.at("field")));
+        require(field_grade == grade, "chain field grade mismatch");
+        return values;
+    }
+    NativeRecord structural_fields(const Json &query,
+        std::optional<rfc::runtime::ExecutionLease> native_lease = {}) {
+        const auto name = text(query.at("context"));
+        auto &prepared = context(name);
+        const auto lease = native_lease.value_or(source_execution_lease("scientific-structure"));
+        lease.check_cancelled();
+        const auto snapshot = source_snapshot_publication(*prepared.study,
+            owner->native_publication(), prepared.to_ambient);
+        ResultFields publication(snapshot.publication);
+        const auto grade = count(query.at("grade"), snapshot.grade_axes.size() - 1, "structural grade");
+        const bool chain = text(query.at("operation")) == "chain_certificate";
+        auto result = chain ? chain_fields(*prepared.study, query, chain_operand(query),
+            publication, snapshot.grade_axes, lease) : path_fields(*prepared.study, query,
+            publication, snapshot.grade_axes, lease);
+        auto decorated = ResultValue::array();
+        const auto original_coordinates = result.at("coordinates");
+        for (std::size_t i = 0; i < original_coordinates.size(); ++i) {
+            auto coordinate = original_coordinates.at(i);
+            const auto cell = source.coordinate(grade, prepared.to_ambient.at(grade).at(i));
+            coordinate.set("entity", ResultValue(source.cell_record(cell).at("id")));
+            coordinate.set("evidence", ResultValue(source.cell_record(cell).at("evidence")));
+            decorated.push(std::move(coordinate));
+        }
+        result.set("coordinates", std::move(decorated));
+        if (chain) {
+            auto occurrences = ResultValue::array();
+            const auto original = result.at("occurrences");
+            for (std::size_t i = 0; i < original.size(); ++i) {
+                auto occurrence = original.at(i);
+                const StableOccurrenceKey cell{rfc::core::Grade{static_cast<std::uint16_t>(grade)},
+                    rfc::core::OccurrenceKey{key(Json::string(occurrence.at("key").text()))}};
+                occurrence.set("evidence", ResultValue(source.occurrence_record(cell).at("evidence")));
+                occurrences.push(std::move(occurrence));
+            }
+            result.set("occurrences", std::move(occurrences));
+        }
+        auto binding = ResultValue::object();
+        binding.set("kind", ResultValue::string(chain ? "declared_chain_certificate" : "declared_path_family"));
+        binding.set("context", ResultValue::string(name));
+        binding.set("grade", ResultValue::count(grade));
+        binding.set("original_study_publication", ResultValue(snapshot.publication.at("bindings").at(0)
+            .at("original_study_publication").unbound_value()));
+        if (chain && query.has("field")) {
+            const auto &actual = tensor(text(query.at("field")));
+            const auto &pin = source.field_pins.at(actual.key);
+            binding.set("source_namespace", ResultValue::string(std::to_string(pin.source_namespace())));
+            binding.set("source_cutoff", ResultValue::count(pin.sequence()));
+            binding.set("source_tensor", ResultValue::count(actual.key));
+            binding.set("source_carrier", ResultValue::count(*actual.output));
+            const auto ambient = publication.axis(actual.tensor.domain().logical_size());
+            binding.set("source_field", ResultFields::staged(actual.tensor, {}, ambient, "vector"));
+            rfc::numeric::ExactMatrix lift(prepared.to_ambient.at(grade).size(), actual.tensor.domain().logical_size());
+            for (std::size_t i = 0; i < lift.rows(); ++i) lift.set(i, prepared.to_ambient.at(grade).at(i), 1);
+            binding.set("context_realization", ResultFields::stage_matrix(lift, ambient, snapshot.grade_axes.at(grade)));
+        }
+        binding.set("result", result);
+        publication.bind(std::move(binding));
+        lease.check_cancelled();
+        return publication.finish(std::move(result));
+    }
+    NativeRecord green_response_fields(const Json &query,
+        std::optional<rfc::runtime::ExecutionLease> native_lease = {}) {
+        const auto name = query.at("context").text();
+        const auto [x, grade] = input(name, query.at("field").text(), false);
+        auto &prepared = context(name);
+        const auto lease = native_lease.value_or(source_execution_lease("scientific-partitioned-green"));
+        lease.check_cancelled();
+        (void)cpu().readmit();
+        const auto &policy = lease.policy();
+        rfc::runtime::admit_execution({1, x.size(), 0, 0, 0}, policy);
+        const rfc::numeric::ExactActionLimits action_limits{x.size(), policy.limits.sparse_entries,
+            policy.limits.scalar_work, policy.limits.integer_bits};
+        const auto checkpoint = [&] {lease.check_cancelled();};
+        const auto lambda = exact_decimal(query.at("lambda").text());
+        auto operation = query;
+        operation = Json::parse(operation.dump());
+        operation.set("field", Json::string(""));
+        const auto cache_key =
+            operation.dump() + "|grade:" + std::to_string(grade) +
+            "|carrier:" + std::to_string(*tensor(query.at("field").text()).output);
+        const bool reused = green_solves.contains(cache_key);
+        if (!reused) {
+            // Charge the complete named square coefficient containers before
+            // preparation. This envelope excludes GMP limbs and process RSS.
+            const auto square = rfc::machine::checked_size_mul(x.size(), x.size());
+            const auto slots = rfc::machine::checked_size_add(
+                rfc::machine::checked_size_mul(square, 8),
+                rfc::machine::checked_size_mul(x.size(), 8));
+            const auto slot_bytes = sizeof(std::pair<const std::pair<std::size_t, std::size_t>, Rational>);
+            const auto envelope = rfc::machine::checked_size_mul(slots, slot_bytes);
+            rfc::runtime::StagedResourceLease stage(cpu().coordinator(),
+                {"partitioned-green-preparation", 1, 0, 0, envelope, 0}, lease);
+            auto h = prepared.study->hodge(rfc::core::Grade{grade}).materialize();
+            auto a = rfc::numeric::ExactMatrix::identity(x.size()).add(h.scale(lambda));
+            std::vector<std::size_t> interior;
+            for (std::size_t i = 0; i < query.at("interior").size(); ++i)
+                interior.push_back(
+                    static_cast<std::size_t>(query.at("interior").at(i).integer()));
+            const auto carrier = *tensor(query.at("field").text()).output;
+            const auto coordinates = key(query.at("coordinates").at("id"));
+            rfc::local::LinearSolveDeclaration declaration{
+                carrier,
+                carrier,
+                coordinates,
+                coordinates,
+                rfc::numeric::IndexDomain::linear(x.size()),
+                rfc::numeric::IndexDomain::linear(x.size())};
+            // Context, grade and carrier are part of the prepared operator's meaning.
+            rfc::local::PreparedInteriorInterfaceSolve solve(std::move(declaration),
+                std::move(a), std::move(interior), action_limits, checkpoint);
+            const auto retained_bytes = rfc::machine::checked_size_add(
+                rfc::machine::checked_size_mul(solve.retained_entries(), slot_bytes),
+                rfc::machine::checked_size_add(sizeof(solve), cache_key.size()));
+            auto retained = stage.finish(std::move(solve), retained_bytes);
+            green_solves.emplace(cache_key, std::move(retained));
+        }
+        const auto &solve = *green_solves.at(cache_key);
+        auto execution = cpu().coordinator().reserve(1,
+            rfc::machine::checked_size_mul(x.size(), sizeof(Rational) * 8));
+        const auto y = solve.apply(x, action_limits, checkpoint);
+        check_values(y);
+        lease.check_cancelled();
+        const auto snapshot = source_snapshot_publication(*prepared.study,
+            owner->native_publication(), prepared.to_ambient);
+        ResultFields publication(snapshot.publication);
+        const auto axis = snapshot.grade_axes.at(grade);
+        const auto output = publication.vector(y, axis);
+        auto view = ResultValue::object(), field = ResultValue::array();
+        for (std::size_t i = 0; i < y.size(); ++i) {
+            const auto cell = source.coordinate(grade, prepared.to_ambient.at(grade).at(i));
+            auto row = ResultValue::object();
+            row.set("coordinate", ResultValue::count(i));
+            row.set("native_key", ResultValue::string(std::to_string(cell.key)));
+            row.set("entity", ResultValue(source.cell_record(cell).at("id")));
+            auto value = output;
+            value.set("display", ResultValue::string("rational_object"));
+            value.set("index", ResultValue::count(i));
+            row.set("value", std::move(value)); field.push(std::move(row));
+        }
+        view.set("field", std::move(field));
+        view.set("interior", ResultValue(query.at("interior")));
+        auto interface = ResultValue::array();
+        for (const auto i : solve.interface()) interface.push(ResultValue::count(i));
+        view.set("interface_coordinates", std::move(interface));
+        view.set("residual_zero", ResultValue::boolean(true));
+        auto binding = ResultValue::object();
+        binding.set("kind", ResultValue::string("declared_partitioned_green_action"));
+        binding.set("original_study_publication", ResultValue(snapshot.publication.at("bindings").at(0)
+            .at("original_study_publication").unbound_value()));
+        const auto &input_tensor = tensor(query.at("field").text());
+        const auto &pin = source.field_pins.at(input_tensor.key);
+        binding.set("input_source_namespace", ResultValue::string(std::to_string(pin.source_namespace())));
+        binding.set("input_cutoff", ResultValue::count(pin.sequence()));
+        binding.set("input_tensor", ResultValue::count(input_tensor.key));
+        binding.set("input_carrier", ResultValue::count(*input_tensor.output));
+        binding.set("context", ResultValue::string(name));
+        binding.set("grade", ResultValue::count(grade));
+        binding.set("coordinates", ResultValue(query.at("coordinates")));
+        binding.set("lambda", publication.stage_scalar(lambda));
+        const auto ambient = publication.axis(input_tensor.tensor.domain().logical_size());
+        rfc::numeric::ExactMatrix realization(x.size(), input_tensor.tensor.domain().logical_size());
+        for (std::size_t i = 0; i < x.size(); ++i)
+            realization.set(i, prepared.to_ambient.at(grade).at(i), Rational{1});
+        binding.set("input_realization", ResultFields::stage_matrix(realization, ambient, axis));
+        binding.set("context_input", ResultFields::stage_vector(x, axis));
+        binding.set("output", output);
+        const auto interior_axis = publication.axis(solve.interior().size());
+        const auto interface_axis = publication.axis(solve.interface().size());
+        rfc::numeric::ExactMatrix interior_lift(x.size(), solve.interior().size());
+        rfc::numeric::ExactMatrix interface_lift(x.size(), solve.interface().size());
+        for (std::size_t i = 0; i < solve.interior().size(); ++i) interior_lift.set(solve.interior()[i], i, 1);
+        for (std::size_t i = 0; i < solve.interface().size(); ++i) interface_lift.set(solve.interface()[i], i, 1);
+        binding.set("interior_coordinates", publication.indices(solve.interior(), interior_axis));
+        binding.set("interface_coordinates", publication.indices(solve.interface(), interface_axis));
+        binding.set("interior_lift", ResultFields::stage_matrix(interior_lift, interior_axis, axis));
+        binding.set("interface_lift", ResultFields::stage_matrix(interface_lift, interface_axis, axis));
+        binding.set("schur", ResultFields::stage_matrix(solve.schur(), interface_axis, interface_axis));
+        const auto residual = rfc::numeric::sub(rfc::numeric::add(y, rfc::numeric::scale(lambda,
+            prepared.study->hodge(rfc::core::Grade{grade}).apply(y))), x);
+        require(rfc::numeric::is_zero(residual), "native partitioned Green reconstruction residual");
+        binding.set("residual", ResultFields::stage_vector(residual, axis));
+        publication.bind(std::move(binding));
+        const auto native = publication.finish(std::move(view));
+        auto root = native.materialize_value();
+        auto execution_view = ResultValue::object();
+        execution_view.set("factorization_reused", ResultValue::boolean(reused));
+        execution_view.set("retained_entries", ResultValue::count(solve.retained_entries()));
+        execution_view.set("retained_preparations", ResultValue::count(green_solves.size()));
+        execution_view.set("declared_coordinate_families", ResultValue::count(green_spaces.size()));
+        std::get<NativeRecordValue::Object>(root.data).members.emplace_back("view_execution", std::move(execution_view).release());
+        lease.check_cancelled();
+        return native.derive(std::move(root));
+    }
+    NativeRecord native_boundary_fields(const Json &query) {
+        const auto name = query.at("field_set").text();
+        const auto analysis = native_analysis(name);
+        std::shared_ptr<const Vector> values_pin;
+        std::optional<rfc::runtime::CpuResourceCoordinator::Reservation> serial;
+        Json execution = Json::object();
+        rfc::database::NativeExecutionReport report;
+        if (query.at("backend").text() == "cpu_cached" ||
+            query.at("backend").text() == "cpu_cached_tiles") {
+            const auto derived = [&]() -> rfc::database::CachedNativeField {
+                if (query.at("backend").text() == "cpu_cached") {
+                    if (resources)
+                        serial.emplace(resources->reserve(1));
+                    return field_cache.evaluate(analysis);
+                }
+                const auto rows = query.has("tile_rows") ? count(query.at("tile_rows"),
+                                                                 coordinate_limit, "tile rows")
+                                                         : 64;
+                const auto workers =
+                    query.has("workers")
+                        ? count(query.at("workers"), cpu().coordinator().capacity(), "workers")
+                        : 1;
+                auto &host = cpu();
+                (void)host.readmit();
+                auto &coordinator = host.coordinator();
+                auto reservation = coordinator.reserve(std::min(
+                    workers, std::max(std::size_t{1},
+                                      rfc::machine::ceil_div(
+                                          analysis.binding().target_dimension(), rows))));
+                rfc::runtime::CpuTileExecutor executor(
+                    {reservation.workers(), coordinator.capacity(), coordinate_limit});
+                execution.set("requested_workers", cardinality(workers));
+                execution.set("admitted_workers", cardinality(reservation.workers()));
+                return field_cache.evaluate_parallel(analysis, executor, rows);
+            }();
+            values_pin = derived.values_pin();
+            require(derived.source_publication().get() == analysis.source_publication().get(),
+                    "native boundary result lost its source owner");
+            report = derived.provenance();
+            execution.set("plan_reused", Json::boolean(derived.reuse().plan));
+            execution.set("result_reused", Json::boolean(derived.reuse().result));
+            execution.set("in_flight_reused", Json::boolean(derived.reuse().in_flight));
+            auto producer = Json::object();
+            if (derived.producer_execution()) {
+                const auto &facts = *derived.producer_execution();
+                producer.set("worker_slots", cardinality(facts.worker_slots));
+                producer.set("launched_threads", cardinality(facts.launched_threads));
+                producer.set("tiles", cardinality(facts.tiles));
+                producer.set("completed_tiles", cardinality(facts.completed_tiles));
+            }
+            execution.set("producer_execution", producer);
+            execution.set(
+                "producer_scope",
+                Json::string(
+                    "retained producer facts; a result hit performs no new field action"));
+        } else {
+            const auto rows = query.has("tile_rows")
+                                  ? count(query.at("tile_rows"), coordinate_limit, "tile rows")
+                                  : 64;
+            const auto workers =
+                query.has("workers")
+                    ? count(query.at("workers"), cpu().coordinator().capacity(), "workers")
+                    : 1;
+            const bool automatic = query.at("backend").text() == "cpu_scheduled";
+            auto &host = cpu();
+            const auto current = host.readmit();
+            auto &coordinator = host.coordinator();
+            const auto derived = [&]() -> rfc::database::DerivedParallelNativeField {
+                if (!automatic) {
+                    const auto prepared = rfc::database::prepare_parallel_field(analysis, rows);
+                    auto workspace = rfc::database::make_parallel_workspace(prepared);
+                    auto reservation = coordinator.reserve(std::min(
+                        workers, std::max<std::size_t>(1, prepared.ranges().tiles().size())));
+                    rfc::runtime::CpuTileExecutor executor(
+                        {reservation.workers(), coordinator.capacity(), coordinate_limit});
+                    return rfc::database::execute_parallel(prepared, workspace, executor);
+                }
+                const auto identity = std::pair{name, rows};
+                const bool reused = scheduled.contains(identity) &&
+                                    scheduled.at(identity)->calibration.has_value();
+                if (!scheduled.contains(identity))
+                    scheduled.emplace(
+                        identity, std::make_unique<Scheduled>(
+                                      rfc::database::prepare_parallel_field(analysis, rows)));
+                auto &entry = *scheduled.at(identity);
+                if (!entry.calibration) {
+                    rfc::database::CpuFieldCalibrationPolicy policy;
+                    policy.worker_candidates.clear();
+                    const auto ceiling = std::max<std::size_t>(
+                        1, std::min(coordinator.capacity(),
+                                    entry.operation.ranges().tiles().size()));
+                    for (std::size_t candidate = 1; candidate < ceiling;) {
+                        policy.worker_candidates.push_back(candidate);
+                        if (candidate > ceiling / 2)
+                            break;
+                        candidate *= 2;
+                    }
+                    policy.worker_candidates.push_back(ceiling);
+                    policy.call_limit = rfc::machine::checked_size_add(
+                        1, rfc::machine::checked_size_mul(
+                               policy.worker_candidates.size(),
+                               rfc::machine::checked_size_add(policy.samples, policy.warmups)));
+                    entry.calibration = rfc::database::calibrate_cpu_field(
+                        entry.operation, entry.workspace, coordinator, current, policy);
+                }
+                const auto chosen = rfc::database::execute_scheduled_field(
+                    entry.operation, entry.workspace, coordinator, current, *entry.calibration);
+                execution.set("calibration_reused", Json::boolean(reused));
+                execution.set("selected_workers", cardinality(chosen.selected_workers));
+                auto samples = Json::array();
+                for (const auto &timing : entry.calibration->timings()) {
+                    auto sample = Json::object();
+                    sample.set("workers", cardinality(timing.workers));
+                    sample.set("median_nanoseconds",
+                               Json::string(std::to_string(timing.median_nanoseconds)));
+                    auto times = Json::array();
+                    for (const auto ns : timing.nanosecond_samples)
+                        times.push(Json::string(std::to_string(ns)));
+                    sample.set("nanosecond_samples", times);
+                    samples.push(sample);
+                }
+                execution.set("calibration", samples);
+                execution.set(
+                    "selection",
+                    Json::string("canonical lowest measured median among currently fitting "
+                                 "candidates; owning prepared operation and CPU facts"));
+                return chosen.field;
+            }();
+            execution.set("cpu_resources", host.report());
+            values_pin = derived.values_pin();
+            require(derived.source_publication().get() == analysis.source_publication().get(),
+                    "native boundary result lost its source owner");
+            report = derived.provenance();
+            execution.set("requested_workers",
+                          cardinality(derived.execution().requested_workers));
+            execution.set("worker_slots", cardinality(derived.execution().worker_slots));
+            execution.set("launched_threads",
+                          cardinality(derived.execution().launched_threads));
+            execution.set("tiles", cardinality(derived.execution().tiles));
+            execution.set("completed_tiles", cardinality(derived.execution().completed_tiles));
+        }
+        const auto &values = *values_pin;
+        check_values(values);
+        ResultFields publication(owner->native_publication());
+        auto view = ResultValue::object();
+        view.set("schema", ResultValue::string("gadget.scientific.native.boundary.result.v1"));
+        auto action = ResultValue::object();
+        action.set("kind", ResultValue::string("actual_native_cell_boundary_action"));
+        action.set("source_publication", publication.publication(owner->native_publication()));
+        auto inputs = ResultValue::array();
+        for (const auto &binding : analysis.binding().inputs()) {
+            auto item = ResultValue::object();
+            item.set("cell_grade", ResultValue::count(binding.cell.grade.value));
+            item.set("cell_key", ResultValue::count(binding.cell.key));
+            item.set("carrier", ResultValue::count(binding.carrier));
+            item.set("coordinate_system", ResultValue::count(binding.coordinates));
+            item.set("offset", ResultValue::count(binding.offset));
+            item.set("dimension", ResultValue::count(binding.dimension));
+            item.set("field", publication.stored(binding.field, "vector"));
+            item.set("source_namespace", ResultValue::string(std::to_string(source.field_pins.at(binding.field).source_namespace())));
+            item.set("cutoff", ResultValue::count(source.field_pins.at(binding.field).sequence()));
+            inputs.push(std::move(item));
+        }
+        action.set("inputs", std::move(inputs));
+        auto outputs = ResultValue::array();
+        auto output = ResultValue::array();
+        for (const auto &binding : analysis.binding().outputs()) {
+            auto row = ResultValue::object();
+            row.set("entity", ResultValue(source.cell_record(binding.cell).at("id")));
+            row.set("carrier", ResultValue::string(std::to_string(binding.carrier)));
+            row.set("coordinate_system", ResultValue::string(std::to_string(binding.coordinates)));
+            const auto field = publication.cell_vector(
+                Vector(values.data() + binding.offset, values.data() + binding.offset + binding.dimension),
+                binding.carrier, binding.cell, "vector_objects");
+            row.set("values", field);
+            row.set("support", ResultValue::string("complete; supported zero and cancellation retained"));
+            output.push(std::move(row));
+            auto item = ResultValue::object();
+            item.set("cell_grade", ResultValue::count(binding.cell.grade.value));
+            item.set("cell_key", ResultValue::count(binding.cell.key));
+            item.set("carrier", ResultValue::count(binding.carrier));
+            item.set("coordinate_system", ResultValue::count(binding.coordinates));
+            item.set("offset", ResultValue::count(binding.offset));
+            item.set("dimension", ResultValue::count(binding.dimension));
+            item.set("field", field);
+            outputs.push(std::move(item));
+        }
+        execution.set("profile", Json::string(report.profile));
+        execution.set("implementation", Json::string(report.implementation));
+        execution.set("backend", Json::string("exact_cpu"));
+        execution.set("fallback", Json::boolean(report.fallback));
+        execution.set("retained_occurrences",
+                      cardinality(analysis.layout().retained_occurrences));
+        execution.set("active_occurrences", cardinality(analysis.layout().active_occurrences));
+        execution.set("source_coordinates", cardinality(analysis.layout().source_coordinates));
+        execution.set("target_coordinates", cardinality(analysis.layout().target_coordinates));
+        auto decisions = Json::array();
+        for (const auto &decision : report.decisions) {
+            auto row = Json::object();
+            row.set("subject", Json::string(decision.choice));
+            row.set("origin", Json::string(decision.origin));
+            row.set("value", Json::string(decision.value));
+            row.set("constraints", Json::string(decision.constraints));
+            decisions.push(row);
+        }
+        execution.set("decisions", decisions);
+
+        view.set("field_set", ResultValue(source.field_sets.at(name).declaration));
+        auto retained = ResultValue::array(), occurrences = ResultValue::array();
+        for (const auto &binding : analysis.binding().occurrences()) {
+            auto occurrence = ResultValue::object();
+            occurrence.set("grade", ResultValue::count(binding.occurrence.upper_grade.value));
+            occurrence.set("key", ResultValue::string(std::to_string(binding.occurrence.key.value)));
+            occurrence.set("upper", ResultValue(source.cell_record(binding.upper).at("id")));
+            occurrence.set("lower", ResultValue(source.cell_record(binding.lower).at("id")));
+            occurrence.set("active", ResultValue::boolean(binding.active));
+            auto coefficient = publication.stage_scalar(binding.coefficient);
+            coefficient.set("display", ResultValue::string("rational_object"));
+            occurrence.set("coefficient", std::move(coefficient));
+            occurrence.set("map", binding.map ? ResultValue::string(std::to_string(*binding.map)) : ResultValue{});
+            occurrence.set("map_role", ResultValue::string(!binding.map ? "declared_constant_identity" :
+                (binding.role == TemporalTensorRole::RealizedIncidenceMap ? "realized_incidence" : "coefficient_independent")));
+            occurrence.set("evidence", ResultValue(source.evidence(source.occurrence_record(binding.occurrence).at("evidence"))));
+            retained.push(std::move(occurrence));
+            auto item = ResultValue::object();
+            item.set("grade", ResultValue::count(binding.occurrence.upper_grade.value));
+            item.set("key", ResultValue::count(binding.occurrence.key.value));
+            item.set("upper_grade", ResultValue::count(binding.upper.grade.value));
+            item.set("upper_key", ResultValue::count(binding.upper.key));
+            item.set("lower_grade", ResultValue::count(binding.lower.grade.value));
+            item.set("lower_key", ResultValue::count(binding.lower.key));
+            item.set("input_carrier", ResultValue::count(binding.input_carrier));
+            item.set("output_carrier", ResultValue::count(binding.output_carrier));
+            item.set("source_offset", ResultValue::count(binding.source_offset));
+            item.set("target_offset", ResultValue::count(binding.target_offset));
+            item.set("active", ResultValue::boolean(binding.active));
+            item.set("coefficient", publication.stage_scalar(binding.coefficient));
+            item.set("map", binding.map ? publication.stored(*binding.map, "declared_map") : ResultValue{});
+            item.set("role", ResultValue::count(static_cast<std::size_t>(binding.role)));
+            occurrences.push(std::move(item));
+        }
+        action.set("outputs", std::move(outputs));
+        action.set("occurrences", std::move(occurrences));
+        publication.bind(std::move(action));
+        view.set("retained_occurrences", std::move(retained));
+        view.set(
+            "mathematical_definition",
+            ResultValue::string("native rational B_k field action; complete declared fibers and "
+                         "occurrence maps, with retained inactive and repeated occurrences"));
+        view.set("result", std::move(output));
+        const auto native = publication.finish(std::move(view));
+        auto root = native.materialize_value();
+        std::get<NativeRecordValue::Object>(root.data).members.emplace_back("execution", import_record_view(execution));
+        return native.derive(std::move(root));
+
     }
     NativeRecord record(const NativeRecord &query, const Json &admitted) {
         using N = NativeRecordValue;
         const auto operation = admitted.at("operation").text();
-        if (operation != "linear_model_comparison" && operation != "finite_reference_calibration" &&
-            operation != "hodge_frame_decomposition" && operation != "linear_response_observation" &&
-            operation != "declared_response_transition" && operation != "metric_relative_novelty" &&
-            operation != "observed_response_model" && operation != "constrained_response_model" &&
-            operation != "relational_field_ensemble" && operation != "structural_reference_calibration" &&
-            operation != "local_sections")
+        if (!has_native_scientific_publisher(operation))
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
+            if (operation == "structure_transition") return structure_transition_fields(admitted);
+            if (operation == "chain_certificate" || operation == "realized_path_comparison") return structural_fields(admitted);
+            if (operation == "green_response") return green_response_fields(admitted);
+            if (operation == "native_boundary") return native_boundary_fields(admitted);
+            if (operation == "support_mask") return support_fields(admitted);
+            if (operation == "tensor_window") return window_fields(admitted);
+            if (operation == "typed_moment" || operation == "temporal_moment_change") return moment_fields(admitted);
+            if (operation == "field_summary") return field_summary_fields(admitted);
+            if (operation == "boundary" || operation == "adjoint" || operation == "hodge" || operation == "green_action")
+                return direct_action_fields(admitted);
             if (operation == "local_sections") return local_section_fields(admitted);
+            if (operation == "censored_endpoint_bounds") {
+                std::optional<NativeRecord> result;
+                (void)censor_query(admitted, false, &result);
+                return *result;
+            }
+            if (operation == "source_structure_ablation") {
+                std::optional<NativeRecord> result;
+                (void)ablation_query(admitted, false, &result);
+                return *result;
+            }
             if (operation == "structural_reference_calibration") {
                 std::optional<NativeRecord> result;
                 (void)structural_calibration_query(admitted, false, &result);
@@ -1935,6 +3004,9 @@ struct ScientificSession::State {
                 (void)response_query(admitted, false, &result);
                 return *result;
             }
+            if (operation == "paired_field_contrasts" || operation == "controlled_pairings")
+                return research_detail::comparison_fields(*owner, admitted, resources,
+                    source_execution_lease("scientific-declared-comparison"));
             if (operation == "linear_model_comparison")
                 return research_detail::linear_model_fields(*owner, admitted, resources).publication;
             if (operation == "finite_reference_calibration")
@@ -1970,7 +3042,9 @@ struct ScientificSession::State {
         auto result = certificate(query);
         const auto operation = query.at("operation").text();
         std::optional<rfc::runtime::CpuResourceCoordinator::Reservation> serial;
-        if (resources && operation != "native_boundary" && operation != "support_mask" &&
+        if (resources && operation != "typed_moment" && operation != "temporal_moment_change" && operation != "censored_endpoint_bounds" && operation != "field_summary" && operation != "boundary" &&
+            operation != "adjoint" && operation != "hodge" && operation != "green_action" &&
+            operation != "native_boundary" && operation != "support_mask" &&
             operation != "paired_field_contrasts" && operation != "controlled_pairings" &&
             operation != "linear_model_comparison" && operation != "finite_reference_calibration" &&
             operation != "relational_field_ensemble" &&
@@ -2014,6 +3088,31 @@ struct ScientificSession::State {
                            cpu()));
             return seal(result, "certificate_sha256");
         }
+        if (operation == "field_summary") {
+            result.set("result", result_fields_view(field_summary_fields(query)));
+            result.set("mathematical_definition", Json::string(
+                "exact canonical dot(1,x), dot(x,x), and dot(1,x)/reported_count on explicit native reported support; descriptive observed rows, no population estimator or imputation"));
+            return seal(result, "certificate_sha256");
+        }
+        if (operation == "boundary" || operation == "adjoint" || operation == "hodge" || operation == "green_action") {
+            const auto display = result_fields_view(direct_action_fields(query));
+            result.set("result", display.at("result"));
+            result.set("output_grade", display.at("output_grade"));
+            if (operation == "green_action") {
+                result.set("green_iterations", display.at("green_iterations"));
+                result.set("green_execution", display.at("green_execution"));
+                result.set("residual_verified", display.at("residual_verified"));
+            }
+            result.set("mathematical_definition", Json::string(
+                operation == "green_action" ? "(I + lambda L_k) x = j; exact operator action with complete output field"
+                : operation == "hodge" ? "L_k x = (B_k^dagger B_k + B_(k+1) B_(k+1)^dagger) x"
+                : operation == "boundary" ? "B_k x" : "M_(k+1)^-1 B_(k+1)^T M_k x"));
+            return seal(result, "certificate_sha256");
+        }
+        if (operation == "typed_moment" || operation == "temporal_moment_change") {
+            result.set("result", result_fields_view(moment_fields(query)));
+            return seal(result, "certificate_sha256");
+        }
         if (operation == "temporal_field_history") {
             result.set("result", history_query(query, false));
             return seal(result, "certificate_sha256");
@@ -2038,578 +3137,43 @@ struct ScientificSession::State {
             result.set("result", ensemble_query(query, false));
             return seal(result, "certificate_sha256");
         }
-        if (is_research_operation(query.at("operation").text())) {
+        if (is_research_operation(operation) && operation != "paired_field_contrasts" &&
+            operation != "controlled_pairings") {
             result.set("result", execute_research_query(*owner, query, false, resources));
             return seal(result, "certificate_sha256");
         }
-        if (operation == "chain_certificate" || operation == "realized_path_comparison") {
-            auto &prepared = context(query.at("context").text());
-            auto out = operation == "chain_certificate"
-                           ? analyze_chain(*prepared.study, chain_declaration(query))
-                           : compare_realized_paths(*prepared.study, query);
-            const auto grade = static_cast<std::uint16_t>(count(
-                query.at("grade"), std::numeric_limits<std::uint16_t>::max(), "structural grade"));
-            auto coordinates = out.at("coordinates");
-            for (std::size_t i = 0; i < coordinates.size(); ++i) {
-                const auto stable =
-                    source.coordinate(grade,prepared.to_ambient.at(grade).at(i));
-                coordinates.at(i).set("entity", source.cell_record(stable).at("id"));
-                coordinates.at(i).set("evidence", source.cell_record(stable).at("evidence"));
-            }
-            if (out.has("occurrences")) {
-                auto occurrences = out.at("occurrences");
-                for (std::size_t i = 0; i < occurrences.size(); ++i) {
-                    const StableOccurrenceKey stable{
-                        rfc::core::Grade{grade},
-                        rfc::core::OccurrenceKey{key(occurrences.at(i).at("key"))}};
-                    occurrences.at(i).set("evidence", source.occurrence_record(stable).at("evidence"));
-                }
-            }
-            result.set("result", out);
+        if (operation == "structure_transition") {
+            result.set("result",result_fields_view(structure_transition_fields(query,native_lease)));
+        } else if (operation == "paired_field_contrasts" || operation == "controlled_pairings") {
+            result.set("result", result_fields_view(research_detail::comparison_fields(*owner, query, resources,
+                native_lease.value_or(source_execution_lease("scientific-declared-comparison")))));
+        } else if (operation == "chain_certificate" || operation == "realized_path_comparison") {
+            result.set("result", result_fields_view(structural_fields(query, native_lease)));
         } else if (operation == "local_sections") {
             result.set("result", scientific_detail::result_fields_view(local_section_fields(query)));
         } else if (operation == "tensor_window") {
-            const auto id = query.at("field").text();
-            const auto pin = source.field_pins.at(source.fields.at(id).tensor);
-            const rfc::runtime::WorkAvailability availability{
-                pin.source_namespace(), publication_cutoff(query.at("available_sequence"))};
-            auto key_query = Json::parse(query.dump());
-            key_query.set("preparation", Json::string("reuse"));
-            const auto cache_key = key_query.dump();
-            const bool retain = !query.has("preparation") ||
-                                query.at("preparation").text() == "reuse";
-            const bool reused = retain && windows.contains(cache_key);
-            const auto lease = native_lease.value_or(source_execution_lease("scientific-tensor-window"));
-            std::optional<rfc::database::NativeTensorWindow> transient;
-            if (!reused) {
-                std::vector<std::size_t> lo, hi;
-                for (std::size_t a = 0; a < query.at("lower").size(); ++a) {
-                    lo.push_back(static_cast<std::size_t>(query.at("lower").at(a).integer()));
-                    hi.push_back(static_cast<std::size_t>(query.at("upper").at(a).integer()));
-                }
-                auto prepared = rfc::database::NativeTensorWindow::prepare(
-                    pin, lo, hi, availability, lease);
-                if (retain)
-                    windows.emplace(cache_key, std::move(prepared));
-                else
-                    transient.emplace(std::move(prepared));
-            }
-            const auto &window = retain ? windows.at(cache_key) : *transient;
-            const auto summary = window.summarize(availability, lease);
-            auto out = Json::object(), observations = Json::array();
-            require(window.domain().logical_size() <= coordinate_limit, "window output budget");
-            for (std::size_t i = 0; i < window.domain().logical_size(); ++i) {
-                lease.check_cancelled();
-                auto row = Json::object();
-                row.set("source_coordinate", cardinality(window.source_index(i)));
-                const auto v = window.tensor_pin()->state(window.source_index(i));
-                row.set("reported", Json::boolean(v.has_value()));
-                row.set("value", v ? rational(*v) : Json{});
-                observations.push(row);
-            }
-            out.set("observations", observations);
-            out.set("reported", cardinality(window.supported_count()));
-            out.set("missing",
-                    cardinality(window.domain().logical_size() - window.supported_count()));
-            out.set("sum", summary.sum() ? rational(*summary.sum()) : Json{});
-            out.set("lower", query.at("lower"));
-            out.set("upper", query.at("upper"));
-            out.set("source_namespace", Json::string(std::to_string(pin.source_namespace())));
-            out.set("source_sequence", Json::string(std::to_string(pin.sequence())));
-            out.set("preparation_reused", Json::boolean(reused));
-            out.set("preparation_retained", Json::boolean(retain));
-            result.set("result", out);
+            result.set("result",result_fields_view(window_fields(query, native_lease)));
         } else if (operation == "green_response") {
-            const auto name = query.at("context").text();
-            const auto [x, grade] = input(name, query.at("field").text(), false);
-            auto &prepared = context(name);
-            const auto lease = native_lease.value_or(source_execution_lease("scientific-partitioned-green"));
-            lease.check_cancelled();
-            (void)cpu().readmit();
-            const auto &policy = lease.policy();
-            rfc::runtime::admit_execution({1, x.size(), 0, 0, 0}, policy);
-            const rfc::numeric::ExactActionLimits action_limits{x.size(), policy.limits.sparse_entries,
-                policy.limits.scalar_work, policy.limits.integer_bits};
-            const auto checkpoint = [&] {lease.check_cancelled();};
-            const auto lambda = exact_decimal(query.at("lambda").text());
-            auto operation = query;
-            operation = Json::parse(operation.dump());
-            operation.set("field", Json::string(""));
-            const auto cache_key =
-                operation.dump() + "|grade:" + std::to_string(grade) +
-                "|carrier:" + std::to_string(*tensor(query.at("field").text()).output);
-            const bool reused = green_solves.contains(cache_key);
-            if (!reused) {
-                // Charge the complete named square coefficient containers before
-                // preparation. This envelope excludes GMP limbs and process RSS.
-                const auto square = rfc::machine::checked_size_mul(x.size(), x.size());
-                const auto slots = rfc::machine::checked_size_add(
-                    rfc::machine::checked_size_mul(square, 8),
-                    rfc::machine::checked_size_mul(x.size(), 8));
-                const auto slot_bytes = sizeof(std::pair<const std::pair<std::size_t, std::size_t>, Rational>);
-                const auto envelope = rfc::machine::checked_size_mul(slots, slot_bytes);
-                rfc::runtime::StagedResourceLease stage(cpu().coordinator(),
-                    {"partitioned-green-preparation", 1, 0, 0, envelope, 0}, lease);
-                auto h = prepared.study->hodge(rfc::core::Grade{grade}).materialize();
-                auto a = rfc::numeric::ExactMatrix::identity(x.size()).add(h.scale(lambda));
-                std::vector<std::size_t> interior;
-                for (std::size_t i = 0; i < query.at("interior").size(); ++i)
-                    interior.push_back(
-                        static_cast<std::size_t>(query.at("interior").at(i).integer()));
-                const auto carrier = *tensor(query.at("field").text()).output;
-                const auto coordinates = key(query.at("coordinates").at("id"));
-                rfc::local::LinearSolveDeclaration declaration{
-                    carrier,
-                    carrier,
-                    coordinates,
-                    coordinates,
-                    rfc::numeric::IndexDomain::linear(x.size()),
-                    rfc::numeric::IndexDomain::linear(x.size())};
-                // Context, grade and carrier are part of the prepared operator's meaning.
-                rfc::local::PreparedInteriorInterfaceSolve solve(std::move(declaration),
-                    std::move(a), std::move(interior), action_limits, checkpoint);
-                const auto retained_bytes = rfc::machine::checked_size_add(
-                    rfc::machine::checked_size_mul(solve.retained_entries(), slot_bytes),
-                    rfc::machine::checked_size_add(sizeof(solve), cache_key.size()));
-                auto retained = stage.finish(std::move(solve), retained_bytes);
-                green_solves.emplace(cache_key, std::move(retained));
-            }
-            const auto &solve = *green_solves.at(cache_key);
-            auto execution = cpu().coordinator().reserve(1,
-                rfc::machine::checked_size_mul(x.size(), sizeof(Rational) * 8));
-            const auto y = solve.apply(x, action_limits, checkpoint);
-            check_values(y);
-            auto out = Json::object();
-            out.set("field", coordinates(prepared, grade, y));
-            out.set("interior", query.at("interior"));
-            out.set("interface_coordinates", Json::array());
-            auto interface = Json::array();
-            for (const auto i : solve.interface())
-                interface.push(cardinality(i));
-            out.set("interface_coordinates", interface);
-            out.set("factorization_reused", Json::boolean(reused));
-            out.set("retained_entries", cardinality(solve.retained_entries()));
-            out.set("retained_preparations", cardinality(green_solves.size()));
-            out.set("declared_coordinate_families", cardinality(green_spaces.size()));
-            out.set("residual_zero", Json::boolean(true));
-            result.set("result", out);
+            result.set("result", result_fields_view(green_response_fields(query, native_lease)));
         } else if (operation == "inspect")
             result.set("result", source.catalog());
         else if (operation == "provenance")
             result.set("result", provenance(source.resolve_cell(query.at("entity").text())));
         else if (operation == "coverage") {
             result.set("result", coverage(query.at("field").text()));
-        } else if (operation == "field_summary") {
-            const auto &t = tensor(query.at("field").text());
-            Vector values;
-            auto coordinates = Json::array();
-            t.tensor.support().for_each_active([&](std::size_t i) {
-                values.push_back(*t.tensor.state(i));
-                coordinates.push(cardinality(i));
-            });
-            check_values(values);
-            const Vector ones(values.size(), Rational{1});
-            const Rational sum = rfc::numeric::dot(ones, values);
-            const Rational square_sum = rfc::numeric::dot(values, values);
-            auto summary = Json::object();
-            summary.set("reported", cardinality(values.size()));
-            summary.set("missing", cardinality(t.tensor.domain().logical_size() - values.size()));
-            summary.set("coordinates", coordinates);
-            summary.set("sum", rational(sum));
-            summary.set("sum_of_squares", rational(square_sum));
-            summary.set("mean", values.empty() ? Json{}
-                                               : rational(Rational(sum / Rational(values.size()))));
-            summary.set("units",
-                        source.fields.at(query.at("field").text()).declaration.at("units"));
-            result.set(
-                "mathematical_definition",
-                Json::string("exact canonical dot(1,x), dot(x,x), and dot(1,x)/reported_count on "
-                             "explicit native reported support; descriptive observed rows, no "
-                             "population estimator or imputation"));
-            result.set("result", summary);
         } else if (operation == "support_mask") {
-            using namespace rfc::composite;
-            const auto fields = query.at("fields");
-            const auto &first = tensor(fields.at(0).text());
-            const auto identity = fields.dump() + ":" + query.at("mode").text();
-            const bool reused = packed.contains(identity);
-            if (!reused) {
-                AspectSchema schema;
-                for (std::size_t i = 0; i < fields.size(); ++i)
-                    schema.add(fields.at(i).text());
-                AspectPlanes planes(schema, first.tensor.domain().logical_size());
-                for (std::size_t i = 0; i < fields.size(); ++i)
-                    tensor(fields.at(i).text())
-                        .tensor.support()
-                        .for_each_active([&](std::size_t coordinate) {
-                            planes.set(static_cast<AspectId>(i), coordinate);
-                        });
-                BinaryProgram program(2);
-                program.append({BinaryOpcode::LoadAspect, 0, 0, 0, 0, 0});
-                for (std::size_t i = 1; i < fields.size(); ++i) {
-                    program.append(
-                        {BinaryOpcode::LoadAspect, 1, 0, 0, 0, static_cast<AspectId>(i)});
-                    program.append({query.at("mode").text() == "all_reported" ? BinaryOpcode::And
-                                                                              : BinaryOpcode::Or,
-                                    0, 0, 1});
-                }
-                if (query.at("mode").text() == "none_reported")
-                    program.append({BinaryOpcode::Not, 0, 0});
-                packed.emplace(
-                    identity,
-                    std::make_unique<PackedOperation>(
-                        rfc::backend::PreparedPackedBinary(program, planes, {0}), compute));
-            }
-            auto derived = packed.at(identity)->execute(cpu(), query);
-            derived.execution.set("prepared_operation_reused", Json::boolean(reused));
-            auto selection = Json::object();
-            selection.set("coordinates", cardinality(first.tensor.domain().logical_size()));
-            selection.set("selected", cardinality(derived.outputs.at(0).count()));
-            selection.set("native_carrier", Json::string(std::to_string(*first.output)));
-            auto rows = Json::array();
-            const auto carrier =
-                temporal_endpoint_detail::carriers(*source.directory->pin_snapshot())
-                    .at(*first.output);
-            derived.outputs.at(0).for_each_set([&](std::size_t i) {
-                auto row = Json::object();
-                row.set("coordinate", cardinality(i));
-                const auto cell = source.coordinate(carrier->grade.value,i);
-                row.set("entity", source.cell_record(cell).at("id"));
-                row.set("native_key", Json::string(std::to_string(cell.key)));
-                rows.push(row);
-            });
-            selection.set("selection", rows);
-            result.set("arithmetic", Json::string("exact packed Boolean program over native "
-                                                  "reported support; supported zero is reported"));
-            result.set(
-                "mathematical_definition",
-                Json::string(
-                    "declared ordered AND, OR, or NOT(OR) of reported-support planes on one "
-                    "identical native carrier; derived eligibility only, source unmodified"));
-            result.set("execution", derived.execution);
-            result.set("result", selection);
+            const auto native = support_fields(query);
+            result.set("result",result_fields_view(native));
+            result.set("execution",render_record_view(native.at("execution")));
+            result.set("arithmetic",Json::string("exact packed Boolean program over native reported support; supported zero is reported"));
+            result.set("mathematical_definition",Json::string("declared ordered AND, OR, or NOT(OR) of reported support planes on one identical native carrier; derived eligibility only, source unmodified"));
         } else if (operation == "native_boundary") {
-            const auto name = query.at("field_set").text();
-            const auto analysis = native_analysis(name);
-            Vector values;
-            Json execution = Json::object();
-            rfc::database::NativeExecutionReport report;
-            if (query.at("backend").text() == "cpu_cached" ||
-                query.at("backend").text() == "cpu_cached_tiles") {
-                const auto derived = [&]() -> rfc::database::CachedNativeField {
-                    if (query.at("backend").text() == "cpu_cached") {
-                        if (resources)
-                            serial.emplace(resources->reserve(1));
-                        return field_cache.evaluate(analysis);
-                    }
-                    const auto rows = query.has("tile_rows") ? count(query.at("tile_rows"),
-                                                                     coordinate_limit, "tile rows")
-                                                             : 64;
-                    const auto workers =
-                        query.has("workers")
-                            ? count(query.at("workers"), cpu().coordinator().capacity(), "workers")
-                            : 1;
-                    auto &host = cpu();
-                    (void)host.readmit();
-                    auto &coordinator = host.coordinator();
-                    auto reservation = coordinator.reserve(std::min(
-                        workers, std::max(std::size_t{1},
-                                          rfc::machine::ceil_div(
-                                              analysis.binding().target_dimension(), rows))));
-                    rfc::runtime::CpuTileExecutor executor(
-                        {reservation.workers(), coordinator.capacity(), coordinate_limit});
-                    execution.set("requested_workers", cardinality(workers));
-                    execution.set("admitted_workers", cardinality(reservation.workers()));
-                    return field_cache.evaluate_parallel(analysis, executor, rows);
-                }();
-                values = derived.values();
-                report = derived.provenance();
-                execution.set("plan_reused", Json::boolean(derived.reuse().plan));
-                execution.set("result_reused", Json::boolean(derived.reuse().result));
-                execution.set("in_flight_reused", Json::boolean(derived.reuse().in_flight));
-                auto producer = Json::object();
-                if (derived.producer_execution()) {
-                    const auto &facts = *derived.producer_execution();
-                    producer.set("worker_slots", cardinality(facts.worker_slots));
-                    producer.set("launched_threads", cardinality(facts.launched_threads));
-                    producer.set("tiles", cardinality(facts.tiles));
-                    producer.set("completed_tiles", cardinality(facts.completed_tiles));
-                }
-                execution.set("producer_execution", producer);
-                execution.set(
-                    "producer_scope",
-                    Json::string(
-                        "retained producer facts; a result hit performs no new field action"));
-            } else {
-                const auto rows = query.has("tile_rows")
-                                      ? count(query.at("tile_rows"), coordinate_limit, "tile rows")
-                                      : 64;
-                const auto workers =
-                    query.has("workers")
-                        ? count(query.at("workers"), cpu().coordinator().capacity(), "workers")
-                        : 1;
-                const bool automatic = query.at("backend").text() == "cpu_scheduled";
-                auto &host = cpu();
-                const auto current = host.readmit();
-                auto &coordinator = host.coordinator();
-                const auto derived = [&]() -> rfc::database::DerivedParallelNativeField {
-                    if (!automatic) {
-                        const auto prepared = rfc::database::prepare_parallel_field(analysis, rows);
-                        auto workspace = rfc::database::make_parallel_workspace(prepared);
-                        auto reservation = coordinator.reserve(std::min(
-                            workers, std::max<std::size_t>(1, prepared.ranges().tiles().size())));
-                        rfc::runtime::CpuTileExecutor executor(
-                            {reservation.workers(), coordinator.capacity(), coordinate_limit});
-                        return rfc::database::execute_parallel(prepared, workspace, executor);
-                    }
-                    const auto identity = std::pair{name, rows};
-                    const bool reused = scheduled.contains(identity) &&
-                                        scheduled.at(identity)->calibration.has_value();
-                    if (!scheduled.contains(identity))
-                        scheduled.emplace(
-                            identity, std::make_unique<Scheduled>(
-                                          rfc::database::prepare_parallel_field(analysis, rows)));
-                    auto &entry = *scheduled.at(identity);
-                    if (!entry.calibration) {
-                        rfc::database::CpuFieldCalibrationPolicy policy;
-                        policy.worker_candidates.clear();
-                        const auto ceiling = std::max<std::size_t>(
-                            1, std::min(coordinator.capacity(),
-                                        entry.operation.ranges().tiles().size()));
-                        for (std::size_t candidate = 1; candidate < ceiling;) {
-                            policy.worker_candidates.push_back(candidate);
-                            if (candidate > ceiling / 2)
-                                break;
-                            candidate *= 2;
-                        }
-                        policy.worker_candidates.push_back(ceiling);
-                        policy.call_limit = rfc::machine::checked_size_add(
-                            1, rfc::machine::checked_size_mul(
-                                   policy.worker_candidates.size(),
-                                   rfc::machine::checked_size_add(policy.samples, policy.warmups)));
-                        entry.calibration = rfc::database::calibrate_cpu_field(
-                            entry.operation, entry.workspace, coordinator, current, policy);
-                    }
-                    const auto chosen = rfc::database::execute_scheduled_field(
-                        entry.operation, entry.workspace, coordinator, current, *entry.calibration);
-                    execution.set("calibration_reused", Json::boolean(reused));
-                    execution.set("selected_workers", cardinality(chosen.selected_workers));
-                    auto samples = Json::array();
-                    for (const auto &timing : entry.calibration->timings()) {
-                        auto sample = Json::object();
-                        sample.set("workers", cardinality(timing.workers));
-                        sample.set("median_nanoseconds",
-                                   Json::string(std::to_string(timing.median_nanoseconds)));
-                        auto times = Json::array();
-                        for (const auto ns : timing.nanosecond_samples)
-                            times.push(Json::string(std::to_string(ns)));
-                        sample.set("nanosecond_samples", times);
-                        samples.push(sample);
-                    }
-                    execution.set("calibration", samples);
-                    execution.set(
-                        "selection",
-                        Json::string("canonical lowest measured median among currently fitting "
-                                     "candidates; owning prepared operation and CPU facts"));
-                    return chosen.field;
-                }();
-                execution.set("cpu_resources", host.report());
-                values = derived.values();
-                report = derived.provenance();
-                execution.set("requested_workers",
-                              cardinality(derived.execution().requested_workers));
-                execution.set("worker_slots", cardinality(derived.execution().worker_slots));
-                execution.set("launched_threads",
-                              cardinality(derived.execution().launched_threads));
-                execution.set("tiles", cardinality(derived.execution().tiles));
-                execution.set("completed_tiles", cardinality(derived.execution().completed_tiles));
-            }
-            check_values(values);
-            auto output = Json::array();
-            for (const auto &binding : analysis.binding().outputs()) {
-                auto row = Json::object();
-                row.set("entity", source.cell_record(binding.cell).at("id"));
-                row.set("carrier", Json::string(std::to_string(binding.carrier)));
-                row.set("coordinate_system", Json::string(std::to_string(binding.coordinates)));
-                row.set("values",
-                        vector_json(Vector(values.data() + binding.offset,
-                                           values.data() + binding.offset + binding.dimension)));
-                row.set("support",
-                        Json::string("complete; supported zero and cancellation retained"));
-                output.push(row);
-            }
-            execution.set("profile", Json::string(report.profile));
-            execution.set("implementation", Json::string(report.implementation));
-            execution.set("backend", Json::string("exact_cpu"));
-            execution.set("fallback", Json::boolean(report.fallback));
-            execution.set("retained_occurrences",
-                          cardinality(analysis.layout().retained_occurrences));
-            execution.set("active_occurrences", cardinality(analysis.layout().active_occurrences));
-            execution.set("source_coordinates", cardinality(analysis.layout().source_coordinates));
-            execution.set("target_coordinates", cardinality(analysis.layout().target_coordinates));
-            auto decisions = Json::array();
-            for (const auto &decision : report.decisions) {
-                auto row = Json::object();
-                row.set("subject", Json::string(decision.choice));
-                row.set("origin", Json::string(decision.origin));
-                row.set("value", Json::string(decision.value));
-                row.set("constraints", Json::string(decision.constraints));
-                decisions.push(row);
-            }
-            execution.set("decisions", decisions);
-            result.set("execution", execution);
-            result.set("field_set", source.field_sets.at(name).declaration);
-            auto retained = Json::array();
-            for (const auto &binding : analysis.binding().occurrences()) {
-                auto occurrence = Json::object();
-                occurrence.set("grade", cardinality(binding.occurrence.upper_grade.value));
-                occurrence.set("key", Json::string(std::to_string(binding.occurrence.key.value)));
-                occurrence.set("upper", source.cell_record(binding.upper).at("id"));
-                occurrence.set("lower", source.cell_record(binding.lower).at("id"));
-                occurrence.set("active", Json::boolean(binding.active));
-                occurrence.set("coefficient", rational(binding.coefficient));
-                occurrence.set("map",
-                               binding.map ? Json::string(std::to_string(*binding.map)) : Json{});
-                occurrence.set(
-                    "map_role",
-                    Json::string(!binding.map
-                                     ? "declared_constant_identity"
-                                     : (binding.role == TemporalTensorRole::RealizedIncidenceMap
-                                            ? "realized_incidence"
-                                            : "coefficient_independent")));
-                occurrence.set(
-                    "evidence",
-                    source.evidence(source.occurrence_record(binding.occurrence).at("evidence")));
-                retained.push(occurrence);
-            }
-            result.set("retained_occurrences", retained);
-            result.set(
-                "mathematical_definition",
-                Json::string("native rational B_k field action; complete declared fibers and "
-                             "occurrence maps, with retained inactive and repeated occurrences"));
-            result.set("result", output);
-        } else {
-            const auto name = query.at("context").text();
-            auto &prepared = context(name);
-            const auto [values, grade] = input(name, query.at("field").text());
-            if (operation == "structure_transition") {
-                const auto other_name = query.at("other_context").text();
-                auto &target = context(other_name);
-                const auto next = input(other_name, query.at("new_field").text()).first;
-                result.set("result",
-                           research_detail::compare_prepared_structures(
-                               temporal(prepared), temporal(target), rfc::core::Grade{grade},
-                               prepared.to_ambient, target.to_ambient, values, next,
-                               exact_decimal(query.at("lambda").text()), nullptr, false,
-                               research_detail::FactoredTemporalMaps::requested(query)));
-            } else if (operation == "typed_moment") {
-                const auto other = input(name, query.at("other_field").text()).first;
-                result.set("mathematical_definition",
-                           Json::string("<x,L_k^n y>_M; channels remain independent"));
-                result.set("result",
-                           rational(prepared.study->moment(
-                               rfc::core::Grade{grade},
-                               count(query.at("order"), std::numeric_limits<std::size_t>::max(),
-                                     "moment order"),
-                               values, other)));
-            } else if (operation == "temporal_moment_change") {
-                const auto other_name = query.at("other_context").text();
-                auto &target = context(other_name);
-                const auto old_y = input(name, query.at("other_field").text()).first;
-                const auto new_x = input(other_name, query.at("new_field").text()).first;
-                const auto new_y = input(other_name, query.at("new_other_field").text()).first;
-                const auto order = count(query.at("order"), std::numeric_limits<std::size_t>::max(),
-                                         "moment order");
-                const auto form = [order, grade](const NativeStudy &study) {
-                    const auto hodge = study.hodge(rfc::core::Grade{grade});
-                    const auto power =
-                        rfc::field::materialize_action_matrix(hodge.metric(), [&](const Vector &v) {
-                            return rfc::statistics::hodge_power_apply(hodge, order, v);
-                        });
-                    return study.tower().metrics()[grade].materialize().multiply(power);
-                };
-                const auto old_form = form(*prepared.study);
-                const auto new_form = form(*target.study);
-                const auto identity =
-                    query.has("correspondence")
-                        ? temporal_map(name, other_name, grade, query.at("correspondence"))
-                        : rfc::numeric::ExactMatrix::identity(values.size());
-                const auto change = rfc::temporal::changing_dimension_cross_moment(
-                    values, old_y, old_form, new_x, new_y, new_form, identity, identity);
-                const Rational direct =
-                    target.study->moment(rfc::core::Grade{grade}, order, new_x, new_y) -
-                    prepared.study->moment(rfc::core::Grade{grade}, order, values, old_y);
-                require(change.total == direct, "native finite cross-moment identity failed");
-                auto terms = Json::object();
-                terms.set("pullback_form", rational(change.pullback_form));
-                terms.set("left_innovation", rational(change.left_innovation));
-                terms.set("right_innovation", rational(change.right_innovation));
-                terms.set("innovation_interaction", rational(change.innovation_interaction));
-                terms.set("total", rational(change.total));
-                terms.set("identity_verified", Json::boolean(true));
-                const auto t0 = source.contexts.at(name).declaration.at("time");
-                const auto t1 = source.contexts.at(other_name).declaration.at("time");
-                const Rational interval = exact_decimal(t1.at("position").text()) -
-                                          exact_decimal(t0.at("position").text());
-                terms.set("interval", rational(interval));
-                terms.set("time_unit", t0.at("unit"));
-                terms.set("finite_rate",
-                          rational(rfc::temporal::finite_rate(change.total, interval)));
-                result.set(
-                    "mathematical_definition",
-                    Json::string(
-                        "complete finite cross-moment change with form, left/right innovation and "
-                        "interaction; declared or established native correspondence"));
-                result.set("result", terms);
-            } else {
-                rfc::field::OperatorRequest request;
-                request.grade = rfc::core::Grade{grade};
-                request.kind = rfc::field::OperatorKind::Hodge;
-                auto output_grade = grade;
-                if (operation == "boundary") {
-                    request.kind = rfc::field::OperatorKind::Boundary;
-                    --output_grade;
-                }
-                if (operation == "adjoint") {
-                    request.kind = rfc::field::OperatorKind::Adjoint;
-                    ++request.grade.value;
-                    ++output_grade;
-                }
-                Vector output;
-                if (operation == "green_action") {
-                    const auto lambda = exact_rational(query.at("lambda").text());
-                    const auto answer =
-                        prepared.study->green_action(rfc::core::Grade{grade}, lambda, values);
-                    require(answer.exact &&
-                                rfc::numeric::is_zero(rfc::numeric::sub(
-                                    rfc::numeric::add(
-                                        answer.value,
-                                        rfc::numeric::scale(
-                                            lambda, prepared.study->hodge(rfc::core::Grade{grade})
-                                                        .apply(answer.value))),
-                                    values)),
-                            "native Green action reconstruction residual");
-                    output = answer.value;
-                    result.set("green_iterations", cardinality(answer.iterations));
-                    result.set(
-                        "green_execution",
-                        Json::string(
-                            "rfc::field::exact_green_apply; factored boundary and metric actions"));
-                    result.set("residual_verified", Json::boolean(true));
-                } else
-                    output = prepared.study->execute(request, values);
-                result.set(
-                    "mathematical_definition",
-                    Json::string(
-                        operation == "green_action" ? "(I + lambda L_k) x = j; exact operator "
-                                                      "action with complete output field"
-                        : operation == "hodge"
-                            ? "L_k x = (B_k^dagger B_k + B_(k+1) B_(k+1)^dagger) x"
-                            : (operation == "boundary" ? "B_k x" : "M_(k+1)^-1 B_(k+1)^T M_k x")));
-                result.set("output_grade", cardinality(output_grade));
-                result.set("result", coordinates(prepared, output_grade, output));
-            }
-        }
+            const auto native = native_boundary_fields(query);
+            const auto view = result_fields_view(native);
+            for (const auto &name : {"result", "field_set", "retained_occurrences", "mathematical_definition"})
+                result.set(name, view.at(name));
+            result.set("execution", render_record_view(native.at("execution")));
+        } else throw std::invalid_argument("direct scientific action dispatch mismatch");
         return seal(result, "certificate_sha256");
     }
 };
@@ -2636,6 +3200,21 @@ Json ScientificSession::execute(const Json &query) {
     std::lock_guard lock(state_->mutex);
     state_->admit(admitted);
     return state_->run(admitted);
+}
+Json ScientificSession::execute_structure_transition(const Json &query, rfc::runtime::ExecutionLease lease) {
+    lease.check_cancelled();auto admitted=Json::parse(query.dump());
+    require(admitted.at("operation").text()=="structure_transition","structure lease requires a declared transition");
+    std::lock_guard lock(state_->mutex);state_->admit(admitted);return state_->run(admitted,std::move(lease));
+}
+Json ScientificSession::execute_comparison(const Json &query, rfc::runtime::ExecutionLease lease) {
+    lease.check_cancelled();
+    auto admitted = Json::parse(query.dump());
+    const auto operation = admitted.at("operation").text();
+    require(operation == "paired_field_contrasts" || operation == "controlled_pairings",
+            "comparison lease requires paired or controlled fields");
+    std::lock_guard lock(state_->mutex);
+    state_->admit(admitted);
+    return state_->run(admitted, std::move(lease));
 }
 Json ScientificSession::execute_tensor_window(const Json &query,
                                                rfc::runtime::ExecutionLease lease) {

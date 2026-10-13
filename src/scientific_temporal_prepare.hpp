@@ -11,7 +11,10 @@ namespace gadget::scientific_detail {
 class PreparedTemporalStudy {
     using Matrix = rfc::numeric::ExactMatrix;
     using Grade = rfc::core::Grade;
-    static rfc::numeric::ExactActionLimits limits() {
+    std::optional<rfc::numeric::ExactActionLimits> action_limits_;
+    std::function<void()> checkpoint_;
+    rfc::numeric::ExactActionLimits limits() const {
+        if (action_limits_) return *action_limits_;
         const auto addressable = std::numeric_limits<std::size_t>::max();
         return {addressable, addressable, addressable, addressable};
     }
@@ -21,6 +24,8 @@ class PreparedTemporalStudy {
         const NativeStudy &study_;
         Grade grade_;
         Rational lambda_;
+        rfc::numeric::ExactActionLimits limits_;
+        std::function<void()> checkpoint_;
         std::optional<rfc::field::PreparedWoodburySolve> woodbury_;
         std::optional<rfc::numeric::PreparedExactSolve> direct_;
         std::optional<Matrix> matrix_;
@@ -41,7 +46,8 @@ class PreparedTemporalStudy {
 
       public:
         Green(PreparedTemporalStudy &prepared, Grade grade, Rational lambda)
-            : study_(prepared.study()), grade_(grade), lambda_(std::move(lambda)) {
+            : study_(prepared.study()), grade_(grade), lambda_(std::move(lambda)),
+              limits_(prepared.limits()), checkpoint_(prepared.checkpoint_) {
             using namespace rfc;
             const auto &study = study_;
             require(lambda_ > 0, "prepared temporal Green parameter must be positive");
@@ -77,16 +83,16 @@ class PreparedTemporalStudy {
                            adjoint(study, next).transpose(), lower);
                 }
                 woodbury_.emplace(Matrix::identity(n), std::move(u),
-                                  Matrix::diagonal(Vector(m, lambda_)), std::move(v), limits());
+                                  Matrix::diagonal(Vector(m, lambda_)), std::move(v), limits_, checkpoint_);
             } else {
                 // No smaller adjacent-coordinate system: reuse the native
                 // exact factorization on the original field coordinates.
                 direct_.emplace(Matrix::identity(n).add(prepared.hodge(grade).scale(lambda_)),
-                                limits());
+                                limits_, checkpoint_);
             }
         }
         Vector apply(const Vector &x) const {
-            rfc::numeric::ExactActionGuard guard(limits());
+            rfc::numeric::ExactActionGuard guard(limits_,checkpoint_);
             const auto input = guard.canonical_input(x);
             auto value = woodbury_ ? woodbury_->apply(input, guard) : direct_->apply(input, guard);
             require(rfc::numeric::add(value, rfc::numeric::scale(
@@ -123,15 +129,18 @@ class PreparedTemporalStudy {
     }
 
   public:
-    explicit PreparedTemporalStudy(const NativeStudy &study) : study_(study) {}
+    explicit PreparedTemporalStudy(const NativeStudy &study,
+        std::optional<rfc::numeric::ExactActionLimits> limits = {}, std::function<void()> checkpoint = {})
+        : action_limits_(limits), checkpoint_(std::move(checkpoint)), study_(study) {}
     explicit PreparedTemporalStudy(std::shared_ptr<const NativeStudy> study)
         : owner_(std::move(study)), study_(checked(owner_)) {}
     const NativeStudy &study() const { return study_; }
+    const std::function<void()> &checkpoint() const { return checkpoint_; }
     PreparedRelationalField &sectors(Grade grade) {
         auto it = sectors_.find(grade.value);
         if (it == sectors_.end())
             it = sectors_.emplace(grade.value,
-                    std::make_unique<PreparedRelationalField>(study_, grade)).first;
+                    std::make_unique<PreparedRelationalField>(study_, grade, action_limits_,checkpoint_)).first;
         return *it->second;
     }
     const Matrix &hodge(Grade grade) {

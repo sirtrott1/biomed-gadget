@@ -101,10 +101,27 @@ int main() {
             const std::array original_planes{source.planes().plane(0).words(), source.planes().plane(1).words()};
             const auto original_program = source.program().instructions();
             PackedOperation operation(source);
+            const auto retained_owner = operation.prepared();
+            check(retained_owner.same_owner(source), "accessor replaced the actual prepared owner");
+            check(retained_owner.program().instructions() == original_program &&
+                  retained_owner.outputs() == source.outputs() &&
+                  retained_owner.planes().plane(0).words() == original_planes[0] &&
+                  retained_owner.planes().plane(1).words() == original_planes[1],
+                  "accessor changed ordered program, planes or output occurrences");
             const auto serial = operation.execute(*host, query(1, 1));
             oracle(serial, slots); released(*host);
             const auto parallel = operation.execute(*host, query(workers, 1));
             oracle(parallel, slots); released(*host);
+            const auto survivor = [&] {
+                PackedOperation temporary(source);
+                return temporary.prepared();
+            }();
+            check(survivor.same_owner(source), "prepared owner expired with operation");
+            auto complete = survivor.empty_result(std::numeric_limits<std::size_t>::max());
+            survivor.cpu_words(0, survivor.words(), complete);
+            for (std::size_t output = 0; output < complete.size(); ++output)
+                check(complete[output].words() == serial.outputs[output].words(),
+                      "surviving owner changed a complete output occurrence");
             for (std::size_t output = 0; output < serial.outputs.size(); ++output)
                 check(serial.outputs[output].words() == parallel.outputs[output].words(),
                       "serial and parallel complete output differ");

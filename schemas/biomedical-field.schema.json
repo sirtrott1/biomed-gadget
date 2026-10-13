@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.biomedical.field.request.v1",
+  "type": "object",
+  "properties": {
+    "schema": {"const": "gadget.biomedical.field.request.v1"},
+    "source_digest": {"type": "string", "minLength": 1},
+    "study_digest": {"type": "string", "minLength": 1},
+    "field": {"type": "string", "minLength": 1},
+    "endpoint": {"enum": ["Kd", "Ki", "IC50", "EC50"]},
+    "units": {"const": "nM"}
+  },
+  "required": ["schema", "source_digest", "study_digest", "field", "endpoint", "units"],
+  "additionalProperties": false
+}

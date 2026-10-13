@@ -6,6 +6,10 @@ namespace gadget {
 Json plan_database_fetch(const Json &request);
 Json fetch_databases(const Json &request, const fs::path &destination);
 Json database_capabilities();
+// Retain declared original files beside an unchanged admitted study. The
+// declaration records provenance; measurement correspondence is the adapter's
+// separately checked contract, rather than an inference from matching hashes.
+NativeRecord retain_study_sources(const ScientificStudy &study, const NativeRecord &request);
 NativeRecord capture_database_snapshot(const fs::path &directory);
 void import_evidence(const fs::path &snapshot, const fs::path &destination,
                      std::uint32_t adapter_version = 2);
@@ -21,6 +25,10 @@ class EvidenceStore {
     // The request selects original assertions and a question on this frozen
     // snapshot. Native context retains those assertions and their byte owners.
     NativeRecord source_context(const NativeRecord &request) const;
+    // Check the admitted reported point projection against original assertions.
+    // The receipt retains separate study/evidence owners and a native selector.
+    NativeRecord bind_reported_field(const ScientificStudy &study,
+                                    const NativeRecord &request) const;
     // Admit a prospective query or source annotation without executing it.
     // Snapshot retrieval does not establish historical or biological time.
     NativeRecord admit_proposal(const NativeRecord &context_request,

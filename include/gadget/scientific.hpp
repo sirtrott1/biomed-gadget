@@ -12,6 +12,11 @@
 namespace rfc::storage { class NativeAtlasSource; }
 namespace gadget {
 class CpuResources;
+// Reports producer availability. Source and query admission remain required.
+bool has_native_scientific_publisher(std::string_view operation) noexcept;
+// Select actual retained native values through archived scientific views.
+// Publication and overlay traversal preserves the selected value's owner.
+NativeRecord select_scientific_result(const NativeRecord &value, const NativeRecord &path);
 // Recompute a retained model or finite calibration operation from its original
 // study bytes and query, then verify its complete fields, carriers and support.
 NativeRecord replay_scientific_record(const NativeRecord &publication,
@@ -98,6 +103,8 @@ class ScientificSession {
     Json execute_native_hodge(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_native_observation(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_native_novelty(const Json &query, rfc::runtime::ExecutionLease lease);
+    Json execute_structure_transition(const Json &query, rfc::runtime::ExecutionLease lease);
+    Json execute_comparison(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_tensor_window(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_green_response(const Json &query, rfc::runtime::ExecutionLease lease);
     void validate(const Json &query);

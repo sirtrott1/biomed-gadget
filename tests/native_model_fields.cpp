@@ -2,6 +2,7 @@
 #include <gadget/record_view.hpp>
 #include <gadget/scientific.hpp>
 #include <gadget/resources.hpp>
+#include <gadget/workflow.hpp>
 #include <rfc/storage/rfcx.hpp>
 #include <iostream>
 
@@ -131,6 +132,11 @@ void audit_fields(const NativeRecord &owner, const NativeRecord &view) {
             if (tensor.input) check(tensor.tensor.domain().rank() == 2, "map lost ordered axes");
             return;
         }
+        if (view.has("schema") && view.at("schema").text() == "gadget.scientific.publication.view.v1") {
+            const auto child = NativeRecord::decode(view.at("publication").bytes());
+            audit_fields(child, child.at("view")); audit_fields(child, child.at("bindings"));
+            return;
+        }
         if (view.has("schema")) check(view.at("schema").text() != "gadget.scientific.tensor.stage.v1", "unpublished staged result escaped");
         for (const auto &name : view.names()) audit_fields(owner, view.at(name));
     } else if (view.kind() == NativeRecordKind::Array) {
@@ -235,10 +241,23 @@ void verify_green(const std::shared_ptr<const ScientificStudy> &study) {
         ScientificSession session(study, resources);
         const auto result = session.execute_green_response(query, rfc::runtime::ExecutionLease(policy));
         check(result.at("result").at("interface_coordinates").size() == 0, "complete interior became a truncated partition");
-        const auto field = result.at("result").at("field");
-        check(field.size() == n, "Green truncated output coordinates");
+        const auto result_field = result.at("result").at("field");
+        check(result_field.size() == n, "Green truncated output coordinates");
         for (std::size_t i = 0; i < n; ++i)
-            check(exact_rational(field.at(i).at("value").at("rational").text()) == Rational(std::to_string(i)), "Green line oracle differs");
+            check(exact_rational(result_field.at(i).at("value").at("rational").text()) == Rational(std::to_string(i)), "Green line oracle differs");
+        const auto native = session.execute_record(admit_record_view(query));
+        const auto native_fields = native.at("result").at("fields");
+        const auto binding = native_fields.at("bindings").at(0);
+        const auto *retained = field(native_fields, binding.at("output"));
+        check(retained->tensor.domain().logical_size() == n && retained->tensor.support().count() == n,
+              "Green native result omitted original coordinate support");
+        for (std::size_t i = 0; i < n; ++i)
+            check(state(retained->tensor, i) == Rational(std::to_string(i)), "native Green line oracle differs");
+        const auto replayed = replay_scientific_record(native);
+        const auto replay_fields = replayed.at("result").at("fields");
+        check(rfc::storage::temporal_endpoint_detail::tensor_equal(*retained,
+                  *field(replay_fields, replay_fields.at("bindings").at(0).at("output"))),
+              "native Green portable replay changed complete support or values");
         check(session.execute(query).at("result").at("factorization_reused").boolean(), "Green discarded source-bound preparation");
         if (n == 3) {
             for (std::size_t i = 1; i < 137; ++i) {
@@ -274,6 +293,7 @@ void verify_green(const std::shared_ptr<const ScientificStudy> &study) {
     check(refused, "Green did not identify exhausted buffer resource");
 }
 Rational scalar(const NativeRecord &owner, const NativeRecord &descriptor) {
+    if (descriptor.has("index")) return state(field(owner,descriptor)->tensor,descriptor.at("index").integer().get_ui());
     const auto coefficients = values(owner, descriptor);
     check(coefficients.size() == 1, "native scalar shape differs");
     return coefficients.front();
@@ -461,6 +481,491 @@ void verify_sections(const NativeRecord &publication) {
         }
     }
 }
+void verify_ablation(const NativeRecord &publication) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner, view); audit_fields(owner, owner.at("bindings"));
+    for (std::size_t a = 0; a < view.at("ablations").size(); ++a) {
+        const auto variant = view.at("ablations").at(a);
+        bool source_changed = false;
+        for (std::size_t k = 0; k < variant.at("removed_cells").size(); ++k)
+            source_changed = source_changed || variant.at("removed_cells").at(k).size() != 0;
+        for (std::size_t g = 0; g < variant.at("grades").size(); ++g) {
+            const auto grade = variant.at("grades").at(g);
+            const auto &inclusion = *field(owner, grade.at("inclusion"));
+            const auto &restriction = *field(owner, grade.at("cochain_restriction"));
+            check(inclusion.input == restriction.output && inclusion.output == restriction.input,
+                  "ablation inclusion/restriction lost ordered source axes");
+            check((inclusion.input != inclusion.output) == source_changed, "actual source owner identity differs");
+            const auto &boundary = *field(owner, grade.at("boundary"));
+            check(boundary.input == inclusion.input, "retained boundary lost its actual source domain");
+            if (grade.has("harmonic_representatives")) {
+                const auto &harmonic = *field(owner, grade.at("harmonic_representatives"));
+                const auto &included = *field(owner, grade.at("included_representatives"));
+                check(harmonic.input == included.input && harmonic.output == inclusion.input &&
+                      included.output == inclusion.output, "complete homology family source axes differ");
+                const auto &kernel = *field(owner, grade.at("killed_class_coefficients"));
+                check(kernel.output == harmonic.input && kernel.input != kernel.output,
+                      "killed-class free axes merged with harmonic parameters");
+            }
+        }
+        for (std::size_t f = 0; f < variant.at("fields").size(); ++f) {
+            const auto record = variant.at("fields").at(f), sectors = record.at("sectors");
+            const auto full = values(owner, sectors.at("full"));
+            check(rfc::numeric::add(rfc::numeric::add(values(owner, sectors.at("gradient")),
+                  values(owner, sectors.at("curl"))), values(owner, sectors.at("harmonic"))) == full,
+                  "ablation full native sectors do not reconstruct");
+            check(full == values(owner, record.at("restricted_input")), "retained source input lost coefficients");
+            const auto quadrances = record.at("quadrances");
+            check(scalar(owner, quadrances.at("gradient")) + scalar(owner, quadrances.at("curl")) +
+                  scalar(owner, quadrances.at("harmonic")) == scalar(owner, quadrances.at("full")),
+                  "ablation complete quadrance budget differs");
+            const auto green = record.at("green");
+            check(rfc::numeric::add(values(owner, green.at("structure_term")), values(owner, green.at("field_term"))) ==
+                      values(owner, green.at("change")), "native Green cross-source terms do not reconstruct");
+            check(rfc::numeric::sub(values(owner, green.at("value")), values(owner, green.at("restricted_original"))) ==
+                      values(owner, green.at("change")), "Green transport lost actual retained coordinates");
+        }
+    }
+    for (std::size_t b = 0; b < owner.at("bindings").size(); ++b) {
+        const auto binding = owner.at("bindings").at(b);
+        if (binding.at("kind").text() != "actual_ablation_source_axes") continue;
+        const auto actual = NativeRecord::decode(binding.at("source").at("publication").bytes());
+        const auto grades = binding.at("grades");
+        for (std::size_t g = 0; g < grades.size(); ++g) {
+            const auto grade = grades.at(g);
+            check(grade.at("coordinate_carrier").integer() != grade.at("lattice_carrier").integer(),
+                  "integral and realized coordinates identified by dimension");
+            const auto &metric = *field(actual, actual.at("view").at("grades").at(g).at("metric"));
+            check(metric.role == rfc::storage::TemporalTensorRole::Metric &&
+                  metric.output == grade.at("source_carrier").integer().get_ui(), "actual source metric carrier missing");
+        }
+    }
+    if (!view.has("original_sheaf")) return;
+    auto request = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[]})");
+    request.set("source_namespace", Json::string(std::to_string(publication.source_namespace())));
+    request.set("cutoff", Json::integer(static_cast<std::int64_t>(publication.publication_history()->last_sequence())));
+    std::vector<NativeRecord> selected_fields;
+    for (const auto &path_text : {
+            R"(["original_sheaf","sections",0,"glued"])",
+            R"(["ablations",0,"sheaf","sections",0,"glued"])",
+            R"(["ablations",0,"sheaf","sections",0,"projection_order_defect"])",
+            R"(["ablations",0,"sheaf","sections",0,"projection_order_quadrance"])"}) {
+        const auto path = Json::parse(path_text);
+        const auto selected = select_scientific_result(view, admit_record_view(path));
+        const auto encoded = selected.encoded_tensor(selected.at("tensor").integer().get_ui());
+        check(encoded.has_value(), "archived or overlay claim lost actual tensor owner");
+        check(encoded->tensor().support().contains(0), "claim fixture has no original supported coordinate");
+        auto item = Json::object();
+        item.set("path", path); item.set("coordinate", Json::integer(0));
+        item.set("value_type", Json::string("rational")); item.set("comparison", Json::string("equal"));
+        item.set("value", Json::string(encoded->tensor().value(0)->get_str()));
+        request.at("items").push(item); selected_fields.push_back(selected);
+    }
+    const auto receipt = check_certificate_claims_record(publication, admit_record_view(request)).at("result");
+    check(receipt.at("matched").integer() == selected_fields.size() && receipt.at("contradicted").integer() == 0,
+          "native archived and overlay literal comparisons differ");
+    for (std::size_t i = 0; i < selected_fields.size(); ++i) {
+        const auto &selected = selected_fields[i];
+        const auto encoded = selected.encoded_tensor(selected.at("tensor").integer().get_ui());
+        const auto binding = receipt.at("checks").at(i).at("binding");
+        check(binding.at("source_namespace").text() == std::to_string(encoded->publication().source_namespace()) &&
+              binding.at("cutoff").integer() == encoded->publication().sequence(), "claim receipt changed actual selected owner");
+    }
+    check(selected_fields[0].source_namespace() != publication.source_namespace() &&
+          selected_fields[1].source_namespace() != publication.source_namespace(), "child publications became enclosing fields");
+    check(selected_fields[2].source_namespace() == publication.source_namespace(), "overlay additions lost enclosing field owner");
+    auto foreign = Json::parse(request.dump());
+    foreign.set("source_namespace", Json::string(std::to_string(selected_fields[0].source_namespace())));
+    bool refused = false;
+    try { (void)check_certificate_claims_record(publication, admit_record_view(foreign)); }
+    catch (const std::invalid_argument &) { refused = true; }
+    check(refused, "child namespace substituted for actual operation claim owner");
+    for (const auto &bad_path : {R"(["ablations",-1])", R"(["original_sheaf","sections",999999,"glued"])",
+                                 R"(["ablations",0,"sheaf","sections",0,"absent"])", R"(["ablations","0"])"}) {
+        refused = false;
+        try { (void)select_scientific_result(view, admit_record_view(Json::parse(bad_path))); }
+        catch (const std::exception &) { refused = true; }
+        check(refused, "invalid archived or overlay path accepted");
+    }
+}
+void verify_direct(const NativeRecord &publication, const NativeRecord &original) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner, view); audit_fields(owner, owner.at("bindings"));
+    const auto binding = owner.at("bindings").at(0);
+    if (binding.at("kind").text() == "actual_reported_field_summary") {
+        const auto &input = *field(owner, binding.at("source_field"));
+        Rational sum{0}, squares{0}; std::size_t count{0};
+        input.tensor.support().for_each_active([&](std::size_t i) {
+            const auto x = *input.tensor.state(i); sum += x; squares += x*x; ++count;
+        });
+        check(view.at("reported").integer() == count &&
+              view.at("missing").integer() == input.tensor.domain().logical_size()-count,
+              "summary changed original supported versus missing coordinates");
+        check(scalar(owner,view.at("sum")) == sum && scalar(owner,view.at("sum_of_squares")) == squares,
+              "summary differs from original complete supported field");
+        const auto &mean = field(owner,view.at("mean"))->tensor;
+        check(mean.support().count() == (count ? 1u : 0u), "empty mean became supported zero");
+        if (count) check(state(mean,0) == sum/Rational(count), "native mean differs");
+        auto request = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[{"path":["mean"],"value_type":"rational","comparison":"equal","value":"0"}]})");
+        request.set("source_namespace", Json::string(std::to_string(publication.source_namespace())));
+        request.set("cutoff", Json::integer(static_cast<std::int64_t>(publication.publication_history()->last_sequence())));
+        if (count) {
+            request.at("items").at(0).set("value", Json::string(Rational(sum/Rational(count)).get_str()));
+            check(check_certificate_claims_record(publication,admit_record_view(request)).at("result").at("matched").integer()==1,
+                  "rational object native claim lost actual mean owner");
+        } else {
+            bool refused=false;
+            try {(void)check_certificate_claims_record(publication,admit_record_view(request));}
+            catch(const std::invalid_argument &e){refused=std::string(e.what()).find("missing")!=std::string::npos;}
+            check(refused,"unsupported empty mean accepted as supported zero claim");
+        }
+        check(field(owner,binding.at("reported_values"))->output == field(owner,binding.at("weights"))->output,
+              "summary rows and weights lost actual reported coordinate axis");
+    } else {
+        check(binding.at("kind").text() == "actual_direct_source_action", "direct action owner absent");
+        const auto &input = *field(original,binding.at("input_tensor"));
+        check(binding.at("input_carrier").integer() == *input.output, "original direct input carrier differs");
+        check(NativeRecord::decode(binding.at("original_study_publication").bytes()).encode() == original.encode(),
+              "direct action lost exact original study archive");
+        const auto context_input = values(owner,binding.at("context_input"));
+        const auto &map = field(owner,binding.at("input_realization"))->tensor;
+        const auto shape = map.domain().extents();
+        check(shape.size()==2 && shape[0]==context_input.size() && shape[1]==input.tensor.domain().logical_size(),
+              "direct context realization shape differs");
+        for (std::size_t i=0;i<shape[0];++i) {
+            Rational value{0};
+            for (std::size_t j=0;j<shape[1];++j) {
+                const auto coefficient=state(map,i*shape[1]+j);
+                if(coefficient!=0)value+=coefficient*state(input.tensor,j);
+            }
+            check(value==context_input[i], "context input differs from original tensor and actual lift");
+        }
+        const auto output=values(owner,binding.at("output"));
+        check(output.size()==view.at("result").size(), "direct result lost complete coordinates");
+        for(std::size_t i=0;i<output.size();++i) {
+            const auto coordinate=view.at("result").at(i);
+            check(coordinate.at("coordinate").integer()==i && scalar(owner,coordinate.at("value"))==output[i],
+                  "direct native coordinate view changed actual output field");
+        }
+        std::size_t metrics{};
+        for(const auto &t:owner.endpoint()->tensors)if(t.role==rfc::storage::TemporalTensorRole::Metric)++metrics;
+        check(metrics==owner.endpoint()->source.grade_count(), "direct source lacks complete declared metrics");
+    }
+}
+void verify_censored(const NativeRecord &publication, const NativeRecord &original, const NativeRecord &query) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner, view); audit_fields(owner, owner.at("bindings"));
+    const auto binding = owner.at("bindings").at(0);
+    check(binding.at("kind").text() == "actual_censored_endpoint_inputs", "censored actual input binding absent");
+    check(std::ranges::equal(binding.at("original_study_publication").bytes(), original.encode()),
+          "censored original publication changed");
+    const auto source_axis = binding.at("source_carrier").integer().get_ui();
+    const auto group_axis = binding.at("group_carrier").integer().get_ui();
+    const auto contrast_axis = binding.at("contrast_carrier").integer().get_ui();
+    check(source_axis != group_axis && group_axis != contrast_axis && source_axis != contrast_axis,
+          "censored independently declared axes identified by dimension");
+    const auto &lift = *field(owner, binding.at("input_realization"));
+    const auto n = lift.tensor.domain().extents().at(0), ambient = lift.tensor.domain().extents().at(1);
+    std::map<std::string, const rfc::storage::TemporalTensor *> inputs;
+    for (std::size_t f = 0; f < binding.at("inputs").size(); ++f) {
+        const auto input = binding.at("inputs").at(f);
+        const auto &old = *field(original, input.at("tensor"));
+        const auto &context = *field(owner, input.at("context_values"));
+        check(old.output && input.at("carrier").integer() == *old.output && context.output == source_axis,
+              "censored field carrier owner changed");
+        rfc::storage::NativeAccessionRequest request; request.subject = old.key;
+        const auto pin = original.accession_directory()->pin(request);
+        check(input.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
+              input.at("cutoff").integer() == pin.sequence(), "censored original pin/cutoff changed");
+        for (std::size_t i = 0; i < n; ++i) {
+            std::size_t count{}; bool present{}; Rational expected{};
+            for (std::size_t j = 0; j < ambient; ++j) if (state(lift.tensor, i * ambient + j) != 0) {
+                ++count; check(state(lift.tensor, i * ambient + j) == 1, "censored lift not identity selection");
+                present = old.tensor.support().contains(j);
+                if (present) expected = *old.tensor.state(j);
+            }
+            check(count == 1 && context.tensor.support().contains(i) == present,
+                  "censored original upper missing support became zero");
+            if (present) check(state(context.tensor, i) == expected, "censored context field differs from original");
+        }
+        inputs.emplace(input.at("id").text(), &context);
+    }
+    const auto input_values = [&](const std::string &id) {
+        rfc::numeric::RationalVector x(n);
+        for (std::size_t i = 0; i < n; ++i) if (inputs.at(id)->tensor.support().contains(i)) x[i] = state(inputs.at(id)->tensor, i);
+        return x;
+    };
+    const auto lower = input_values(query.at("lower").text()), upper = input_values(query.at("upper").text());
+    const auto closed = input_values(query.at("lower_closed").text()), finite = input_values(query.at("upper_finite").text());
+    rfc::numeric::RationalVector selected(n, Rational{1});
+    for (std::size_t k = 0; k < query.at("selection").size(); ++k) {
+        const auto x = input_values(query.at("selection").at(k).text());
+        for (std::size_t i = 0; i < n; ++i) selected[i] *= x[i];
+    }
+    const auto groups = view.at("groups");
+    const auto &readout = *field(owner, view.at("readout"));
+    check(readout.input == source_axis && readout.output == group_axis, "censored readout axes differ");
+    for (std::size_t g = 0; g < groups.size(); ++g) {
+        auto membership = selected;
+        if (g) {
+            const auto x = input_values(query.at("strata").at(g-1).text());
+            for (std::size_t i = 0; i < n; ++i) membership[i] *= x[i];
+        }
+        Rational mass{}; for (const auto &x : membership) mass += x;
+        check(groups.at(g).at("defined").boolean() == (mass != 0) && scalar(owner, groups.at(g).at("size")) == mass,
+              "censored group support/mass differs");
+        for (std::size_t i = 0; i < n; ++i)
+            check(state(readout.tensor, g*n+i) == (mass != 0 ? Rational(membership[i]/mass) : Rational{0}),
+                  "censored complete original group map differs");
+    }
+    const Rational origin(query.at("origin").text());
+    for (std::size_t t = 0; t < view.at("readings").size(); ++t) {
+        const auto reading = view.at("readings").at(t); const Rational time(query.at("times").at(t).text());
+        rfc::numeric::RationalVector lo(n), hi(n), rlo(n), rhi(n);
+        std::size_t ambiguity{};
+        for (std::size_t i = 0; i < n; ++i) if (selected[i] != 0) {
+            lo[i] = finite[i] != 0 && upper[i] <= time ? 1 : 0;
+            hi[i] = lower[i] < time || (lower[i] == time && closed[i] == 1) ? 1 : 0;
+            rlo[i] = std::min(lower[i], time) - origin;
+            rhi[i] = (finite[i] != 0 ? std::min(upper[i], time) : time) - origin;
+            ambiguity += lo[i] != hi[i];
+        }
+        check(scalar(owner, reading.at("time")) == time && values(owner,reading.at("event_field_lower")) == lo &&
+              values(owner,reading.at("event_field_upper")) == hi && values(owner,reading.at("restricted_time_lower_field")) == rlo &&
+              values(owner,reading.at("restricted_time_upper_field")) == rhi, "censored native marginal fields differ");
+        for (const auto &[name,x] : std::vector<std::pair<std::string,rfc::numeric::RationalVector>>{
+                {"cumulative_event_fraction_lower",lo},{"cumulative_event_fraction_upper",hi},
+                {"restricted_event_free_time_infimum",rlo},{"restricted_event_free_time_supremum",rhi}})
+            check(values(owner,reading.at(name)) == apply(owner,view.at("readout"),x), "censored original aggregate differs");
+        const auto family = reading.at("admissible_event_family"); const auto &frame = *field(owner,family.at("frame"));
+        check(frame.input != frame.output && frame.output == source_axis && frame.tensor.domain().extents().at(1) == ambiguity,
+              "censored full ambiguity frame/carrier differs");
+        const auto sectors = family.at("sectors");
+        for (std::size_t i = 0; i < n; ++i) {
+            Rational reconstructed{};
+            for (const auto *name : {"gradient","curl","harmonic"}) reconstructed += values(owner,sectors.at(name).at("offset")).at(i);
+            check(reconstructed == lo[i], "censored sector offsets fail reconstruction");
+            for (std::size_t j = 0; j < ambiguity; ++j) {
+                Rational column{};
+                for (const auto *name : {"gradient","curl","harmonic"}) column += state(field(owner,sectors.at(name).at("frame"))->tensor,i*ambiguity+j);
+                check(column == state(frame.tensor,i*ambiguity+j), "censored full sector ambiguity reconstruction differs");
+            }
+        }
+    }
+    if (!view.has("joint_family")) return;
+    const auto joint = view.at("joint_family"), states = joint.at("states");
+    const auto metric = view.at("metric");
+    const auto inner = [&](const auto &a, const auto &b) {
+        const auto mb = apply(owner,metric,b); Rational result{};
+        for (std::size_t i = 0; i < n; ++i) result += a[i]*mb[i];
+        return result;
+    };
+    rfc::numeric::RationalVector weights;
+    for (std::size_t s = 0; s < states.size(); ++s) {
+        const auto record = states.at(s);
+        weights.push_back(scalar(owner,record.at("weight")));
+        check(weights.back() == Rational(query.at("joint_family").at("states").at(s).at("weight").text()),
+              "joint finite law weight changed");
+        const auto &times = field(owner,record.at("event_times"))->tensor;
+        const auto &presence = field(owner,record.at("event_presence"))->tensor;
+        const auto declared = query.at("joint_family").at("states").at(s).at("values");
+        for (std::size_t e = 0; e < declared.size(); ++e) {
+            const auto entry = declared.at(e); std::optional<std::size_t> coordinate;
+            for (std::size_t i = 0; i < n; ++i)
+                if (view.at("coordinate_carrier").at(i).at("id").text() == entry.at("entity").text()) coordinate = i;
+            check(coordinate.has_value(),"joint original entity disappeared");
+            const auto event = entry.at("event_time");
+            check(times.support().contains(*coordinate) == (event.kind() != NativeRecordKind::Null),
+                  "joint declared no event support changed");
+            if (event.kind() != NativeRecordKind::Null)
+                check(state(times,*coordinate) == Rational(event.text()), "joint exact original event time or supported zero changed");
+        }
+        for (std::size_t i = 0; i < n; ++i) {
+            check(presence.support().contains(i) == (selected[i] != 0), "joint state original selection support differs");
+            if (selected[i] != 0) check(times.support().contains(i) == (state(presence,i) == 1),
+                                      "joint no event became supported zero time");
+        }
+    }
+    constexpr const char *names[] = {"full","gradient","curl","harmonic"};
+    for (const auto &[moment_key,sector_key] : std::vector<std::pair<std::string,std::string>>{
+            {"event_moments","event_sectors"},{"restricted_time_moments","restricted_time_sectors"}}) {
+        const auto moment = joint.at(moment_key), channels = moment.at("channels"); const auto count = channels.size();
+        std::vector<std::vector<rfc::numeric::RationalVector>> samples(count);
+        std::vector<rfc::numeric::RationalVector> means(count,rfc::numeric::RationalVector(n));
+        for (std::size_t s = 0; s < states.size(); ++s)
+            for (std::size_t c = 0; c < count; ++c) {
+                auto x = values(owner,states.at(s).at("readings").at(c/4).at(sector_key).at(names[c%4]));
+                samples[c].push_back(x); for (std::size_t i = 0; i < n; ++i) means[c][i] += weights[s]*x[i];
+            }
+        const auto &expected = field(owner,moment.at("expected_gram"))->tensor;
+        const auto &mean_gram = field(owner,moment.at("mean_gram"))->tensor;
+        const auto &centered = field(owner,moment.at("centered_gram"))->tensor;
+        for (std::size_t a = 0; a < count; ++a) {
+            check(values(owner,channels.at(a).at("mean_field")) == means[a], "joint complete channel mean differs");
+            const auto &family = field(owner,moment.at("field_families").at(a).at("centered_fields"))->tensor;
+            Rational variance{};
+            for (std::size_t s = 0; s < states.size(); ++s) {
+                auto delta = samples[a][s];
+                for (std::size_t i = 0; i < n; ++i) {
+                    delta[i] -= means[a][i]; check(state(family,s*n+i) == delta[i], "joint centered field differs");
+                }
+                variance += weights[s]*inner(delta,delta);
+            }
+            check(scalar(owner,moment.at("field_families").at(a).at("variance")) == variance,
+                  "joint complete finite variance differs");
+            for (std::size_t b = 0; b < count; ++b) {
+                Rational second{}; for (std::size_t s = 0; s < states.size(); ++s) second += weights[s]*inner(samples[a][s],samples[b][s]);
+                const auto first = inner(means[a],means[b]);
+                check(state(expected,a*count+b) == second && state(mean_gram,a*count+b) == first && state(centered,a*count+b) == second-first,
+                      "joint complete cross time/sector moments differ");
+            }
+        }
+    }
+}
+
+void verify_censored_claim(const NativeRecord &publication) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    auto request = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[{"path":["readings",0,"time"],"value_type":"rational","comparison":"equal","value":"0"}]})");
+    request.set("source_namespace", Json::string(std::to_string(publication.source_namespace())));
+    request.set("cutoff", Json::integer(static_cast<std::int64_t>(publication.publication_history()->last_sequence())));
+    request.at("items").at(0).set("value", Json::string(scalar(owner,view.at("readings").at(0).at("time")).get_str()));
+    check(check_certificate_claims_record(publication,admit_record_view(request)).at("result").at("matched").integer() == 1,
+          "censored native scalar literal claim lost its actual field owner");
+    if (!view.has("joint_family")) return;
+    const auto states = view.at("joint_family").at("states");
+    for (std::size_t s = 0; s < states.size(); ++s) {
+        const auto &tensor = field(owner,states.at(s).at("event_times"))->tensor;
+        for (std::size_t i = 0; i < tensor.domain().logical_size(); ++i) {
+            auto path = Json::array();
+            path.push(Json::string("joint_family")); path.push(Json::string("states"));
+            path.push(Json::integer(static_cast<std::int64_t>(s))); path.push(Json::string("event_times"));
+            request.at("items").at(0).set("path",path);
+            request.at("items").at(0).set("coordinate",Json::integer(static_cast<std::int64_t>(i)));
+            if (tensor.support().contains(i)) {
+                request.at("items").at(0).set("value",Json::string(tensor.state(i)->get_str()));
+                check(check_certificate_claims_record(publication,admit_record_view(request)).at("result").at("matched").integer() == 1,
+                      "joint original coordinate literal claim differs");
+            } else {
+                request.at("items").at(0).set("value",Json::string("0"));
+                bool refused{};
+                try {(void)check_certificate_claims_record(publication,admit_record_view(request));}
+                catch (const std::invalid_argument &error) {refused = std::string(error.what()).find("missing") != std::string::npos;}
+                check(refused,"joint no event/unselected support accepted as zero event time");
+            }
+        }
+    }
+}
+void verify_censored_workflow(const std::shared_ptr<const ScientificStudy> &study,
+                             const NativeRecord &query, const fs::path &output) {
+    auto declaration = Json::parse(R"({"schema":"gadget.scientific.workflow.v1","id":"censored-families","source_digest":"","limits":{"depth":4,"nodes":3,"model_calls":0,"parallel_workers":2},"definitions":[],"entry":{"id":"two-families","type":"parallel","workers":2,"steps":[]}})");
+    declaration.set("source_digest",Json::string(study->digest()));
+    for (const auto *id : {"first","second"}) {
+        auto node = Json::object(); node.set("id",Json::string(id)); node.set("type",Json::string("query"));
+        node.set("query",render_record_view(query)); declaration.at("entry").at("steps").push(node);
+    }
+    const auto request = admit_record_view(declaration);
+    const auto operation = execute_workflow_record(study,request);
+    check(operation.at("result").at("native_execution").boolean() && operation.at("result").at("status").text() == "complete",
+          "censored producer refused native workflow");
+    const auto results = operation.at("result").at("result");
+    check(results.size() == 2,"censored native workflow lost an independent family");
+    const auto first = NativeRecord::decode(results.at(0).at("publication").bytes());
+    const auto second = NativeRecord::decode(results.at(1).at("publication").bytes());
+    check(first.source_namespace() != second.source_namespace(),"censored independent results merged by dimension");
+    for (const auto &result : {first,second}) {
+        check(NativeRecord::decode(result.at("request_publication").bytes()).encode() == request.encode(),
+              "censored workflow leaf lost its original request owner");
+        verify_censored(result,study->native_publication(),query); verify_censored_claim(result);
+    }
+    operation.write(output/"owning-workflow.rfcxs");
+    const auto reopened = NativeRecord::read(output/"owning-workflow.rfcxs");
+    check(NativeRecord::decode(reopened.at("result").at("result").at(0).at("publication").bytes()).encode() == first.encode(),
+          "censored reopened workflow changed complete native publication");
+}
+
+void verify_moment(const NativeRecord &publication, const NativeRecord &original) {
+    const auto owner = publication.at("result").at("fields"), view = owner.at("view");
+    audit_fields(owner,view); audit_fields(owner,owner.at("bindings"));
+    const auto binding = owner.at("bindings").at(0), inputs = binding.at("inputs");
+    const ScientificStudy original_study(original);
+    check(std::ranges::equal(binding.at("original_study_publication").bytes(),original.encode()),
+          "moment original study archive changed");
+    for (std::size_t f = 0; f < inputs.size(); ++f) {
+        const auto input = inputs.at(f); const auto &tensor = *field(original,input.at("tensor"));
+        const auto pin = original_study.field_accession(input.at("id").text());
+        check(input.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
+              input.at("cutoff").integer() == pin.sequence() && input.at("carrier").integer() == *tensor.output,
+              "moment original tensor pin/cutoff/carrier changed");
+        const auto &map = field(owner,input.at("realization"))->tensor;
+        const auto x = values(owner,input.at("values")); const auto shape = map.domain().extents();
+        check(shape.at(0) == x.size() && shape.at(1) == tensor.tensor.domain().logical_size(),
+              "moment actual original realization shape differs");
+        for (std::size_t i = 0; i < x.size(); ++i) {
+            Rational value{}; std::size_t coordinates{};
+            for (std::size_t j = 0; j < shape[1]; ++j) {
+                const auto coefficient = state(map,i*shape[1]+j);
+                if (coefficient != 0) {++coordinates;check(coefficient == 1,"moment realization not original UID selection");value += state(tensor.tensor,j);}
+            }
+            check(coordinates == 1 && value == x[i],"moment lost original support/value");
+        }
+    }
+    const auto old_x = values(owner,inputs.at(0).at("values")), old_y = values(owner,inputs.at(1).at("values"));
+    Rational expected{};
+    if (binding.at("kind").text() == "actual_typed_moment") {
+        const auto powered = values(owner,binding.at("powered_right_field"));
+        const auto axis = *field(owner,inputs.at(0).at("values"))->output;
+        const rfc::storage::TemporalTensor *metric{};
+        for (const auto &tensor : owner.endpoint()->tensors)
+            if (tensor.role == rfc::storage::TemporalTensorRole::Metric && tensor.output == axis) metric = &tensor;
+        check(metric && metric->input == axis,"moment actual declared metric/carrier absent");
+        for (std::size_t i = 0; i < old_x.size(); ++i)
+            for (std::size_t j = 0; j < powered.size(); ++j)
+                expected += old_x[i]*state(metric->tensor,i*powered.size()+j)*powered[j];
+        check(scalar(owner,view.at("rational")) == expected,"native typed moment contraction differs");
+    } else {
+        check(binding.at("kind").text() == "actual_temporal_moment_change", "moment result owner absent");
+        const auto old = NativeRecord::decode(binding.at("old_context_publication").at("publication").bytes());
+        audit_fields(old,old.at("view")); audit_fields(old,old.at("bindings"));
+        const auto new_x = values(owner,inputs.at(2).at("values")), new_y = values(owner,inputs.at(3).at("values"));
+        const auto &comparison = *field(owner,binding.at("comparison"));
+        check(comparison.input != comparison.output && field(owner,binding.at("old_form"))->input == comparison.input &&
+              field(owner,binding.at("new_form"))->input == comparison.output,
+              "moment independent old/new form/map carriers identified by dimension");
+        const auto jx = apply(owner,binding.at("comparison"),old_x), jy = apply(owner,binding.at("comparison"),old_y);
+        const auto ex = values(owner,binding.at("left_innovation")), ey = values(owner,binding.at("right_innovation"));
+        check(values(owner,binding.at("transported_left")) == jx && values(owner,binding.at("transported_right")) == jy,
+              "moment original correspondence action differs");
+        for (std::size_t i = 0; i < new_x.size(); ++i)
+            check(jx[i]+ex[i] == new_x[i] && jy[i]+ey[i] == new_y[i],"moment innovations fail full reconstruction");
+        const auto pair = [](const auto &a,const auto &b) {
+            Rational result{}; for (std::size_t i = 0; i < a.size(); ++i) result += a[i]*b[i]; return result;
+        };
+        const auto old_value = pair(old_x,apply(owner,binding.at("old_form"),old_y));
+        const auto new_value = pair(new_x,apply(owner,binding.at("new_form"),new_y));
+        const Rational pullback = pair(jx,apply(owner,binding.at("new_form"),jy))-old_value;
+        const auto left = pair(ex,apply(owner,binding.at("new_form"),jy));
+        const auto right = pair(jx,apply(owner,binding.at("new_form"),ey));
+        const auto interaction = pair(ex,apply(owner,binding.at("new_form"),ey));
+        check(scalar(owner,view.at("pullback_form")) == pullback && scalar(owner,view.at("left_innovation")) == left &&
+              scalar(owner,view.at("right_innovation")) == right && scalar(owner,view.at("innovation_interaction")) == interaction,
+              "moment complete four finite contributions differ");
+        expected = new_value-old_value;
+        check(scalar(owner,view.at("total")) == expected && expected == pullback+left+right+interaction &&
+              scalar(owner,binding.at("old_moment")) == old_value && scalar(owner,binding.at("new_moment")) == new_value,
+              "moment full endpoint delta identity differs");
+        check(scalar(owner,view.at("finite_rate"))*scalar(owner,view.at("interval")) == expected,
+              "moment declared finite interval/rate differs");
+    }
+    auto request = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[{"path":[],"value_type":"rational","comparison":"equal","value":"0"}]})");
+    request.set("source_namespace",Json::string(std::to_string(publication.source_namespace())));
+    request.set("cutoff",Json::integer(static_cast<std::int64_t>(publication.publication_history()->last_sequence())));
+    request.at("items").at(0).set("value",Json::string(expected.get_str()));
+    request.at("items").at(0).at("path").push(Json::string(
+        binding.at("kind").text() == "actual_typed_moment" ? "rational" : "total"));
+    check(check_certificate_claims_record(publication,admit_record_view(request)).at("result").at("matched").integer() == 1,
+          "moment literal claim lost its actual scalar owner");
+}
+
 void verify_replay(const NativeRecord &expected, const NativeRecord &actual) {
     const auto a = expected.endpoint(), b = actual.endpoint();
     check(a->tensors.size() == b->tensors.size(), "replay field family differs");
@@ -474,12 +979,54 @@ void verify_replay(const NativeRecord &expected, const NativeRecord &actual) {
           "replay changed or extended the original study archive");
     check(expected.raw_sources().size() == actual.raw_sources().size(), "replay retained extra byte owners");
 }
+void verify_workflow(const std::shared_ptr<const ScientificStudy> &study,
+                     const NativeRecord &query, const fs::path &output, bool sections) {
+    auto declaration = Json::parse(R"({"schema":"gadget.scientific.workflow.v1","id":"native-producers","source_digest":"","limits":{"depth":4,"nodes":3,"model_calls":0,"parallel_workers":2},"definitions":[],"entry":{"id":"two-owners","type":"parallel","workers":2,"steps":[]}})");
+    declaration.set("source_digest", Json::string(study->digest()));
+    for (const auto *id : {"first", "second"}) {
+        auto leaf = Json::object();
+        leaf.set("id", Json::string(id)); leaf.set("type", Json::string("query"));
+        leaf.set("query", render_record_view(query));
+        declaration.at("entry").at("steps").push(leaf);
+    }
+    const auto request = admit_record_view(declaration);
+    const auto workflow = execute_workflow_record(study, request);
+    const auto receipt = workflow.at("result");
+    check(receipt.at("native_execution").boolean() && receipt.at("status").text() == "complete",
+          "accepted producer refused native workflow execution");
+    check(receipt.at("result").size() == 2, "parallel workflow omitted a native owner");
+    const auto first = NativeRecord::decode(receipt.at("result").at(0).at("publication").bytes());
+    const auto second = NativeRecord::decode(receipt.at("result").at(1).at("publication").bytes());
+    check(first.source_namespace() != second.source_namespace(), "independent results merged by dimension");
+    for (const auto &owner : {first, second}) {
+        check(NativeRecord::decode(owner.at("request_publication").bytes()).encode() == request.encode(),
+              "leaf lost complete original workflow request");
+        check(NativeRecord::decode(owner.at("result").at("source_study_publication").bytes()).encode() ==
+                  study->native_publication().encode(), "workflow leaf changed original study bytes");
+        if (sections) verify_sections(owner); else verify_structural(owner);
+    }
+    request.write(output / "workflow-request.rfcxs");
+    workflow.write(output / "owning-workflow.rfcxs");
+    const auto reopened = NativeRecord::read(output / "owning-workflow.rfcxs");
+    check(NativeRecord::decode(reopened.at("result").at("result").at(0).at("publication").bytes()).encode() ==
+              first.encode(), "workflow reopening changed complete native fields");
+    write_text(output / "workflow-display.json", workflow_record_view(reopened).dump());
+    auto unsupported = Json::object();
+    unsupported.set("operation", Json::string("coverage"));
+    declaration.at("entry").at("steps").at(1).set("query", unsupported);
+    bool refused = false;
+    try { (void)execute_workflow_record(study, admit_record_view(declaration)); }
+    catch (const std::invalid_argument &error) {
+        refused = std::string(error.what()).find("native result publisher") != std::string::npos;
+    }
+    check(refused, "unconverted publisher passed strict admission");
+}
 }
 int main(int argc, char **argv) try {
     if (argc != 5) throw std::invalid_argument("workspace, queries, output and mode required");
     const fs::path workspace_path(argv[1]), queries_path(argv[2]), output(argv[3]);
     fs::create_directories(output);
-    const auto study = std::string(argv[4]) == "study"
+    const auto study = std::string(argv[4]) == "study" || workspace_path.filename() == "study.json"
         ? std::make_shared<const ScientificStudy>(workspace_path)
         : AssayWorkspace(workspace_path).study("measurements");
     if (std::string(argv[4]) == "green") {
@@ -490,14 +1037,22 @@ int main(int argc, char **argv) try {
     const auto original = study->native_publication();
     ScientificSession session(study);
     const auto queries = admit_record_view(Json::parse(read_text(queries_path)));
+    check(!has_native_scientific_publisher("coverage") && !has_native_scientific_publisher("unknown"),
+          "unconverted producer reported native availability");
     std::vector<NativeRecord> results;
     for (const auto &name : queries.names()) {
         const auto query = queries.at(name);
+        check(has_native_scientific_publisher(query.at("operation").text()),
+              "implemented producer missing from native inventory");
         const auto result = session.execute_record(query);
         if (std::string(argv[4]) == "response") verify_response(result, original);
         else if (std::string(argv[4]) == "ensemble") verify_ensemble(result, original);
         else if (std::string(argv[4]) == "structural") verify_structural(result);
         else if (std::string(argv[4]) == "sections") verify_sections(result);
+        else if (std::string(argv[4]) == "ablation") verify_ablation(result);
+        else if (std::string(argv[4]) == "direct") verify_direct(result, original);
+        else if (std::string(argv[4]) == "moment") verify_moment(result, original);
+        else if (std::string(argv[4]) == "censored") {verify_censored(result, original, query); verify_censored_claim(result);}
         else if (std::string(argv[4]) != "finite") verify_model(result, original);
         else {
             const auto fields = result.at("result").at("fields");
@@ -512,6 +1067,10 @@ int main(int argc, char **argv) try {
         result.write(output / (name + ".rfcxs"));
         results.push_back(NativeRecord::read(output / (name + ".rfcxs")));
     }
+    if (std::string(argv[4]) == "sections" || std::string(argv[4]) == "structural")
+        verify_workflow(study, queries.at(queries.names().front()), output, std::string(argv[4]) == "sections");
+    if (std::string(argv[4]) == "censored")
+        verify_censored_workflow(study, queries.at(queries.names().front()), output);
     auto plan = Json::object(), steps = Json::array();
     plan.set("schema", Json::string("gadget.scientific.plan.v1"));
     plan.set("id", Json::string("native-models")); plan.set("question", Json::string("Retain declared model fields"));

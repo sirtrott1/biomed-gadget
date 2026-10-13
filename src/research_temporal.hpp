@@ -1,5 +1,6 @@
 #pragma once
 #include "scientific_detail.hpp"
+#include "scientific_result_fields.hpp"
 #include <gadget/study.hpp>
 
 namespace gadget::scientific_detail { class PreparedTemporalStudy; }
@@ -16,9 +17,13 @@ struct TemporalReading {
 using TemporalMaps = std::vector<rfc::numeric::ExactMatrix>;
 Json temporal_field_history(const Json &query, const std::vector<TemporalReading> &readings,
                             const std::vector<TemporalMaps> &maps, bool validate);
-Json censored_endpoint_bounds(const NativeStudy &study, const Json &query,
+struct CensoredResultFields {
+    scientific_detail::ResultFields &publication;
+    std::uint64_t source, groups, contrasts;
+};
+scientific_detail::ResultValue censored_endpoint_bounds(const NativeStudy &study, const Json &query,
                               const std::map<std::string, Vector> &fields,
                               const std::vector<bool> &finite_upper_support,
                               const std::map<std::string, Json> &meanings, const Json &coordinates,
-                              bool validate);
+                              bool validate, CensoredResultFields *native = nullptr);
 } // namespace gadget::research_detail

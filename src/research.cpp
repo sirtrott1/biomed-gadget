@@ -2,6 +2,9 @@
 #include "research_factored.hpp"
 #include "research_fields.hpp"
 #include "research_linear.hpp"
+#include "research_comparisons.hpp"
+#include "scientific_result_fields.hpp"
+#include <rfc/numeric/prepared_exact_frames.hpp>
 #include "research_prepared.hpp"
 #include "scientific_detail.hpp"
 #include "scientific_projection.hpp"
@@ -62,30 +65,90 @@ Json indices(const auto &v) {
 }
 using research_detail::Inputs;
 using research_detail::names;
+numeric::ExactActionLimits comparison_limits(const runtime::ExecutionLease &lease, std::size_t dimension) {
+    const auto &limits = lease.policy().limits;
+    return {dimension, limits.sparse_entries, limits.scalar_work, limits.integer_bits};
+}
+void admit_comparison(const Inputs &input, const runtime::ExecutionLease &lease) {
+    std::size_t slots = 0, bits = 0, entries = 0;
+    for (const auto &[id, tensor] : input.fields) {
+        (void)id;
+        slots = machine::checked_size_add(slots, tensor->tensor.support().count());
+        entries = machine::checked_size_add(entries, tensor->tensor.stored_nonzeros());
+        for (const auto &entry : tensor->tensor.values().entries())
+            bits = machine::checked_size_add(bits, storage::native_execution_detail::integer_bits(entry.value));
+    }
+    runtime::admit_execution({input.fields.size(), slots, entries, 1, bits}, lease.policy());
+}
+ResultValue comparison_matrix(ResultFields &fields, const Matrix &value,
+                              std::uint64_t input, std::uint64_t output) {
+    auto result = fields.matrix(value, input, output);
+    result.set("display", ResultValue::string("dense_matrix"));
+    return result;
+}
+void bind_comparison_source(const ScientificStudy &study, const Inputs &input, ResultFields &fields) {
+    auto binding = ResultValue::object(), pins = ResultValue::array();
+    binding.set("kind", ResultValue::string("declared_comparison_source"));
+    binding.set("original_study_publication", fields.publication(study.native_publication()));
+    binding.set("grade", ResultValue::count(input.grade.value));
+    binding.set("source_carrier", ResultValue::count(*input.carrier));
+    for (const auto &[id, tensor] : input.fields) {
+        const auto actual = study.field_accession(id);
+        require(actual.tensor() && actual.carrier() && actual.carrier()->key == *tensor->output &&
+                storage::temporal_endpoint_detail::tensor_equal(*actual.tensor(), tensor->tensor),
+                "comparison field differs from its original accession");
+        auto pin = ResultValue::object();
+        pin.set("field", ResultValue::string(id));
+        pin.set("source_namespace", ResultValue::string(std::to_string(actual.source_namespace())));
+        pin.set("source_cutoff", ResultValue::count(actual.sequence()));
+        pin.set("source_tensor", ResultValue::count(tensor->key));
+        pin.set("source_carrier", ResultValue::count(*tensor->output));
+        pin.set("source_field", fields.stored(tensor->key, "vector"));
+        pins.push(std::move(pin));
+    }
+    binding.set("fields", std::move(pins));
+    fields.bind(std::move(binding));
+}
+std::uint64_t bind_comparison_rows(const Inputs &input, const Indices &rows, ResultFields &fields) {
+    const auto axis = fields.axis(rows.size());
+    auto binding = ResultValue::object();
+    binding.set("kind", ResultValue::string("original_comparison_rows"));
+    binding.set("source_carrier", ResultValue::count(*input.carrier));
+    binding.set("row_carrier", ResultValue::count(axis));
+    binding.set("row_coordinates", ResultValue(fields.coordinates(rows, axis)));
+    Matrix lift(input.entities.size(), rows.size());
+    for (std::size_t i = 0; i < rows.size(); ++i) lift.set(rows[i], i, 1);
+    binding.set("source_lift", comparison_matrix(fields, lift, axis, *input.carrier));
+    fields.bind(std::move(binding));
+    return axis;
+}
 // Inputs to one declared scientific projection request. All maps, Gram
 // construction, factorization and solve actions belong to canonical RexGraph.
 struct FrameRequest : PreparedProjection {
-    explicit FrameRequest(Matrix independent_frame)
-        : PreparedProjection(std::move(independent_frame)) {}
-    Json receipt(std::size_t applications, const runtime::CpuTileRunReport &report) const {
-        auto out = Json::object();
-        out.set("owner", Json::string("rfc::numeric::PreparedExactSolve"));
-        out.set("gram_preparations", cardinality(1));
-        out.set("applications", cardinality(applications));
-        out.set("carrier_dimension", cardinality(frame.rows()));
-        out.set("frame_rank", cardinality(frame.cols()));
-        out.set("factor_entries", cardinality(solve.stored_entries()));
-        out.set("requested_workers", cardinality(report.requested_workers));
-        out.set("worker_slots", cardinality(report.worker_slots));
-        out.set("completed_tiles", cardinality(report.completed_tiles));
-        out.set("arithmetic", Json::string("exact rational"));
+    FrameRequest(Matrix independent_frame, numeric::ExactActionLimits limits,
+                 const runtime::ExecutionLease &lease)
+        : PreparedProjection(std::move(independent_frame), {}, limits,
+            [lease] {lease.check_cancelled();}) {}
+    ResultValue receipt(std::size_t applications, const runtime::CpuTileRunReport &report) const {
+        auto out = ResultValue::object();
+        out.set("owner", ResultValue::string("rfc::numeric::PreparedExactSolve"));
+        out.set("gram_preparations", ResultValue::count(1));
+        out.set("applications", ResultValue::count(applications));
+        out.set("carrier_dimension", ResultValue::count(frame.rows()));
+        out.set("frame_rank", ResultValue::count(frame.cols()));
+        out.set("factor_entries", ResultValue::count(solve.stored_entries()));
+        out.set("requested_workers", ResultValue::count(report.requested_workers));
+        out.set("worker_slots", ResultValue::count(report.worker_slots));
+        out.set("completed_tiles", ResultValue::count(report.completed_tiles));
+        out.set("arithmetic", ResultValue::string("exact rational"));
         return out;
     }
 };
 // A contrast family is a field on explicitly identified matched units.
 // The native constant-span projector retains its complete consensus and residual.
-Json paired(const Inputs &in, const Json &query, bool validate,
-            const std::shared_ptr<CpuResources> &resources) {
+std::optional<NativeRecord> paired(const ScientificStudy &study, const Inputs &in, const Json &query, bool validate,
+            const std::shared_ptr<CpuResources> &resources,
+            const runtime::ExecutionLease &lease) {
     members(
         query,
         {"operation", "pairs", "selection", "support", "normalization", "output_units", "workers"},
@@ -106,10 +169,10 @@ Json paired(const Inputs &in, const Json &query, bool validate,
     std::vector<std::string> complete;
     std::set<std::string> used, identities;
     std::vector<Rational> left_scales, right_scales;
-    auto scale = [](const Json &v) {
-        const auto value = exact_rational(text(v, 4096));
+    auto scale = [&lease](const Json &v) {
+        const auto value = exact_rational(text(v, source_byte_limit()));
         require(value > 0, "scale must be positive");
-        require(storage::native_execution_detail::integer_bits(value) <= 65536, "scale bit budget");
+        runtime::admit_execution({1, 1, 0, 0, storage::native_execution_detail::integer_bits(value)}, lease.policy());
         return value;
     };
     for (std::size_t i = 0; i < pairs.size(); ++i) {
@@ -163,31 +226,59 @@ Json paired(const Inputs &in, const Json &query, bool validate,
     }
     const auto rows = in.select(complete, selection);
     const auto selected_rows = in.select({}, selection);
+    lease.check_cancelled();
+    admit_comparison(in, lease);
     if (validate)
-        return Json{};
+        return std::nullopt;
+    ResultFields publication(study.native_publication());
+    bind_comparison_source(study, in, publication);
     const auto n = pairs.size();
     Matrix consensus(n, 1);
     for (std::size_t i = 0; i < n; ++i)
         consensus.set(i, 0, Rational{1});
     auto reservation = cpu->reserve(workers);
-    const FrameRequest projection(std::move(consensus));
+    const auto limits = comparison_limits(lease, n);
+    const numeric::PreparedExactFrames frames(std::move(consensus), limits, [lease] {lease.check_cancelled();});
+    const FrameRequest projection(frames.image(), limits, lease);
+    const auto pair_axis = publication.axis(n), coefficient_axis = publication.axis(1),
+               frame_axis = publication.axis(frames.rank()), kernel_axis = publication.axis(frames.kernel().cols());
+    auto axes = ResultValue::object();
+    axes.set("kind", ResultValue::string("ordered_matched_units"));
+    axes.set("pairs", pairs);
+    axes.set("pair_carrier", ResultValue::count(pair_axis));
+    axes.set("coefficient_carrier", ResultValue::count(coefficient_axis));
+    axes.set("frame_carrier", ResultValue::count(frame_axis));
+    axes.set("kernel_carrier", ResultValue::count(kernel_axis));
+    axes.set("design", comparison_matrix(publication, frames.original(), coefficient_axis, pair_axis));
+    axes.set("frame", comparison_matrix(publication, frames.image(), frame_axis, pair_axis));
+    axes.set("coordinates", comparison_matrix(publication, frames.coordinates(), coefficient_axis, frame_axis));
+    axes.set("kernel", comparison_matrix(publication, frames.kernel(), kernel_axis, coefficient_axis));
+    axes.set("metric_diagonal", publication.vector(Vector(n, Rational{1}), pair_axis));
+    axes.set("left_scales", publication.vector(left_scales, pair_axis));
+    axes.set("right_scales", publication.vector(right_scales, pair_axis));
+    publication.bind(std::move(axes));
+    bind_comparison_rows(in, rows, publication);
     const Vector ones(n, Rational{1});
     const Rational denominator{std::to_string(n)};
-    std::vector<Json> records(rows.size());
+    std::vector<ResultValue> records(rows.size());
     runtime::CpuTileExecutor executor({workers, cpu->coordinator().capacity(), rows.size()});
     const auto report = executor.run_tiles(rows.size(), [&](std::size_t tile, std::size_t,
                                                             const runtime::CpuTileStop &stop) {
         stop.check();
+        lease.check_cancelled();
+        numeric::ExactActionGuard guard(limits, [&] {stop.check(); lease.check_cancelled();});
         const auto row = rows[tile];
         Vector left, right;
         std::size_t positive = 0, negative = 0, zero = 0;
         for (std::size_t i = 0; i < n; ++i) {
-            left.push_back(in.value(complete[2 * i], row) * left_scales[i]);
-            right.push_back(in.value(complete[2 * i + 1], row) * right_scales[i]);
+            left.push_back(guard.mul(in.value(complete[2 * i], row), left_scales[i]));
+            right.push_back(guard.mul(in.value(complete[2 * i + 1], row), right_scales[i]));
         }
         const auto delta = numeric::sub(left, right);
-        const auto glued = projection.apply(delta, [&] { stop.check(); });
+        const auto consensus_coefficients = projection.coefficients(delta, [&] {stop.check(); lease.check_cancelled();});
+        const auto glued = projection.frame.apply(consensus_coefficients);
         const auto residual = numeric::sub(delta, glued);
+        guard.vector(delta); guard.vector(glued); guard.vector(residual);
         require(numeric::add(glued, residual) == delta && numeric::dot(glued, residual) == 0,
                 "paired consensus reconstruction");
         for (const auto &v : delta) {
@@ -198,39 +289,41 @@ Json paired(const Inputs &in, const Json &query, bool validate,
             else
                 ++zero;
         }
-        auto record = Json::object();
-        record.set("entity", Json::string(in.entities[row]));
-        record.set("coordinate", cardinality(row));
-        record.set("left", vec(left));
-        record.set("right", vec(right));
-        record.set("delta", vec(delta));
-        record.set("consensus", vec(glued));
-        record.set("residual", vec(residual));
-        record.set("mean_difference", q(glued.front()));
+        const auto scalar = [&](const Rational &v) {guard.value(v); return publication.stage_scalar(v);};
+        auto record = ResultValue::object();
+        record.set("entity", ResultValue::string(in.entities[row]));
+        record.set("coordinate", ResultValue::count(row));
+        record.set("left", ResultFields::stage_vector(left, pair_axis));
+        record.set("right", ResultFields::stage_vector(right, pair_axis));
+        record.set("delta", ResultFields::stage_vector(delta, pair_axis));
+        record.set("consensus", ResultFields::stage_vector(glued, pair_axis));
+        record.set("consensus_coefficients", ResultFields::stage_vector(consensus_coefficients, frame_axis));
+        record.set("residual", ResultFields::stage_vector(residual, pair_axis));
+        record.set("mean_difference", scalar(glued.front()));
         const Rational lm = numeric::dot(left, ones) / denominator;
         const Rational rm = numeric::dot(right, ones) / denominator;
-        record.set("left_mean", q(lm));
-        record.set("right_mean", q(rm));
-        record.set("mean_ratio", rm != 0 ? q(Rational(lm / rm)) : Json{});
-        record.set("consensus_quadrance", q(numeric::dot(glued, glued)));
-        record.set("heterogeneity_quadrance", q(numeric::dot(residual, residual)));
-        record.set("positive_pairs", cardinality(positive));
-        record.set("negative_pairs", cardinality(negative));
-        record.set("zero_pairs", cardinality(zero));
+        record.set("left_mean", scalar(lm));
+        record.set("right_mean", scalar(rm));
+        record.set("mean_ratio", rm != 0 ? scalar(Rational(lm / rm)) : ResultValue{});
+        record.set("consensus_quadrance", scalar(numeric::dot(glued, glued)));
+        record.set("heterogeneity_quadrance", scalar(numeric::dot(residual, residual)));
+        record.set("positive_pairs", ResultValue::count(positive));
+        record.set("negative_pairs", ResultValue::count(negative));
+        record.set("zero_pairs", ResultValue::count(zero));
         if (query.has("benchmark")) {
             const auto b = query.at("benchmark");
             const auto effect = b.at("effect").text(), adj = b.at("adjusted_p").text();
-            auto comparison = Json::object();
+            auto comparison = ResultValue::object();
             const bool has_effect = in.fields.at(effect)->tensor.support().contains(row);
             const bool has_p = in.fields.at(adj)->tensor.support().contains(row);
-            comparison.set("effect", has_effect ? q(in.value(effect, row)) : Json{});
-            comparison.set("adjusted_p", has_p ? q(in.value(adj, row)) : Json{});
-            comparison.set("significant", has_p ? Json::boolean(in.value(adj, row) <
+            comparison.set("effect", has_effect ? scalar(in.value(effect, row)) : ResultValue{});
+            comparison.set("adjusted_p", has_p ? scalar(in.value(adj, row)) : ResultValue{});
+            comparison.set("significant", has_p ? ResultValue::boolean(in.value(adj, row) <
                                                                 exact_decimal(b.at("alpha").text()))
-                                                : Json{});
+                                                : ResultValue{});
             if (has_effect) {
                 const auto score = in.value(effect, row), mean = glued.front();
-                comparison.set("direction_agrees", Json::boolean(((score > 0) - (score < 0)) ==
+                comparison.set("direction_agrees", ResultValue::boolean(((score > 0) - (score < 0)) ==
                                                                  ((mean > 0) - (mean < 0))));
             } else
                 comparison.set("direction_agrees", Json{});
@@ -238,26 +331,28 @@ Json paired(const Inputs &in, const Json &query, bool validate,
         }
         records[tile] = std::move(record);
     });
-    auto out = Json::object(), values = Json::array();
+    auto out = ResultValue::object(), values = ResultValue::array();
     for (const auto &record : records)
         values.push(record);
     out.set("features", values);
     out.set("pairs", pairs);
-    out.set("reported", cardinality(rows.size()));
-    out.set("missing", cardinality(selected_rows.size() - rows.size()));
-    out.set("selected_rows", cardinality(selected_rows.size()));
-    out.set("excluded_by_selection", cardinality(in.entities.size() - selected_rows.size()));
+    out.set("reported", ResultValue::count(rows.size()));
+    out.set("missing", ResultValue::count(selected_rows.size() - rows.size()));
+    out.set("selected_rows", ResultValue::count(selected_rows.size()));
+    out.set("excluded_by_selection", ResultValue::count(in.entities.size() - selected_rows.size()));
     out.set("units", query.at("output_units"));
     out.set("normalization", normalization);
-    out.set("metric", Json::string("identity on the declared matched-unit carrier"));
-    out.set("workers", cardinality(report.worker_slots));
-    out.set("tiles", cardinality(report.completed_tiles));
-    out.set("reconstruction_exact", Json::boolean(true));
+    out.set("metric", ResultValue::string("identity on the declared matched-unit carrier"));
+    out.set("workers", ResultValue::count(report.worker_slots));
+    out.set("tiles", ResultValue::count(report.completed_tiles));
+    out.set("reconstruction_exact", ResultValue::boolean(true));
     out.set("execution", projection.receipt(rows.size(), report));
-    return out;
+    lease.check_cancelled();
+    return publication.finish(std::move(out));
 }
-Json controlled(const Inputs &in, const Json &query, bool validate,
-                const std::shared_ptr<CpuResources> &resources) {
+std::optional<NativeRecord> controlled(const ScientificStudy &study, const Inputs &in, const Json &query, bool validate,
+                const std::shared_ptr<CpuResources> &resources,
+            const runtime::ExecutionLease &lease) {
     members(query,
             {"operation", "fields", "endpoint", "controls", "selection", "support", "metric",
              "intercept"},
@@ -291,8 +386,12 @@ Json controlled(const Inputs &in, const Json &query, bool validate,
     complete.insert(complete.end(), controls.begin(), controls.end());
     complete.push_back(endpoint);
     const auto rows = in.select(complete, selection);
+    lease.check_cancelled();
+    admit_comparison(in, lease);
     if (validate)
-        return Json{};
+        return std::nullopt;
+    ResultFields publication(study.native_publication());
+    bind_comparison_source(study, in, publication);
     auto reservation = cpu->reserve(workers);
     Matrix declared(rows.size(), controls.size() + 1);
     for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -300,74 +399,114 @@ Json controlled(const Inputs &in, const Json &query, bool validate,
         for (std::size_t j = 0; j < controls.size(); ++j)
             declared.set(i, j + 1, in.value(controls[j], rows[i]));
     }
-    const FrameRequest projection(declared.image_frame());
+    const auto limits = comparison_limits(lease, std::max(rows.size(), declared.cols()));
+    const numeric::PreparedExactFrames frames(std::move(declared), limits, [lease] {lease.check_cancelled();});
+    const FrameRequest projection(frames.image(), limits, lease);
+    const auto row_axis = bind_comparison_rows(in, rows, publication),
+               coefficient_axis = publication.axis(frames.original().cols()),
+               frame_axis = publication.axis(frames.rank()),
+               kernel_axis = publication.axis(frames.kernel().cols()),
+               gram_axis = publication.axis(gram_fields.size());
+    const auto selected = [&](const Vector &v) {return ResultFields::stage_selected(v, *in.carrier, in.entities.size(), rows);};
+    auto axes = ResultValue::object(), columns = ResultValue::array();
+    columns.push(ResultValue::string("intercept"));
+    for (const auto &id : controls) columns.push(ResultValue::string(id));
+    axes.set("kind", ResultValue::string("declared_controls"));
+    axes.set("columns", columns);
+    axes.set("coefficient_carrier", ResultValue::count(coefficient_axis));
+    axes.set("frame_carrier", ResultValue::count(frame_axis));
+    axes.set("kernel_carrier", ResultValue::count(kernel_axis));
+    axes.set("gram_carrier", ResultValue::count(gram_axis));
+    axes.set("metric_diagonal", publication.vector(Vector(rows.size(), Rational{1}), row_axis));
+    axes.set("design", comparison_matrix(publication, frames.original(), coefficient_axis, row_axis));
+    axes.set("frame", comparison_matrix(publication, frames.image(), frame_axis, row_axis));
+    axes.set("coordinates", comparison_matrix(publication, frames.coordinates(), coefficient_axis, frame_axis));
+    axes.set("kernel", comparison_matrix(publication, frames.kernel(), kernel_axis, coefficient_axis));
+    publication.bind(std::move(axes));
+    const auto coefficients = [&](const Vector &c) {
+        Vector out(frames.original().cols());
+        for (std::size_t i = 0; i < frames.pivots().size(); ++i) out[frames.pivots()[i]] = c[i];
+        require(frames.original().apply(out) == projection.frame.apply(c), "control coefficient reconstruction");
+        return out;
+    };
     const auto &frame = projection.frame;
-    const auto y = in.values(endpoint, rows), py = projection.apply(y), ry = numeric::sub(y, py);
+    const auto y = in.values(endpoint, rows), cy = projection.coefficients(y, [lease] {lease.check_cancelled();}),
+               py = projection.frame.apply(cy), ry = numeric::sub(y, py);
     require(numeric::is_zero(projection.dual.apply(ry)) && numeric::dot(py, ry) == 0 &&
                 numeric::add(py, ry) == y,
             "endpoint projection reconstruction");
-    auto result = Json::object();
+    auto result = ResultValue::object();
     result.set("entities", in.identity(rows));
-    result.set("coordinates", indices(rows));
-    result.set("excluded_rows", cardinality(in.entities.size() - rows.size()));
-    result.set("n", cardinality(rows.size()));
-    result.set("control_columns", cardinality(declared.cols()));
-    result.set("control_rank", cardinality(frame.cols()));
-    result.set("control_frame", matrix(frame));
-    result.set("residual_dimension", cardinality(rows.size() - frame.cols()));
-    result.set("endpoint_input", vec(y));
-    result.set("endpoint_represented", vec(py));
-    result.set("endpoint_residual", vec(ry));
+    result.set("coordinates", publication.indices(rows, row_axis));
+    result.set("excluded_rows", ResultValue::count(in.entities.size() - rows.size()));
+    result.set("n", ResultValue::count(rows.size()));
+    result.set("control_columns", ResultValue::count(frames.original().cols()));
+    result.set("control_rank", ResultValue::count(frame.cols()));
+    result.set("control_frame", comparison_matrix(publication, frame, frame_axis, row_axis));
+    result.set("residual_dimension", ResultValue::count(rows.size() - frame.cols()));
+    result.set("endpoint_input", selected(y));
+    result.set("endpoint_represented", selected(py));
+    result.set("endpoint_residual", selected(ry));
+    result.set("control_design", comparison_matrix(publication, frames.original(), coefficient_axis, row_axis));
+    result.set("control_coordinates", comparison_matrix(publication, frames.coordinates(), coefficient_axis, frame_axis));
+    result.set("control_kernel", comparison_matrix(publication, frames.kernel(), kernel_axis, coefficient_axis));
+    result.set("endpoint_control_coefficients", publication.vector(coefficients(cy), coefficient_axis));
     const auto ey = numeric::dot(ry, ry);
-    result.set("endpoint_residual_quadrance", q(ey));
-    result.set("endpoint_identified", Json::boolean(ey != 0));
+    result.set("endpoint_residual_quadrance", publication.stage_scalar(ey));
+    result.set("endpoint_identified", ResultValue::boolean(ey != 0));
     std::vector<Vector> gram_vectors(gram_fields.size());
-    std::vector<Json> records(fs.size());
+    std::vector<ResultValue> records(fs.size());
     runtime::CpuTileExecutor executor({workers, cpu->coordinator().capacity(), fs.size()});
     const auto report = executor.run_tiles(
         fs.size(), [&](std::size_t f, std::size_t, const runtime::CpuTileStop &stop) {
             stop.check();
-            auto x = in.values(fs[f], rows), p = projection.apply(x, [&] { stop.check(); }),
-                 r = numeric::sub(x, p);
+            lease.check_cancelled();
+            auto x = in.values(fs[f], rows), cx = projection.coefficients(x, [&] {stop.check(); lease.check_cancelled();}),
+                 p = projection.frame.apply(cx), r = numeric::sub(x, p);
+            numeric::ExactActionGuard guard(limits, [&] {stop.check(); lease.check_cancelled();});
+            guard.vector(x); guard.vector(p); guard.vector(r);
             require(numeric::is_zero(projection.dual.apply(r)) && numeric::dot(p, r) == 0 &&
                         numeric::add(p, r) == x,
                     "field projection reconstruction");
             if (gram_columns.contains(fs[f]))
                 gram_vectors[gram_columns.at(fs[f])] = r;
             const auto pairing = numeric::dot(r, ry);
-            auto record = Json::object();
-            record.set("field", Json::string(fs[f]));
+            const auto scalar = [&](const Rational &v) {guard.value(v); return publication.stage_scalar(v);};
+            auto record = ResultValue::object();
+            record.set("field", ResultValue::string(fs[f]));
             record.set("units", in.meaning.at(fs[f]).at("units"));
-            record.set("input", vec(x));
-            record.set("represented", vec(p));
-            record.set("residual", vec(r));
-            record.set("pairing", q(pairing));
-            record.set("residual_quadrance", q(numeric::dot(r, r)));
-            record.set("endpoint_coefficient", ey == 0 ? Json{} : q(Rational{pairing / ey}));
-            record.set("orthogonality_exact", Json::boolean(true));
+            record.set("input", selected(x));
+            record.set("control_coefficients", ResultFields::stage_vector(coefficients(cx), coefficient_axis));
+            record.set("represented", selected(p));
+            record.set("residual", selected(r));
+            record.set("pairing", scalar(pairing));
+            record.set("residual_quadrance", scalar(numeric::dot(r, r)));
+            record.set("endpoint_coefficient", ey == 0 ? ResultValue{} : scalar(Rational{pairing / ey}));
+            record.set("orthogonality_exact", ResultValue::boolean(true));
             records[f] = std::move(record);
         });
-    auto output = Json::array(), gram_names = Json::array();
+    auto output = ResultValue::array(), gram_names = ResultValue::array();
     for (const auto &record : records)
         output.push(record);
     Matrix residuals(rows.size(), gram_fields.size());
     for (std::size_t j = 0; j < gram_fields.size(); ++j) {
-        gram_names.push(Json::string(gram_fields[j]));
+        gram_names.push(ResultValue::string(gram_fields[j]));
         for (std::size_t i = 0; i < rows.size(); ++i)
             residuals.set(i, j, gram_vectors[j][i]);
     }
     result.set("fields", output);
     result.set("residual_gram",
-               matrix(field::metric_gram(residuals, projection.metric, residuals)));
+               comparison_matrix(publication, field::metric_gram(residuals, projection.metric, residuals), gram_axis, gram_axis));
     result.set("gram_fields", gram_names);
     result.set("execution", projection.receipt(machine::checked_size_add(fs.size(), 1), report));
     result.set(
         "definition",
-        Json::string(
+        ResultValue::string(
             "r_x=(I-P_C)x; r_y=(I-P_C)y; pairing=<r_x,r_y>; endpoint coefficient=pairing/<r_y,r_y> "
             "when identified. C contains the intercept and declared controls. Descriptive "
             "conditional linear contrast on the observed carrier."));
-    return result;
+    lease.check_cancelled();
+    return publication.finish(std::move(result));
 }
 using Pattern = std::vector<int>;
 struct Vocabulary {
@@ -527,10 +666,19 @@ Matrix image_on_harmonic(const Matrix &cycles, const Matrix &map, const field::H
     }
     return out;
 }
-Json sectors_from_fields(const field::ExactHodgeOperator &op, const std::array<Vector, 4> &fields,
-                         const Rational &lambda, const Vector *prepared_green = nullptr) {
+template<class Value> Value sector_values(const field::ExactHodgeOperator &op, const std::array<Vector, 4> &fields,
+                         const Rational &lambda, const Vector *prepared_green, ResultFields *publication, std::uint64_t axis,
+                         research_detail::StructuralResultFields *admission = nullptr) {
     const auto &x = fields[0];
-    auto out = Json::object();
+    auto out = Value::object();
+    const auto vector_field = [&](const Vector &v) -> Value {
+        if constexpr (std::is_same_v<Value,ResultValue>) {if (admission) admission->admit(v); return ResultFields::stage_vector(v,axis);}
+        else { (void)axis; return vec(v); }
+    };
+    const auto scalar = [&](const Rational &v) -> Value {
+        if constexpr (std::is_same_v<Value,ResultValue>) {if (admission) admission->admit(v); return publication->stage_scalar(v);}
+        else { (void)publication; return q(v); }
+    };
     auto g = fields[1], c = fields[2], h = fields[3];
     require(numeric::add(numeric::add(g, c), h) == x && op.metric().inner(g, c) == 0 &&
                 op.metric().inner(g, h) == 0 && op.metric().inner(c, h) == 0 &&
@@ -540,16 +688,21 @@ Json sectors_from_fields(const field::ExactHodgeOperator &op, const std::array<V
         prepared_green ? *prepared_green : field::exact_green_apply(op, lambda, x).value;
     require(numeric::add(green, numeric::scale(lambda, op.apply(green))) == x,
             "trajectory Green residual");
-    out.set("input", vec(x));
-    out.set("gradient", vec(g));
-    out.set("curl", vec(c));
-    out.set("harmonic", vec(h));
-    out.set("green", vec(green));
-    out.set("gradient_quadrance", q(op.metric().inner(g, g)));
-    out.set("curl_quadrance", q(op.metric().inner(c, c)));
-    out.set("harmonic_quadrance", q(op.metric().inner(h, h)));
+    out.set("input", vector_field(x));
+    out.set("gradient", vector_field(g));
+    out.set("curl", vector_field(c));
+    out.set("harmonic", vector_field(h));
+    out.set("green", vector_field(green));
+    out.set("gradient_quadrance", scalar(op.metric().inner(g, g)));
+    out.set("curl_quadrance", scalar(op.metric().inner(c, c)));
+    out.set("harmonic_quadrance", scalar(op.metric().inner(h, h)));
     return out;
 }
+Json sectors_from_fields(const field::ExactHodgeOperator &op,const std::array<Vector,4> &fields,
+    const Rational &lambda,const Vector *prepared_green=nullptr) {
+    return sector_values<Json>(op,fields,lambda,prepared_green,nullptr,0);
+}
+
 Json sectors(const field::ExactHodgeOperator &op, const field::HodgeProjectors &p, const Vector &x,
              const Rational &lambda) {
     return sectors_from_fields(
@@ -870,30 +1023,42 @@ Json compare_research_structures(const NativeStudy &old_study, const NativeStudy
         old_prepared, new_prepared, grade, old_coordinates, new_coordinates, old_field, new_field,
         lambda, declared_maps, sparse_output);
 }
-Json research_detail::compare_prepared_structures(
+template<class Value>
+Value compare_structure_values(
     scientific_detail::PreparedTemporalStudy &old_prepared,
     scientific_detail::PreparedTemporalStudy &new_prepared, core::Grade grade,
     const std::vector<std::vector<std::uint32_t>> &old_coordinates,
     const std::vector<std::vector<std::uint32_t>> &new_coordinates, const Vector &old_field,
     const Vector &new_field, const Rational &lambda, const std::vector<Matrix> *declared_maps,
-    bool sparse_output, bool factored_output) {
+    bool sparse_output, bool factored_output, research_detail::StructuralResultFields *native) {
     const auto &old_study = old_prepared.study(), &new_study = new_prepared.study();
     require(lambda > 0, "structure Green lambda");
-    const auto encode = [&](const Matrix &m) {
-        if (!sparse_output)
-            return matrix(m);
-        auto out = Json::object(), entries = Json::array();
-        out.set("rows", cardinality(m.rows()));
-        out.set("columns", cardinality(m.cols()));
-        for (const auto &[p, v] : m.entries()) {
-            auto e = Json::object();
-            e.set("row", cardinality(p.first));
-            e.set("column", cardinality(p.second));
-            e.set("value", Json::string(v.get_str()));
-            entries.push(e);
+    const auto axis = [&](bool old, std::size_t k) -> std::uint64_t {
+        return native ? (old ? native->old_axes.at(k) : native->new_axes.at(k)) : 0;
+    };
+    const auto vector_field = [&](const Vector &value, std::uint64_t carrier) -> Value {
+        if constexpr (std::is_same_v<Value, ResultValue>) {
+            native->admit(value);return ResultFields::stage_vector(value, carrier);
         }
-        out.set("entries", entries);
-        return out;
+        else { (void)carrier; return vec(value); }
+    };
+    const auto encode = [&](const Matrix &m, std::uint64_t input, std::uint64_t output) -> Value {
+        if constexpr (std::is_same_v<Value, ResultValue>) {
+            native->admit(m);
+            auto field = ResultFields::stage_matrix(m, input, output);
+            field.set("display", ResultValue::string(sparse_output ? "sparse_matrix" : "dense_matrix"));
+            return field;
+        } else {
+            (void)input; (void)output;
+            if (!sparse_output) return matrix(m);
+            auto out = Json::object(), entries = Json::array();
+            out.set("rows", cardinality(m.rows())); out.set("columns", cardinality(m.cols()));
+            for (const auto &[p, v] : m.entries()) {
+                auto e=Json::object(); e.set("row",cardinality(p.first)); e.set("column",cardinality(p.second));
+                e.set("value",Json::string(v.get_str())); entries.push(e);
+            }
+            out.set("entries",entries); return out;
+        }
     };
     auto correspondence = [&](std::size_t k) {
         if (declared_maps)
@@ -918,70 +1083,77 @@ Json research_detail::compare_prepared_structures(
                                            : old_green_plan.matrix().apply(old_field);
     const auto new_green = factored_output ? new_green_plan.apply(new_field)
                                            : new_green_plan.matrix().apply(new_field);
-    research_detail::FactoredTemporalMaps registry({&old_prepared, &new_prepared});
-    auto out = Json::object();
-    out.set("correspondence", encode(j));
+    research_detail::BasicFactoredTemporalMaps<Value> registry({&old_prepared, &new_prepared},
+        native ? &native->publication : nullptr, native ? std::vector<std::vector<std::uint64_t>>{native->old_axes,native->new_axes}
+                                                        : std::vector<std::vector<std::uint64_t>>{},
+        [native](const Matrix &m) {if (native) native->admit(m);},
+        [native](const Rational &v) {if (native) native->admit(v);});
+    auto out = Value::object();
+    out.set("correspondence", encode(j,axis(true,grade.value),axis(false,grade.value)));
     if (grade.value) {
         const auto old_b = field::materialize_boundary_matrix(old_study.source(), grade);
         const auto new_b = field::materialize_boundary_matrix(new_study.source(), grade);
         auto defect = new_b.multiply(j).add(
             correspondence(grade.value - 1).multiply(old_b).scale(Rational{-1}));
-        out.set("boundary_defect", encode(defect));
-        out.set("boundary_compatible", Json::boolean(defect.entries().empty()));
+        out.set("boundary_defect", encode(defect,axis(true,grade.value),axis(false,grade.value-1u)));
+        out.set("boundary_compatible", Value::boolean(defect.entries().empty()));
     }
     out.set("metric_pullback_defect",
-            encode(temporal::metric_pullback_defect(old_hodge.metric(), new_hodge.metric(), j)));
-    const auto old_sectors = old_p.apply(old_field);
-    out.set("old", sectors_from_fields(old_hodge, old_sectors, lambda, &old_green));
-    out.set("new", sectors_from_fields(new_hodge, new_p.apply(new_field), lambda, &new_green));
-    auto transport = Json::array();
+            encode(temporal::metric_pullback_defect(old_hodge.metric(), new_hodge.metric(), j),
+                   axis(true,grade.value),axis(true,grade.value)));
+    const auto old_sectors = old_p.apply(old_field,old_prepared.checkpoint());
+    out.set("old", sector_values<Value>(old_hodge, old_sectors, lambda, &old_green,
+        native ? &native->publication : nullptr,axis(true,grade.value),native));
+    out.set("new", sector_values<Value>(new_hodge, new_p.apply(new_field,new_prepared.checkpoint()), lambda, &new_green,
+        native ? &native->publication : nullptr,axis(false,grade.value),native));
+    auto transport = Value::array();
     Vector reconstructed(new_field.size(), Rational{0});
     for (std::size_t a = 1; a < old_sectors.size(); ++a) {
-        auto row = Json::array();
-        const auto transported = new_p.apply(j.apply(old_sectors[a]));
+        auto row = Value::array();
+        const auto transported = new_p.apply(j.apply(old_sectors[a]),new_prepared.checkpoint());
         for (std::size_t b = 1; b < transported.size(); ++b) {
-            row.push(vec(transported[b]));
+            row.push(vector_field(transported[b],axis(false,grade.value)));
             reconstructed = numeric::add(reconstructed, transported[b]);
         }
         transport.push(row);
     }
     require(reconstructed == j.apply(old_field), "complete nine-sector transport");
     if (factored_output) {
-        auto blocks = Json::array();
-        const auto j_map = registry.matrix(j);
+        auto blocks = Value::array();
+        const auto j_map = registry.matrix(j,axis(true,grade.value),axis(false,grade.value));
         for (std::size_t a = 0; a < 3; ++a) {
-            auto row = Json::array();
+            auto row = Value::array();
             for (std::size_t b = 0; b < 3; ++b)
                 row.push(registry.compose(
                     {registry.sector(0, grade, a), j_map, registry.sector(1, grade, b)}));
             blocks.push(row);
         }
         out.set("sector_maps", blocks);
-    } else if (sparse_output) {
+    } else if (sparse_output || native) {
         std::vector<std::vector<Matrix>> maps(3,
                                               std::vector<Matrix>(3, Matrix(j.rows(), j.cols())));
         for (std::size_t c = 0; c < j.cols(); ++c) {
             Vector e(j.cols(), Rational{0});
             e[c] = 1;
-            const auto projected = old_p.apply(e);
+            const auto projected = old_p.apply(e,old_prepared.checkpoint());
             for (std::size_t a = 1; a < projected.size(); ++a) {
                 // A certified zero sector has zero images in every target
                 // sector. Its complete declared block remains in the output.
                 if (numeric::is_zero(projected[a]))
                     continue;
-                const auto transported = new_p.apply(j.apply(projected[a]));
+                const auto transported = new_p.apply(j.apply(projected[a]),new_prepared.checkpoint());
                 for (std::size_t b = 1; b < transported.size(); ++b)
                     for (std::size_t i = 0; i < transported[b].size(); ++i)
                         if (transported[b][i] != 0)
                             maps[a - 1][b - 1].set(i, c, transported[b][i]);
             }
         }
-        auto blocks = Json::array();
+        auto blocks = Value::array();
         Matrix total(j.rows(), j.cols());
         for (const auto &source_row : maps) {
-            auto row = Json::array();
+            auto row = Value::array();
             for (const auto &block : source_row) {
-                row.push(encode(block));
+                row.push(encode(block,axis(true,grade.value),axis(false,grade.value)));
                 total = total.add(block);
             }
             blocks.push(row);
@@ -990,8 +1162,8 @@ Json research_detail::compare_prepared_structures(
         out.set("sector_maps", blocks);
     }
     out.set("sector_transport", transport);
-    out.set("old_transported", vec(j.apply(old_field)));
-    out.set("field_innovation", vec(temporal::field_delta(j, old_field, new_field).innovation));
+    out.set("old_transported", vector_field(j.apply(old_field),axis(false,grade.value)));
+    out.set("field_innovation", vector_field(temporal::field_delta(j, old_field, new_field).innovation,axis(false,grade.value)));
     // Identity injections and complete endpoint Green actions. The ordered
     // native word defect keeps rectangular transport and every new direction.
     const auto innovation = temporal::field_delta(j, old_field, new_field).innovation;
@@ -1002,7 +1174,12 @@ Json research_detail::compare_prepared_structures(
         operator_term = numeric::sub(new_green_plan.apply(j.apply(old_field)), j.apply(old_green));
         out.set("green_operator_defect",
                 registry.defect(registry.hodge(0, grade), registry.hodge(1, grade),
-                                registry.matrix(j), registry.matrix(j)));
+                                registry.matrix(j,axis(true,grade.value),axis(false,grade.value)), registry.matrix(j,axis(true,grade.value),axis(false,grade.value))));
+        if constexpr (std::is_same_v<Value, ResultValue>) {
+            const auto correspondence=registry.matrix(j,axis(true,grade.value),axis(false,grade.value));
+            out.set("green_response_defect",registry.defect(registry.green(0,grade,lambda),
+                registry.green(1,grade,lambda),correspondence,correspondence));
+        }
         out.set("factored_maps", registry.archive());
     } else {
         const auto &old_g = old_green_plan.matrix(), &new_g = new_green_plan.matrix();
@@ -1015,18 +1192,40 @@ Json research_detail::compare_prepared_structures(
                 "native complete Green and Hodge word maps");
         innovation_term = new_g.apply(innovation);
         operator_term = defect.direct.apply(old_field);
-        out.set("green_operator_defect", encode(hodge_defect.direct));
+        out.set("green_operator_defect", encode(hodge_defect.direct,axis(true,grade.value),axis(false,grade.value)));
+        if constexpr (std::is_same_v<Value, ResultValue>)
+            out.set("green_response_defect",encode(defect.direct,axis(true,grade.value),axis(false,grade.value)));
     }
     const auto aggregate = numeric::add(innovation_term, operator_term);
     require(aggregate == numeric::sub(new_green, j.apply(old_green)),
             "native Green word and field reconstruction");
-    out.set("realization_term", vec(realization));
-    out.set("innovation_term", vec(innovation_term));
-    out.set("operator_term", vec(operator_term));
-    out.set("total", vec(aggregate));
-    out.set("identity_exact", Json::boolean(true));
+    out.set("realization_term", vector_field(realization,axis(false,grade.value)));
+    out.set("innovation_term", vector_field(innovation_term,axis(false,grade.value)));
+    out.set("operator_term", vector_field(operator_term,axis(false,grade.value)));
+    out.set("total", vector_field(aggregate,axis(false,grade.value)));
+    out.set("identity_exact", Value::boolean(true));
+    if (native) native->lease.check_cancelled();
     return out;
 }
+Json research_detail::compare_prepared_structures(
+    PreparedTemporalStudy &old_prepared, PreparedTemporalStudy &new_prepared, core::Grade grade,
+    const std::vector<std::vector<std::uint32_t>> &old_coordinates,
+    const std::vector<std::vector<std::uint32_t>> &new_coordinates,
+    const Vector &old_field, const Vector &new_field, const Rational &lambda,
+    const std::vector<Matrix> *declared_maps, bool sparse_output, bool factored_output) {
+    return compare_structure_values<Json>(old_prepared,new_prepared,grade,old_coordinates,new_coordinates,
+        old_field,new_field,lambda,declared_maps,sparse_output,factored_output,nullptr);
+}
+ResultValue research_detail::compare_prepared_structure_fields(
+    PreparedTemporalStudy &old_prepared, PreparedTemporalStudy &new_prepared, core::Grade grade,
+    const std::vector<std::vector<std::uint32_t>> &old_coordinates,
+    const std::vector<std::vector<std::uint32_t>> &new_coordinates,
+    const Vector &old_field, const Vector &new_field, const Rational &lambda,
+    const std::vector<Matrix> *declared_maps, bool factored_output, StructuralResultFields &fields) {
+    return compare_structure_values<ResultValue>(old_prepared,new_prepared,grade,old_coordinates,new_coordinates,
+        old_field,new_field,lambda,declared_maps,false,factored_output,&fields);
+}
+
 bool is_research_operation(const std::string &op) {
     return op == "controlled_pairings" || op == "trajectory_structure" ||
            op == "paired_field_contrasts" || op == "linear_model_comparison" ||
@@ -1074,6 +1273,16 @@ std::set<std::string> research_field_ids(const Json &query) {
             "research field budget");
     return out;
 }
+NativeRecord research_detail::comparison_fields(const ScientificStudy &study, const Json &query,
+    const std::shared_ptr<CpuResources> &resources, const runtime::ExecutionLease &lease) {
+    const auto operation = text(query.at("operation"));
+    require(operation == "paired_field_contrasts" || operation == "controlled_pairings",
+            "declared comparison operation");
+    Inputs input(study, research_field_ids(query), false);
+    auto result = operation == "paired_field_contrasts" ? paired(study, input, query, false, resources, lease)
+                                                      : controlled(study, input, query, false, resources, lease);
+    return std::move(result).value();
+}
 Json execute_research_query(const ScientificStudy &study, const Json &query, bool validate_only,
                             std::shared_ptr<CpuResources> resources) {
     const auto op = query.at("operation").text();
@@ -1084,9 +1293,12 @@ Json execute_research_query(const ScientificStudy &study, const Json &query, boo
     if (op == "linear_model_comparison")
         return research_detail::linear_model_comparison(study, query, validate_only, resources);
     Inputs inputs(study, research_field_ids(query), op == "trajectory_structure");
-    if (op == "paired_field_contrasts")
-        return paired(inputs, query, validate_only, resources);
-    return op == "controlled_pairings" ? controlled(inputs, query, validate_only, resources)
-                                       : trajectory(inputs, query, validate_only);
+    if (op == "paired_field_contrasts" || op == "controlled_pairings") {
+        const auto lease = source_execution_lease("scientific-declared-comparison");
+        auto result = op == "paired_field_contrasts" ? paired(study, inputs, query, validate_only, resources, lease)
+                                                   : controlled(study, inputs, query, validate_only, resources, lease);
+        return result ? result_fields_view(*result) : Json{};
+    }
+    return trajectory(inputs, query, validate_only);
 }
 } // namespace gadget

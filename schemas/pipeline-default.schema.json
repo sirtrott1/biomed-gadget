@@ -1664,6 +1664,9 @@
                   },
                   "maximum_edits": {
                     "$ref": "assays-query.schema.json#/oneOf/19/properties/maximum_edits"
+                  },
+                  "execution": {
+                    "$ref": "assays-query.schema.json#/oneOf/19/properties/execution"
                   }
                 },
                 "required": [
@@ -2883,6 +2886,9 @@
                   },
                   "workers": {
                     "$ref": "assays-query.schema.json#/oneOf/25/properties/workers"
+                  },
+                  "complete_families": {
+                    "$ref": "assays-query.schema.json#/oneOf/25/properties/complete_families"
                   }
                 },
                 "required": [

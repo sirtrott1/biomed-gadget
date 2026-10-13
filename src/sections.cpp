@@ -102,8 +102,8 @@ scientific_detail::LocalSectionAnalysis scientific_detail::analyze_local_section
         const auto grade = core::Grade{static_cast<std::uint16_t>(
             count(item.at("grade"), source.grade_count() - 1, "section grade"))};
         Vector v;
-        if (operands && item.has("fields")) {
-            require(operands->contains(item.at("id").text()) && !item.has("values"),
+        if (operands && operands->contains(item.at("id").text())) {
+            require(!item.has("fields") || !item.has("values"),
                     "source section requires its admitted native operand");
             v = operands->at(item.at("id").text());
         } else {
@@ -206,7 +206,7 @@ scientific_detail::LocalSectionAnalysis scientific_detail::analyze_local_section
         auto r = Value(sections.at(i));
         r.set("input_origin",
               Value::string(sections.at(i).has("fields") ? "admitted source fields"
-                                                        : "declared query operand"));
+                  : sections.at(i).has("values") ? "declared query operand" : "native section restriction"));
         const auto grade =
             core::Grade{static_cast<std::uint16_t>(sections.at(i).at("grade").integer())};
         const auto &v = values[i];

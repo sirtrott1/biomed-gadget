@@ -57,6 +57,17 @@ NativeRecordValue ResultFields::consume_staged(NativeRecordValue value) {
             tensor.interpretation = "scientific_result";
             if (auto *interpretation = member("interpretation"))
                 tensor.interpretation = std::get<std::string>(interpretation->data);
+            if (member("cell_key")) {
+                if (member("occurrence_key") || !member("cell_grade"))
+                    throw std::invalid_argument("staged scientific cell owner declaration");
+                const auto &grade = std::get<rfc::numeric::Integer>(member("cell_grade")->data);
+                const auto &key = std::get<rfc::numeric::Integer>(member("cell_key")->data);
+                if (grade < 0 || grade > std::numeric_limits<std::uint16_t>::max() ||
+                    key <= 0 || !mpz_fits_ulong_p(key.get_mpz_t()))
+                    throw std::invalid_argument("staged scientific cell owner");
+                tensor.owner.kind = rfc::storage::TemporalOwnerKind::Cell;
+                tensor.owner.cell = {{static_cast<std::uint16_t>(grade.get_ui())}, key.get_ui()};
+            }
             if (member("occurrence_key")) {
                 const auto &grade = std::get<rfc::numeric::Integer>(member("occurrence_grade")->data);
                 const auto &key = std::get<rfc::numeric::Integer>(member("occurrence_key")->data);
@@ -121,6 +132,50 @@ ResultValue ResultFieldContext::field(const Vector &value, std::size_t k) const 
         rfc::numeric::SparseRationalVector(grade.size, std::move(entries)));
     return ResultFields::staged(std::move(tensor), {}, grade.source, "vector", grade.coordinate_field);
 }
+namespace {
+NativeRecord result_member(NativeRecord value, const NativeRecord &component) {
+    if (value.kind() == NativeRecordKind::Object && value.has("schema") &&
+        value.at("schema").kind() == NativeRecordKind::Text) {
+        const auto schema = value.at("schema").text();
+        if (schema == "gadget.scientific.publication.view.v1") {
+            auto selected = NativeRecord::decode(value.at("publication").bytes());
+            const auto path = value.at("path");
+            require(path.kind() == NativeRecordKind::Array, "scientific archived path type");
+            for (std::size_t i = 0; i < path.size(); ++i) selected = result_member(std::move(selected), path.at(i));
+            return result_member(std::move(selected), component);
+        }
+        if (schema == "gadget.scientific.view.overlay.v1") {
+            require(component.kind() == NativeRecordKind::Text, "scientific overlay object path type");
+            const auto additions = value.at("additions");
+            require(additions.kind() == NativeRecordKind::Object, "scientific overlay additions type");
+            if (additions.has(component.text())) return additions.at(component.text());
+            return result_member(value.at("base"), component);
+        }
+    }
+    if (component.kind() == NativeRecordKind::Text) {
+        require(value.kind() == NativeRecordKind::Object, "scientific native object path type");
+        return value.at(component.text());
+    }
+    require(component.kind() == NativeRecordKind::Integer && value.kind() == NativeRecordKind::Array,
+            "scientific native array path type");
+    const auto index = component.integer();
+    require(index >= 0 && mpz_fits_ulong_p(index.get_mpz_t()) && index < value.size(),
+            "scientific native array coordinate outside owner");
+    return value.at(index.get_ui());
+}
+NativeRecord result_leaf(NativeRecord value) {
+    while (value.kind() == NativeRecordKind::Object && value.has("schema") &&
+           value.at("schema").kind() == NativeRecordKind::Text &&
+           value.at("schema").text() == "gadget.scientific.publication.view.v1") {
+        const auto path = value.at("path");
+        auto selected = NativeRecord::decode(value.at("publication").bytes());
+        require(path.kind() == NativeRecordKind::Array, "scientific archived path type");
+        for (std::size_t i = 0; i < path.size(); ++i) selected = result_member(std::move(selected), path.at(i));
+        value = std::move(selected);
+    }
+    return value;
+}
+} // namespace
 Json result_fields_view(const NativeRecord &record) {
     std::map<std::pair<const void *, std::uint64_t>, NativeRecord> owners;
     const auto render = [&](const auto &self, const NativeRecord &value) -> Json {
@@ -128,7 +183,19 @@ Json result_fields_view(const NativeRecord &record) {
             if (value.has("schema") && value.at("schema").kind() == NativeRecordKind::Text) {
                 const auto schema = value.at("schema").text();
                 if (schema == "gadget.scientific.tensor.view.v1") return result_tensor_view(value);
-                if (schema == "gadget.scientific.fields.v1") return self(self, value.at("view"));
+                if (schema == "gadget.scientific.fields.v1") {
+                    auto out = self(self, value.at("view"));
+                    if (value.has("view_execution")) {
+                        require(json_object_is_type(out.raw(), json_type_object),
+                                "scientific execution display requires an object");
+                        const auto metadata = value.at("view_execution");
+                        for (const auto &name : metadata.names()) {
+                            require(!out.has(name), "execution display shadows a scientific field");
+                            out.set(name, self(self, metadata.at(name)));
+                        }
+                    }
+                    return out;
+                }
                 if (schema == "gadget.scientific.publication.view.v1") {
                     const auto bytes = value.at("publication");
                     const auto id = std::pair<const void *, std::uint64_t>{
@@ -137,9 +204,34 @@ Json result_fields_view(const NativeRecord &record) {
                     if (owner == owners.end())
                         owner = owners.emplace(id, NativeRecord::decode(bytes.bytes())).first;
                     auto selected = owner->second;
-                    for (std::size_t i = 0; i < value.at("path").size(); ++i)
-                        selected = selected.at(value.at("path").at(i).text());
+                    for (std::size_t i = 0; i < value.at("path").size(); ++i) {
+                        const auto component = value.at("path").at(i);
+                        if (component.kind() == NativeRecordKind::Text) {
+                            if (selected.kind() != NativeRecordKind::Object)
+                                throw std::invalid_argument("scientific publication object path type");
+                            selected = selected.at(component.text());
+                        } else {
+                            if (selected.kind() != NativeRecordKind::Array ||
+                                component.kind() != NativeRecordKind::Integer)
+                                throw std::invalid_argument("scientific publication array path type");
+                            const auto index = component.integer();
+                            if (index < 0 || !mpz_fits_ulong_p(index.get_mpz_t()) || index >= selected.size())
+                                throw std::invalid_argument("scientific publication array path coordinate");
+                            selected = selected.at(index.get_ui());
+                        }
+                    }
                     return self(self, selected);
+                }
+                if (schema == "gadget.scientific.view.overlay.v1") {
+                    auto base = self(self, value.at("base"));
+                    const auto additions = self(self, value.at("additions"));
+                    if (!json_object_is_type(base.raw(), json_type_object) ||
+                        !json_object_is_type(additions.raw(), json_type_object))
+                        throw std::invalid_argument("scientific view overlay requires object views");
+                    json_object_object_foreach(additions.raw(), name, child) {
+                        base.set(name, Json(json_object_get(child)));
+                    }
+                    return base;
                 }
             }
             auto out = Json::object();
@@ -153,12 +245,12 @@ Json result_fields_view(const NativeRecord &record) {
         }
         return render_record_view(value);
     };
-    return render(render, record.at("view"));
+    return render(render, record);
 }
 Json result_tensor_view(const NativeRecord &record) {
     const auto &tensor = assay_detail::retained_tensor(record, record.at("tensor")).tensor;
     const auto display = record.at("display").text();
-    if (display == "rational") {
+    if (display == "rational" || display == "rational_object") {
         const auto position = record.has("index") ? record.at("index").integer() : rfc::numeric::Integer(0);
         if (position < 0 || !mpz_fits_ulong_p(position.get_mpz_t()) ||
             position >= rfc::numeric::Integer(std::to_string(tensor.domain().logical_size())))
@@ -166,7 +258,10 @@ Json result_tensor_view(const NativeRecord &record) {
         const auto index = position.get_ui();
         if (!record.has("index") && tensor.domain().logical_size() != 1)
             throw std::invalid_argument("scientific scalar support");
-        return tensor.support().contains(index) ? Json::string(tensor.state(index)->get_str()) : Json{};
+        if (!tensor.support().contains(index)) return Json{};
+        const auto value = Json::string(tensor.state(index)->get_str());
+        if (display == "rational") return value;
+        auto out = Json::object(); out.set("rational", value); return out;
     }
     if (display == "indices") {
         auto out = Json::array();
@@ -178,7 +273,7 @@ Json result_tensor_view(const NativeRecord &record) {
         }
         return out;
     }
-    if (display == "vector") {
+    if (display == "vector" || display == "vector_objects") {
         auto out = Json::array();
         if (record.has("coordinates")) {
             const auto &coordinates = assay_detail::retained_tensor(record, record.at("coordinates")).tensor;
@@ -194,7 +289,12 @@ Json result_tensor_view(const NativeRecord &record) {
             }
         } else {
             for (std::size_t i = 0; i < tensor.domain().logical_size(); ++i)
-                out.push(tensor.support().contains(i) ? Json::string(tensor.state(i)->get_str()) : Json{});
+                if (!tensor.support().contains(i)) out.push(Json{});
+                else if (display == "vector_objects") {
+                    auto value = Json::object();
+                    value.set("rational", Json::string(tensor.state(i)->get_str()));
+                    out.push(value);
+                } else out.push(Json::string(tensor.state(i)->get_str()));
         }
         return out;
     }
@@ -217,13 +317,21 @@ Json result_tensor_view(const NativeRecord &record) {
         out.set("values", values);
         return out;
     }
-    if ((display != "sparse_matrix" && display != "declared_map") || tensor.domain().extents().size() != 2)
+    if ((display != "sparse_matrix" && display != "declared_map" && display != "matrix_triplets") || tensor.domain().extents().size() != 2)
         throw std::invalid_argument("scientific tensor display");
     auto out = Json::object(), entries = Json::array();
     const auto rows = tensor.domain().extents()[0], columns = tensor.domain().extents()[1];
     out.set("rows", cardinality(rows));
     out.set("columns", cardinality(columns));
     for (const auto &entry : tensor.values().entries()) {
+        if (display == "matrix_triplets") {
+            auto value = Json::array();
+            value.push(cardinality(entry.index / columns));
+            value.push(cardinality(entry.index % columns));
+            value.push(Json::string(entry.value.get_str()));
+            entries.push(value);
+            continue;
+        }
         auto value = Json::object();
         value.set("row", cardinality(entry.index / columns));
         value.set("column", cardinality(entry.index % columns));
@@ -259,6 +367,15 @@ NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeReco
 } // namespace gadget::scientific_detail
 
 namespace gadget {
+NativeRecord select_scientific_result(const NativeRecord &value, const NativeRecord &path) {
+    scientific_detail::require(path.kind() == NativeRecordKind::Array && path.size(),
+                               "scientific native path requires components");
+    auto selected = value;
+    for (std::size_t i = 0; i < path.size(); ++i)
+        selected = scientific_detail::result_member(std::move(selected), path.at(i));
+    return scientific_detail::result_leaf(std::move(selected));
+}
+
 namespace {
 void same_result_fields(const NativeRecord &a, const NativeRecord &b);
 void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_execution = false,
@@ -291,8 +408,14 @@ void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_e
             a.at("schema").text() == "gadget.scientific.publication.view.v1") {
             same_result_value(a.at("schema"), b.at("schema"));
             same_result_value(a.at("path"), b.at("path"));
-            same_result_fields(NativeRecord::decode(a.at("publication").bytes()),
-                               NativeRecord::decode(b.at("publication").bytes()));
+            const auto original = NativeRecord::decode(a.at("publication").bytes());
+            const auto replayed = NativeRecord::decode(b.at("publication").bytes());
+            if (original.kind() == NativeRecordKind::Object && original.has("schema") &&
+                original.at("schema").kind() == NativeRecordKind::Text &&
+                original.at("schema").text() == "gadget.scientific.fields.v1")
+                same_result_fields(original, replayed);
+            else scientific_detail::require(original.encode() == replayed.encode(),
+                                             "replayed original publication bytes differ");
             return;
         }
         for (const auto &name : a.names()) {

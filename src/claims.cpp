@@ -76,7 +76,10 @@ bool compare_claim(const Json &actual, const Json &expected, const std::string &
     return ordering <= 0;
 }
 void admit_condition(const Json &condition) {
-    members(condition, {"path", "value_type", "comparison", "value"});
+    members(condition, {"path", "value_type", "comparison", "value"}, {"coordinate"});
+    if (condition.has("coordinate"))
+        (void)count(condition.at("coordinate"), std::numeric_limits<std::size_t>::max(),
+                    "native claim original coordinate");
     const auto path = condition.at("path");
     source_array(path, "condition path");
     require(path.size(), "condition path requires components");
@@ -93,6 +96,7 @@ void admit_condition(const Json &condition) {
 }
 Json check_literal_claim(const Json &value, const Json &claim) {
     admit_condition(claim);
+    require(!claim.has("coordinate"), "tensor coordinates require an actual native claim owner");
     const auto actual = member_path(value, claim.at("path"));
     const bool agrees = compare_claim(actual, claim.at("value"), claim.at("value_type").text(),
                                       claim.at("comparison").text());
@@ -168,22 +172,65 @@ ResultValue literal_result(const Literal &literal) {
     return std::visit([](const auto &value) { return ResultValue(N(value)); }, literal);
 }
 NativeRecord native_path(NativeRecord value, const NativeRecord &path) {
-    require(path.kind() == NativeRecordKind::Array && path.size(), "native claim path requires components");
-    for (std::size_t i = 0; i < path.size(); ++i) {
-        const auto part = path.at(i);
-        if (part.kind() == NativeRecordKind::Text) {
-            require(value.kind() == NativeRecordKind::Object, "native claim object path type");
-            value = value.at(part.text());
-        } else {
-            require(value.kind() == NativeRecordKind::Array, "native claim array path type");
-            const auto index = native_count(part, "native claim array index");
-            require(index < value.size(), "native claim array coordinate outside owner");
-            value = value.at(index);
-        }
-    }
-    return value;
+    return select_scientific_result(value, path);
 }
+
 } // namespace
+
+claim_detail::NativeLiteralObservation claim_detail::read_native_literal(
+    const NativeRecord &selected, const std::string &type,
+    std::optional<std::size_t> coordinate) {
+    auto binding = ResultValue::object();
+    binding.set("source_namespace", ResultValue::string(std::to_string(selected.source_namespace())));
+    const auto history = selected.publication_history();
+    require(history.has_value(), "native literal requires its actual publication");
+    binding.set("cutoff", ResultValue::count(history->last_sequence()));
+    if (selected.kind() == NativeRecordKind::Object && selected.has("schema") &&
+        selected.at("schema").text() == "gadget.scientific.tensor.view.v1") {
+        require(type == "rational", "native tensor facts require rational values");
+        const auto key = native_count(selected.at("tensor"), "native fact tensor");
+        rfc::storage::NativeAccessionRequest request;
+        request.subject = key;
+        const auto pin = selected.accession_directory()->pin(request);
+        require(pin.source_namespace() == selected.source_namespace() &&
+                    pin.sequence() == history->last_sequence(), "native fact accession owner mismatch");
+        const auto tensor = pin.tensor();
+        const auto descriptor = pin.tensor_declaration();
+        const auto index = coordinate ? *coordinate :
+            selected.has("index") ? native_count(selected.at("index"), "native fact scalar index") : 0;
+        if (!coordinate)
+            require((selected.at("display").text() == "rational" ||
+                         selected.at("display").text() == "rational_object") &&
+                        (selected.has("index") || tensor->domain().logical_size() == 1),
+                    "nonscalar native facts require an original flat coordinate");
+        require(index < tensor->domain().logical_size(), "native fact coordinate outside field");
+        const auto value = tensor->state(index);
+        require(value.has_value(), "native fact coordinate is missing");
+        binding.set("kind", ResultValue::string("native_tensor"));
+        binding.set("tensor", ResultValue::count(key));
+        binding.set("coordinate", ResultValue::count(index));
+        binding.set("supported", ResultValue::boolean(true));
+        binding.set("input_carrier", descriptor->input ? ResultValue::count(*descriptor->input) : ResultValue());
+        binding.set("output_carrier", descriptor->output ? ResultValue::count(*descriptor->output) : ResultValue());
+        binding.set("interpretation", ResultValue::string(descriptor->interpretation));
+        return {NativeRecordValue(*value), std::move(binding).release()};
+    }
+    require(!coordinate, "primitive native fact cannot name a tensor coordinate");
+    binding.set("kind", ResultValue::string("native_literal"));
+    return {literal_result(native_literal(selected, type, false)).release(), std::move(binding).release()};
+}
+
+bool claim_detail::compare_native_literal(const NativeRecord &actual, const Json &expected,
+    const std::string &type, const std::string &comparison) {
+    auto proposed = admit_record_view(expected);
+    if ((type == "count" || type == "integer") && proposed.kind() == NativeRecordKind::Text) {
+        const auto text = proposed.text();
+        require(!text.empty() && text.find_first_not_of("-0123456789") == std::string::npos,
+                "native integer fact proposal requires decimal integer text");
+        proposed = NativeRecord::create(N(rfc::numeric::Integer(text)) , new_native_record_namespace());
+    }
+    return compare_native(native_literal(actual, type, false), native_literal(proposed, type, true), comparison);
+}
 
 NativeRecord check_certificate_claims_record(const NativeRecord &certificate, const NativeRecord &request) {
     require(certificate.is_root() && certificate.at("schema").text() == "gadget.operation.native.v1",
@@ -203,11 +250,13 @@ NativeRecord check_certificate_claims_record(const NativeRecord &certificate, co
     require(cutoff == history->last_sequence(), "native claims publication cutoff mismatch");
     const auto result = certificate.at("result");
     const auto schema = result.at("schema").text();
-    require(schema == "gadget.scientific.result.fields.v1" || schema == "gadget.biomedical.certificate.v1",
+    require(schema == "gadget.scientific.result.fields.v1" || schema == "gadget.biomedical.certificate.v1" ||
+                schema == "gadget.claims.native.receipt.v1",
             "native claims refuse an unmigrated numerical certificate");
     const bool scientific = schema == "gadget.scientific.result.fields.v1";
     const auto metadata = scientific ? result.at("certificate") : result;
-    const auto values = scientific ? result.at("fields").at("view") : result.at("result");
+    const auto values = scientific ? result.at("fields").at("view") :
+        schema == "gadget.claims.native.receipt.v1" ? result : result.at("result");
     if (scientific)
         require(result.at("fields").at("schema").text() == "gadget.scientific.fields.v1",
                 "native claims require actual scientific fields");
@@ -240,7 +289,7 @@ NativeRecord check_certificate_claims_record(const NativeRecord &certificate, co
                 ? native_count(item.at("coordinate"), "native claim field coordinate")
                 : selected.has("index") ? native_count(selected.at("index"), "native scalar coordinate") : 0;
             if (!item.has("coordinate"))
-                require(selected.at("display").text() == "rational" &&
+                require((selected.at("display").text() == "rational" || selected.at("display").text() == "rational_object") &&
                             (selected.has("index") || tensor.domain().logical_size() == 1),
                         "nonscalar native claims require an original flat coordinate");
             require(coordinate < tensor.domain().logical_size(), "native claim coordinate outside field");

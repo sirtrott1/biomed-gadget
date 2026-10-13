@@ -7,6 +7,58 @@
 #include <rfc/database/native_query.hpp>
 
 namespace gadget {
+NativeRecord retain_study_sources(const ScientificStudy &study, const NativeRecord &request) {
+    using namespace scientific_detail;
+    using N = NativeRecordValue;
+    const auto declaration = render_record_view(request);
+    members(declaration, {"schema", "source_digest", "method", "sources"});
+    require(declaration.at("schema").text() == "gadget.biomedical.sources.request.v1" &&
+                declaration.at("source_digest").text() == study.digest(),
+            "original source request differs from admitted study");
+    const auto method = text(declaration.at("method"));
+    const auto &original = study.native_publication();
+    require(!original.has("source_provenance"), "study already has declared source provenance");
+    auto value = original.materialize_value();
+    auto &root = std::get<N::Object>(value.data).members;
+    std::uint64_t next = 1;
+    for (const auto key : NativeRecord::source_keys(*original.endpoint()))
+        next = rfc::machine::checked_size_add(std::max(next, key), 1);
+    std::vector<RawByteSource> added;
+    N::Array sources;
+    std::set<std::string> identities;
+    const auto inputs = declaration.at("sources");
+    source_array(inputs, "original source declarations");
+    require(inputs.size() > 0, "original source declarations are empty");
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+        const auto item = inputs.at(i);
+        members(item, {"id", "path", "sha256", "source_url", "license"});
+        const auto id = text(item.at("id"));
+        require(identities.insert(id).second, "duplicate original source identity");
+        const fs::path path(text(item.at("path")));
+        require(fs::is_regular_file(fs::symlink_status(path)), "original source must be regular");
+        auto bytes = RawByteSource::read(next, path);
+        const auto span = bytes.bytes();
+        const auto digest = "sha256:" + sha256(std::string_view(
+            reinterpret_cast<const char *>(span.data()), span.size()));
+        require(item.at("sha256").text() == digest, "original source SHA-256 mismatch");
+        sources.elements.emplace_back(N::Object{{
+            {"id", N(id)}, {"sha256", N(digest)},
+            {"source_url", N(text(item.at("source_url")))},
+            {"license", N(text(item.at("license")))},
+            {"bytes", N(N::ByteSpan{next, 0, span.size(), false})}}});
+        added.push_back(std::move(bytes));
+        next = rfc::machine::checked_size_add(next, 1);
+    }
+    auto archive = request.owning_publication().archive_source(next);
+    const auto archive_size = archive.bytes().size();
+    added.push_back(std::move(archive));
+    root.emplace_back("source_provenance", N(N::Object{{
+        {"schema", N(std::string("gadget.biomedical.sources.v1"))},
+        {"source_digest", N(study.digest())}, {"method", N(method)},
+        {"sources", N(std::move(sources))},
+        {"request_publication", N(N::ByteSpan{next, 0, archive_size, false})}}}));
+    return original.derive(std::move(value), std::move(added));
+}
 namespace {
 using namespace scientific_detail;
 using namespace rfc::database;
@@ -337,6 +389,11 @@ std::string archive(const InterpretedSnapshot &native) {
     const auto bytes = encode_interpreted_snapshot(native);
     return {reinterpret_cast<const char *>(bytes.data()), bytes.size()};
 }
+std::string reported_point_quantity(const std::string &endpoint) {
+    return "reported standard " + endpoint +
+           "; exact point (=) only; upstream normalization retained; "
+           "missing/censored/other units excluded from this field";
+}
 void scientific_view(const Packet &p, const InterpretedSnapshot &native, const fs::path &root) {
     std::map<std::string, std::map<std::string, std::size_t>> categories;
     const std::vector<std::string> cats{"compound", "target",   "assay", "endpoint",
@@ -382,9 +439,7 @@ void scientific_view(const Packet &p, const InterpretedSnapshot &native, const f
                "category_code", "categorical");
     for (const auto &e : std::vector<std::string>{"Kd", "Ki", "IC50", "EC50"})
         column(e + "_nM", "T",
-               "reported standard " + e +
-                   "; exact point (=) only; upstream normalization retained; "
-                   "missing/censored/other units excluded from this field",
+               reported_point_quantity(e),
                "nM", "quantitative");
     auto mapping = Json::array();
     std::map<std::string, std::uint64_t> native_keys;
@@ -608,6 +663,128 @@ EvidenceStore::EvidenceStore(const fs::path &directory)
 EvidenceStore::~EvidenceStore() = default;
 const NativeRecord &EvidenceStore::native_publication() const {return state_->publication;}
 std::string EvidenceStore::digest() const { return state_->receipt.at("source_digest").text(); }
+NativeRecord EvidenceStore::bind_reported_field(const ScientificStudy &study,
+                                               const NativeRecord &request) const {
+    using N = NativeRecordValue;
+    const auto control = render_record_view(request);
+    members(control, {"schema", "source_digest", "study_digest", "field", "endpoint", "units"});
+    require(control.at("schema").text() == "gadget.biomedical.field.request.v1" &&
+                control.at("source_digest").text() == digest() &&
+                control.at("study_digest").text() == study.digest(),
+            "biomedical field source/study/schema mismatch");
+    const auto endpoint = text(control.at("endpoint")), unit = text(control.at("units"));
+    require(endpoint == "Kd" || endpoint == "Ki" || endpoint == "IC50" || endpoint == "EC50",
+            "reported field requires an explicit binding endpoint");
+    require(unit == "nM", "reported field projection requires its declared nM units");
+    const auto field = text(control.at("field"));
+    const auto declaration = study.field_declaration(field);
+    require(declaration.at("value_type").text() == "quantitative" &&
+                declaration.at("units").text() == unit &&
+                declaration.at("quantity").text() == reported_point_quantity(endpoint),
+            "reported field endpoint/units/quantity declaration mismatch");
+    const auto &publication = study.native_publication();
+    const auto document = [&](const std::string &id) {
+        const auto documents = publication.at("documents");
+        for (std::size_t i = 0; i < documents.size(); ++i) {
+            const auto item = documents.at(i);
+            if (item.at("id").text() == id) {
+                const auto bytes = item.at("bytes").bytes();
+                return Json::parse(std::string(reinterpret_cast<const char *>(bytes.data()),
+                                               bytes.size()));
+            }
+        }
+        throw std::invalid_argument("reported field source document is absent");
+    };
+    require(document("database_snapshot").dump() == state_->manifest.dump(),
+            "reported field snapshot differs from evidence owner");
+    const auto mapping = document("native_record_correspondence");
+    source_array(mapping, "reported field correspondence");
+    std::vector<std::uint64_t> original_order;
+    const auto original = state_->publication.at("records");
+    std::map<std::string, std::uint64_t> assertion_ids;
+    for (const auto &[assertion, row] : state_->records)
+        assertion_ids.emplace(row.at("id").text(), assertion);
+    for (std::size_t i = 0; i < original.size(); ++i) {
+        const auto row = original.at(i);
+        if (row.at("kind").integer() == 10 && row.at("provider").text() == "chembl")
+            original_order.push_back(assertion_ids.at(row.at("id").text()));
+    }
+    const auto pin = study.field_accession(field);
+    const auto tensor = pin.tensor_declaration();
+    const auto carrier = pin.carrier();
+    require(tensor->role == rfc::storage::TemporalTensorRole::Field && !tensor->input &&
+                tensor->output && *tensor->output == carrier->key &&
+                carrier->kind == rfc::storage::TemporalCarrierKind::SourceGrade &&
+                carrier->grade == rfc::core::Grade{0} &&
+                tensor->tensor.domain() == carrier->domain &&
+                mapping.size() == original_order.size() &&
+                mapping.size() == tensor->tensor.domain().logical_size(),
+            "reported field correspondence requires the complete original record carrier");
+    N::Array correspondence;
+    std::size_t supported = 0;
+    for (std::size_t i = 0; i < mapping.size(); ++i) {
+        const auto entry = mapping.at(i);
+        members(entry, {"scientific_record_key", "assertion_key", "record_id"});
+        const auto assertion = key(entry.at("assertion_key"));
+        require(assertion == original_order.at(i) &&
+                    key(entry.at("scientific_record_key")) ==
+                        rfc::storage::stable_cell_key(pin.endpoint()->source,
+                            {{0}, static_cast<std::uint32_t>(i)}).key,
+                "reported field correspondence changed original order or identity");
+        const auto row = state_->records.at(assertion);
+        require(row.at("id").text() == entry.at("record_id").text(),
+                "reported field record identity mismatch");
+        const auto payload = state_->native.payload(assertion, {1}).declared_value();
+        const auto &value = std::get<V::Optional>(payload->data).element;
+        const bool point = row.at("relation").text() == "=" &&
+                           row.at("endpoint").text() == endpoint &&
+                           row.at("units").text() == unit && !value.empty();
+        const auto actual = tensor->tensor.state(i);
+        require(actual.has_value() == point &&
+                    (!point || *actual == std::get<Rational>(value.at(0).data)),
+                "reported field native support/value differs from original assertion");
+        supported += point;
+        correspondence.elements.emplace_back(N::Object{{
+            {"coordinate", N(rfc::numeric::Integer(std::to_string(i)))},
+            {"scientific_record_key", N(entry.at("scientific_record_key").text())},
+            {"assertion_key", N(std::to_string(assertion))},
+            {"record", state_->record(assertion).release()}, {"supported", N(point)}}});
+    }
+    const auto number = [](std::uint64_t value) {
+        return N(rfc::numeric::Integer(std::to_string(value)));
+    };
+    const auto nullable = [&](const std::optional<std::uint64_t> &value) {
+        return value ? number(*value) : N{};
+    };
+    // Separate archives preserve the study declarations and actual field cutoff.
+    // Their raw source keys do not establish a map to the evidence complex.
+    std::vector<RawByteSource> sources;
+    std::uint64_t next = 1;
+    for (const auto source_key : NativeRecord::source_keys(*state_->publication.endpoint()))
+        next = rfc::machine::checked_size_add(std::max(next, source_key), 1);
+    const auto study_key = next, field_key = rfc::machine::checked_size_add(next, 1);
+    sources.push_back(publication.archive_source(study_key));
+    sources.push_back(publication.historical_publication(pin.sequence()).archive_source(field_key));
+    const auto study_bytes = sources.at(0).bytes().size(), field_bytes = sources.at(1).bytes().size();
+    N selector(N::Object{{{"schema", N(std::string("gadget.rcdb.field.query.v1"))},
+        {"source_namespace", N(std::to_string(pin.source_namespace()))},
+        {"cutoff", number(pin.sequence())}, {"tensor", number(tensor->key)},
+        {"input_carrier", nullable(tensor->input)}, {"output_carrier", nullable(tensor->output)},
+        {"interpretation", N(tensor->interpretation)}}});
+    auto source = state_->publication.derive(state_->publication.materialize_value(),
+                                             std::move(sources));
+    return retain_operation(source, request, N(N::Object{{
+        {"schema", N(std::string("gadget.biomedical.field.binding.v1"))},
+        {"source_digest", N(digest())}, {"study_digest", N(study.digest())},
+        {"field", N(field)}, {"endpoint", N(endpoint)}, {"units", N(unit)},
+        {"relation", N(std::string("="))}, {"supported", number(supported)},
+        {"selector", std::move(selector)}, {"correspondence", N(std::move(correspondence))},
+        {"study_publication", N(N::ByteSpan{study_key, 0, study_bytes, false})},
+        {"field_publication", N(N::ByteSpan{field_key, 0, field_bytes, false})},
+        {"scope", N(std::string("Complete retained assay-identified ChEMBL record projection; "
+            "reported equality points in declared nM units. Separate sources, assays and "
+            "endpoints do not imply biological comparability."))}}}));
+}
 NativeRecord EvidenceStore::source_context(const NativeRecord &request) const {
     using N = NativeRecordValue;
     const auto control = render_record_view(request);

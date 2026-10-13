@@ -593,9 +593,16 @@ int main(int argc, char **argv) {
             std::unique_ptr<gadget::EvidenceStore> evidence;
             if (options.contains("--evidence"))
                 evidence = std::make_unique<gadget::EvidenceStore>(options.at("--evidence"));
-            const auto publication=gadget::execute_workflow_record(study,request.native(),callbacks,gadget::CpuResources::local(),compute,evidence.get());
-            if(options.contains("--out"))publication.write(required("--out"));
-            const auto result=gadget::render_record_view(publication.at("result"));
+            gadget::Json result;
+            if (options.contains("--out")) {
+                const auto publication = gadget::execute_workflow_record(study, request.native(),
+                    callbacks, gadget::CpuResources::local(), compute, evidence.get());
+                publication.write(required("--out"));
+                result = gadget::workflow_record_view(publication);
+            } else {
+                result = gadget::execute_workflow(study, request.native(), callbacks,
+                    gadget::CpuResources::local(), compute, evidence.get());
+            }
             std::cout << result.dump() << '\n';
             return result.at("status").text() == "complete" ? 0 : 2;
         }

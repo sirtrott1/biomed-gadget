@@ -56,7 +56,12 @@ Json assay_sections(const AssayWorkspace &workspace, const Json &request,
                     std::optional<AssayFieldsSource> *retained) {
     members(request,
             {"schema", "operation", "views", "sections", "interfaces", "metric", "support_policy"},
-            {"workers"});
+            {"workers", "complete_families"});
+    require(!request.has("complete_families") ||
+                json_object_is_type(request.at("complete_families").raw(), json_type_boolean),
+            "complete assay section families requires a boolean output selection");
+    const bool complete_families = request.has("complete_families") &&
+                                  request.at("complete_families").boolean();
     require(request.at("support_policy").text() == "require_all_nonzero_occurrences",
             "assay section support policy");
     const auto sections = request.at("sections");
@@ -322,7 +327,8 @@ Json assay_sections(const AssayWorkspace &workspace, const Json &request,
             return N(rfc::numeric::Integer(std::to_string(x)));
         };
         TemporalEndpoint endpoint(source);
-        std::vector<std::uint64_t> view_carriers, interface_carriers, stalk_carriers;
+        std::vector<std::uint64_t> view_carriers, interface_carriers, stalk_carriers,
+                                   active_carriers, assessed_carriers;
         const auto carrier = [&](TemporalCarrierKind kind, std::size_t size,
                                  std::optional<StableCellKey> cell = {}) {
             const auto key = endpoint.carriers.size() + 1;
@@ -367,6 +373,8 @@ Json assay_sections(const AssayWorkspace &workspace, const Json &request,
             const auto &group = groups[g];
             const auto active = carrier(TemporalCarrierKind::Explicit, group.coordinates.size());
             const auto assessed = carrier(TemporalCarrierKind::Explicit, group.rows.size());
+            active_carriers.push_back(active);
+            assessed_carriers.push_back(assessed);
             const auto frame =
                 carrier(TemporalCarrierKind::Explicit, group.projection->frame.cols());
             N::Array coordinate_ids, row_ids;
@@ -460,6 +468,27 @@ Json assay_sections(const AssayWorkspace &workspace, const Json &request,
                                {"source_id", N(views[v].fields.front().ids.at(c).text())},
                                {"source_key", N(views[v].fields.front().keys.at(c).text())},
                                {"source_grade", integer(views[v].fields.front().grade)}}});
+        // Add complete families after the existing fields, preserving their keys.
+        // Directions are correlated across the original assessed coordinates.
+        for (std::size_t g = 0; complete_families && g < groups.size(); ++g) {
+            const auto &group = groups[g];
+            const auto kernel = group.action.kernel_frame();
+            const auto row_dependencies = group.action.transpose().kernel_frame();
+            const auto rank = group.projection->frame.cols();
+            require(kernel.cols() == group.coordinates.size() - rank &&
+                        row_dependencies.cols() == group.rows.size() - rank &&
+                        group.action.multiply(kernel).entries().empty() &&
+                        group.action.transpose().multiply(row_dependencies).entries().empty(),
+                    "assay section complete family certificate failed");
+            const auto parameters = carrier(TemporalCarrierKind::Explicit, kernel.cols());
+            const auto dependencies = carrier(TemporalCarrierKind::Explicit,
+                                              row_dependencies.cols());
+            auto &members = std::get<N::Object>(prepared.elements.at(g).data).members;
+            members.emplace_back("kernel_frame", store.map("group:" + std::to_string(g) +
+                ".kernel", parameters, active_carriers.at(g), kernel));
+            members.emplace_back("row_dependencies", store.map("group:" + std::to_string(g) +
+                ".row_dependencies", dependencies, assessed_carriers.at(g), row_dependencies));
+        }
         for (std::size_t i = 0; i < interfaces.size(); ++i)
             for (std::size_t a = 0; a < interfaces.at(i).at("axes").size(); ++a)
                 row_map.elements.emplace_back(
@@ -536,6 +565,9 @@ Json section_fields_view(const NativeRecord &record) {
             item.set(name, render_record_view(group.at(name)));
         for (const auto *name : {"action", "residual_frame", "gram"})
             item.set(name, matrix(group.at(name)));
+        for (const auto *name : {"kernel_frame", "row_dependencies"})
+            if (group.has(name))
+                item.set(name, matrix(group.at(name)));
         groups.push(item);
     }
     for (std::size_t s = 0; s < record.at("sections").size(); ++s) {

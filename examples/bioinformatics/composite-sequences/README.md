@@ -59,10 +59,10 @@ certificates. The replay includes only the declared import, intent and three
 FASTA files. No previous workspace, development archive or model is required.
 
 `read_protocol_evidence` extracts declared segments from every original FASTA or
-four-line FASTQ record. Its query supplies `resource`, `resource_sha256` and a
+FASTQ record with four lines. Its query supplies `resource`, `resource_sha256` and a
 `protocol` with `id`, `evidence`, `count_unit: "read_record_occurrence"` and
 `segments`. Each segment declares `id`, `role` (`barcode`, `umi` or `sequence`),
-zero-based half-open `start` and `end`, and `strand` (`+` or `-`). Reverse segments
+a zero based `start` and exclusive `end`, and `strand` (`+` or `-`). Reverse segments
 use the DNA IUPAC reverse complement. Original source bytes retain case, headers,
 line endings and qualities; extracted tokens use uppercase. A short record keeps
 its occurrence and reports each unavailable segment separately.
@@ -84,7 +84,7 @@ Every result retains its workspace and original native request owners. Write
 the complete native result with:
 
 ```sh
-build/gadget/gadget assay-query \
+build/presets/cpu/gadget assay-query \
   --workspace data/composite-sequences/workspace.rfcxs \
   --request protocol-query.json \
   --out-record results/read-protocol.rfcxs
