@@ -26,6 +26,12 @@ struct AssayFieldsSource {
     NativeRecordValue declaration;
     std::vector<RawByteSource> sources;
 };
+AssayFieldsSource interval_fields_source(const ResourceImage &resource, const Json &request);
+Json interval_fields_view(const NativeRecord &record);
+AssayFieldsSource annotation_fields_source(const ResourceImage &resource, const Json &request);
+Json annotation_fields_view(const NativeRecord &record);
+AssayFieldsSource motif_fields_source(const ResourceImage &resource, const Json &request);
+Json motif_fields_view(const NativeRecord &record);
 AssayFieldsSource alignment_fields_source(const ResourceImage &resource, const Json &request);
 AssayFieldsSource feature_count_fields_source(const ResourceImages &images, const Json &request,
                                               std::shared_ptr<CpuResources> resources);

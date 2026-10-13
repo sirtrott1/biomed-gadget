@@ -1,4 +1,5 @@
 #include "genomic_detail.hpp"
+#include <gadget/record_view.hpp>
 #include <array>
 #include <iostream>
 #include <stdexcept>
@@ -9,6 +10,13 @@ void check(bool condition, const char *message) {
     ++checks;
     if (!condition)
         throw std::runtime_error(message);
+}
+gadget::NativeRecord motif_record(const std::string &bytes, const gadget::Json &resource,
+                                   const gadget::Json &request) {
+    auto fields = gadget::assay_detail::motif_fields_source({resource, bytes, {}}, request);
+    return gadget::NativeRecord::create_from_endpoint(
+        std::move(fields.declaration), gadget::new_native_record_namespace(),
+        std::move(fields.sources), std::move(fields.endpoint));
 }
 }
 int main() {
@@ -24,7 +32,11 @@ int main() {
                 request.at("motifs").push(pattern);
             }
             const auto declaration = Json::parse(R"({"format":"fasta"})");
-            const auto result = motif_analysis(">source\n" + std::string(10003, 'A') + "N\n", declaration, request);
+            const auto native = motif_record(">source\n" + std::string(10003, 'A') + "N\n", declaration, request);
+            const auto result = render_record_view(native);
+            check(native.endpoint()->source.grade({1}).cell_count() == 10132 &&
+                      native.endpoint()->source.grade({1}).incidence_count() == 20264,
+                  "all motif windows retain their source occurrence carrier");
             check(result.at("summaries").size() == 129, "every declared pattern retained");
             check(result.at("hits").size() == 10132, "every matching window retained");
             for (std::size_t i = 0; i < 10004; ++i) {
@@ -45,8 +57,12 @@ int main() {
         {
             auto request = Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"sequence_motifs","resource":"sequence","motifs":[{"id":"long","pattern":"A"}],"strands":"forward"})");
             request.at("motifs").at(0).set("pattern", Json::string(std::string(513, 'A')));
-            const auto result = motif_analysis(">source\n" + std::string(200003, 'A') + "\n",
+            const auto native = motif_record(">source\n" + std::string(200003, 'A') + "\n",
                                                Json::parse(R"({"format":"fasta"})"), request);
+            const auto result = render_record_view(native);
+            check(native.endpoint()->source.grade({1}).cell_count() == 199491 &&
+                      native.endpoint()->source.grade({1}).incidence_count() == 398982,
+                  "all long-pattern windows retain their original source carrier");
             check(result.at("hits").size() == 199491, "complete long-pattern scan above 100 million comparisons");
             for (std::size_t i = 0; i < result.at("hits").size(); ++i) {
                 const auto hit = result.at("hits").at(i);

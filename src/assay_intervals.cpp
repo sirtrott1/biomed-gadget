@@ -1,4 +1,7 @@
 #include "interval_detail.hpp"
+#include "genomic_detail.hpp"
+#include "source_grade_fields.hpp"
+#include <gadget/record_view.hpp>
 #include <rfc/core/builder.hpp>
 #include <rfc/machine/checked_size.hpp>
 #include <rfc/numeric/exact_matrix.hpp>
@@ -48,10 +51,12 @@ Vector Overlay::lengths() const {
     return out;
 }
 Json threshold(const std::vector<Atom> &atoms, const Vector &lengths, const Vector &values,
-               const Rational &cut, bool report_atoms) {
+               const Rational &cut, bool report_atoms, NativeRecordValue *native) {
     require(values.size() == atoms.size() && lengths.size() == atoms.size(),
             "threshold carrier shape");
     auto item = Json::object(), regions = Json::array();
+    using N = NativeRecordValue;
+    N::Array native_regions;
     Vector included(atoms.size(), 0);
     std::size_t retained = 0;
     for (std::size_t i = 0; i < atoms.size();) {
@@ -72,24 +77,42 @@ Json threshold(const std::vector<Atom> &atoms, const Vector &lengths, const Vect
             ++retained;
             ++i;
         }
-        auto region = Json::object();
-        region.set("contig", Json::string(frame.first));
-        region.set("strand", Json::string(frame.second));
-        region.set("start", cardinality(atoms[begin].start));
-        region.set("end", cardinality(end));
-        regions.push(region);
+        if (native)
+            native_regions.elements.emplace_back(N::Object{{
+                {"contig", N(frame.first)}, {"strand", N(frame.second)},
+                {"start", N(rfc::numeric::Integer(std::to_string(atoms[begin].start)))},
+                {"end", N(rfc::numeric::Integer(std::to_string(end)))}}});
+        else {
+            auto region = Json::object();
+            region.set("contig", Json::string(frame.first));
+            region.set("strand", Json::string(frame.second));
+            region.set("start", cardinality(atoms[begin].start));
+            region.set("end", cardinality(end));
+            regions.push(region);
+        }
+    }
+    const auto length = rfc::numeric::dot(included, Vector(included.size(), 1));
+    if (native) {
+        N::Object value{{{"threshold", N(cut)}, {"regions", N(std::move(native_regions))}}};
+        if (report_atoms)
+            value.members.emplace_back("retained_atoms", N(rfc::numeric::Integer(std::to_string(retained))));
+        value.members.emplace_back(report_atoms ? "retained_length" : "length", N(length));
+        *native = N(std::move(value));
+        return Json{};
     }
     item.set("threshold", Json::string(cut.get_str()));
     item.set("regions", regions);
     if (report_atoms)
         item.set("retained_atoms", cardinality(retained));
     item.set(report_atoms ? "retained_length" : "length",
-             Json::string(rfc::numeric::dot(included, Vector(included.size(), 1)).get_str()));
+             Json::string(length.get_str()));
     return item;
 }
 } // namespace interval_detail
-Json interval_analysis(const std::string &bytes, const Json &resource, const Json &request) {
-    const auto records = read_intervals(bytes, resource);
+AssayFieldsSource interval_fields_source(const ResourceImage &resource, const Json &request) {
+    using N = NativeRecordValue;
+    members(request, {"schema", "operation", "resource", "thresholds", "strand_policy"});
+    const auto records = read_intervals(resource.bytes, resource.declaration);
     const auto policy = request.at("strand_policy").text();
     require(policy == "separate" || policy == "ignore", "coverage strand policy");
     for (const auto &r : records)
@@ -107,6 +130,7 @@ Json interval_analysis(const std::string &bytes, const Json &resource, const Jso
     rfc::core::RelationSignature signature;
     const auto type = signature.add_type("physical.interval.coverage.membership");
     rfc::core::RelationalComplexBuilder builder(signature);
+    builder.declare_grade(rfc::core::Grade{1});
     for (std::size_t i = 0; i < records.size(); ++i) {
         builder.declare_witness_identity(i + 1);
         weights.push_back(records[i].weight);
@@ -123,20 +147,7 @@ Json interval_analysis(const std::string &bytes, const Json &resource, const Jso
     }
     const auto source = builder.freeze();
     const auto values = coverage.apply(weights);
-    auto components = Json::array(), segments = Json::array();
-    for (std::size_t i = 0; i < atoms.size(); ++i) {
-        const auto &a = atoms[i];
-        auto atom = Json::object(), support = Json::array();
-        atom.set("contig", Json::string(a.frame.first));
-        atom.set("strand", Json::string(a.frame.second));
-        atom.set("start", cardinality(a.start));
-        atom.set("end", cardinality(a.end));
-        atom.set("coverage", Json::string(values[i].get_str()));
-        for (auto j : a.records)
-            support.push(cardinality(j));
-        atom.set("source_record_indices", support);
-        segments.push(atom);
-    }
+    N::Array components;
     const auto thresholds = request.at("thresholds");
     require(thresholds.size() > 0, "coverage thresholds must be nonempty");
     std::set<Rational> unique;
@@ -144,18 +155,16 @@ Json interval_analysis(const std::string &bytes, const Json &resource, const Jso
         const auto threshold = exact_rational(text(thresholds.at(t), source_byte_limit()));
         require(threshold >= 0 && unique.insert(threshold).second,
                 "coverage threshold nonnegative/unique");
-        auto item = interval_detail::threshold(atoms, lengths, values, threshold, true);
-        components.push(item);
+        N item;
+        interval_detail::threshold(atoms, lengths, values, threshold, true, &item);
+        components.elements.push_back(std::move(item));
     }
     rfc::storage::TemporalEndpoint endpoint(source);
     const auto archive = rfc::storage::encode_native_series(
         rfc::storage::NativeTemporalSeries(endpoint, 1, source_codec_limits(source_byte_limit())));
     auto result = Json::object();
-    result.set("reference", resource.at("reference"));
+    result.set("reference", resource.declaration.at("reference"));
     result.set("strand_policy", request.at("strand_policy"));
-    result.set("segments", segments);
-    result.set("threshold_components", components);
-    result.set("coverage_integral", Json::string(rfc::numeric::dot(lengths, values).get_str()));
     result.set("integral_units", Json::string("declared interval weight times reference bases"));
     result.set("domain", Json::string("Union of retained interval observations; regions outside "
                                       "this support remain unobserved"));
@@ -170,6 +179,66 @@ Json interval_analysis(const std::string &bytes, const Json &resource, const Jso
         Json::string("Exact physical intersection segments; every interval-to-segment occurrence "
                      "retained as a grade-one relation. Threshold regions are physical connected "
                      "components, not significance calls or inferred biochemical cycles."));
-    return result;
+    endpoint.carriers = {
+        {1, rfc::storage::TemporalCarrierKind::SourceGrade, {0}, {}, 0,
+         rfc::numeric::IndexDomain::linear(records.size())},
+        {2, rfc::storage::TemporalCarrierKind::SourceGrade, {1}, {}, 0,
+         rfc::numeric::IndexDomain::linear(atoms.size())}};
+    SourceGradeFields fields(endpoint);
+    N::Array frames, original;
+    std::map<interval_detail::Frame, std::size_t> frame_indices;
+    for (const auto &atom : atoms)
+        if (!frame_indices.contains(atom.frame)) {
+            frame_indices.emplace(atom.frame, frames.elements.size());
+            frames.elements.emplace_back(N::Object{{{"contig", N(atom.frame.first)},
+                                                    {"strand", N(atom.frame.second)}}});
+        }
+    for (const auto &record : records)
+        original.elements.emplace_back(N::Object{{
+            {"id", N(record.id)}, {"contig", N(record.contig)}, {"strand", N(record.strand)},
+            {"bytes", N(N::ByteSpan{1, record.source_start,
+                                    record.source_end - record.source_start, false})}}});
+    N declaration(N::Object{{
+        {"schema", N(std::string("gadget.intervals.coverage.fields.v1"))},
+        {"summary", import_record_view(result)}, {"frames", N(std::move(frames))},
+        {"original_records", N(std::move(original))},
+        {"source_bytes", N(N::ByteSpan{1, 0, resource.bytes.size(), false})},
+        {"record_start", fields.column("record.start", 0, records.size(), [&](auto i) { return Rational(records[i].start); })},
+        {"record_end", fields.column("record.end", 0, records.size(), [&](auto i) { return Rational(records[i].end); })},
+        {"weights", fields.field("record.weight", 0, weights)},
+        {"coverage_map", fields.map("interval.coverage", 1, 2, coverage)},
+        {"lengths", fields.field("segment.length", 1, lengths)},
+        {"coverage", fields.field("segment.coverage", 1, values)},
+        {"frame", fields.column("segment.frame", 1, atoms.size(), [&](auto i) { return Rational(frame_indices.at(atoms[i].frame)); })},
+        {"start", fields.column("segment.start", 1, atoms.size(), [&](auto i) { return Rational(atoms[i].start); })},
+        {"end", fields.column("segment.end", 1, atoms.size(), [&](auto i) { return Rational(atoms[i].end); })},
+        {"threshold_components", N(std::move(components))},
+        {"coverage_integral", N(rfc::numeric::dot(lengths, values))}}});
+    return {std::move(endpoint), std::move(declaration),
+            {RawByteSource(1, std::as_bytes(std::span(resource.bytes)))}};
+}
+Json interval_fields_view(const NativeRecord &record) {
+    auto out = render_record_view(record.at("summary")), segments = Json::array();
+    const auto &source = record.endpoint()->source.grade(rfc::core::Grade{1});
+    const auto &frame = retained_tensor(record, record.at("frame")).tensor;
+    const auto &start = retained_tensor(record, record.at("start")).tensor;
+    const auto &end = retained_tensor(record, record.at("end")).tensor;
+    const auto &values = retained_tensor(record, record.at("coverage")).tensor;
+    for (std::size_t i = 0; i < source.cell_count(); ++i) {
+        auto atom = render_record_view(record.at("frames").at(frame.state(i).value().get_num().get_ui()));
+        atom.set("start", cardinality(start.state(i).value().get_num().get_ui()));
+        atom.set("end", cardinality(end.state(i).value().get_num().get_ui()));
+        atom.set("coverage", Json::string(values.state(i).value().get_str()));
+        auto indices = Json::array();
+        const auto range = source.incidence_range(i);
+        for (auto j = range.first; j < range.second; ++j)
+            indices.push(cardinality(source.lower_index.at(j)));
+        atom.set("source_record_indices", indices);
+        segments.push(atom);
+    }
+    out.set("segments", segments);
+    out.set("threshold_components", render_record_view(record.at("threshold_components")));
+    out.set("coverage_integral", Json::string(record.at("coverage_integral").rational().get_str()));
+    return out;
 }
 } // namespace gadget::assay_detail

@@ -26,14 +26,16 @@ struct Feature {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> intervals;
     std::vector<std::size_t> records;
 };
-std::vector<Feature> annotation(const ResourceImage &r, const Json &request) {
+std::vector<Feature> annotation(const ResourceImage &r, const Json &request,
+                                const std::vector<Interval> *original = nullptr) {
     const auto format = r.declaration.at("format").text();
     require(format == "gtf" || format == "gff3" || format == "bed", "feature annotation format");
     const auto type = text(request.at("feature_type")),
                attribute = text(request.at("group_attribute"));
     require(format != "bed" || (type == "interval" && attribute == "id"),
             "BED features use interval/id");
-    const auto records = read_intervals(r.bytes, r.declaration);
+    const auto decoded = original ? std::vector<Interval>{} : read_intervals(r.bytes, r.declaration);
+    const auto &records = original ? *original : decoded;
     std::vector<Feature> out;
     std::map<std::string, std::size_t> indices;
     for (std::size_t i = 0; i < records.size(); ++i) {
@@ -664,6 +666,75 @@ Json feature_allocation_evidence(const ResourceImages &images, const Json &reque
                                  Vector *native_counts) {
     return feature_evidence(images, request, native_counts);
 }
+AssayFieldsSource annotation_fields_source(const ResourceImage &resource, const Json &request) {
+    using N = NativeRecordValue;
+    members(request, {"schema", "operation", "resource", "feature_type", "group_attribute"});
+    const auto records = read_intervals(resource.bytes, resource.declaration);
+    const auto features = annotation(resource, request, &records);
+    rfc::core::RelationSignature signature;
+    const auto type = signature.add_type("annotation.feature.record.membership");
+    rfc::core::RelationalComplexBuilder builder(signature);
+    builder.declare_grade(rfc::core::Grade{1});
+    for (std::size_t i = 0; i < records.size(); ++i)
+        builder.declare_witness_identity(i + 1);
+    std::uint64_t occurrence = 1;
+    N::Array groups, original;
+    for (std::size_t i = 0; i < features.size(); ++i) {
+        const auto &feature = features[i];
+        std::vector<rfc::core::BoundaryOccurrenceInput> members;
+        for (auto index : feature.records)
+            members.push_back({index + 1, true, false, Rational{1}, {},
+                               rfc::core::OccurrenceKey{occurrence++}});
+        builder.add_grade_one(rfc::core::RelationKey{i + 1}, type, members);
+        N::Array intervals;
+        for (const auto &[start, end] : feature.intervals)
+            intervals.elements.emplace_back(N::Array{{
+                N(rfc::numeric::Integer(std::to_string(start))),
+                N(rfc::numeric::Integer(std::to_string(end)))}});
+        groups.elements.emplace_back(N::Object{{
+            {"id", N(feature.id)}, {"contig", N(feature.contig)}, {"strand", N(feature.strand)},
+            {"union_intervals", N(std::move(intervals))}}});
+    }
+    for (const auto &record : records)
+        original.elements.emplace_back(N::Object{{
+            {"id", N(record.id)}, {"contig", N(record.contig)}, {"strand", N(record.strand)},
+            {"feature_type", N(record.feature_type)},
+            {"bytes", N(N::ByteSpan{1, record.source_start,
+                                    record.source_end - record.source_start, false})}}});
+    rfc::storage::TemporalEndpoint endpoint(builder.freeze());
+    endpoint.carriers = {
+        {1, rfc::storage::TemporalCarrierKind::SourceGrade, {0}, {}, 0,
+         rfc::numeric::IndexDomain::linear(records.size())},
+        {2, rfc::storage::TemporalCarrierKind::SourceGrade, {1}, {}, 0,
+         rfc::numeric::IndexDomain::linear(features.size())}};
+    SourceGradeFields store(endpoint);
+    N declaration(N::Object{{
+        {"schema", N(std::string("gadget.annotation.features.fields.v1"))},
+        {"features", N(std::move(groups))}, {"original_records", N(std::move(original))},
+        {"reference", import_record_view(resource.declaration.at("reference"))},
+        {"source_bytes", N(N::ByteSpan{1, 0, resource.bytes.size(), false})},
+        {"record_start", store.column("annotation.start", 0, records.size(), [&](auto i) { return Rational(records[i].start); })},
+        {"record_end", store.column("annotation.end", 0, records.size(), [&](auto i) { return Rational(records[i].end); })},
+        {"group_record_count", store.column("feature.record_count", 1, features.size(), [&](auto i) { return Rational(features[i].records.size()); })}}});
+    return {std::move(endpoint), std::move(declaration),
+            {RawByteSource(1, std::as_bytes(std::span(resource.bytes)))}};
+}
+Json annotation_fields_view(const NativeRecord &record) {
+    auto out = Json::object(), features = Json::array();
+    const auto declarations = record.at("features");
+    const auto &source = record.endpoint()->source.grade(rfc::core::Grade{1});
+    for (std::size_t i = 0; i < source.cell_count(); ++i) {
+        auto feature = render_record_view(declarations.at(i)), indices = Json::array();
+        const auto range = source.incidence_range(i);
+        for (auto j = range.first; j < range.second; ++j)
+            indices.push(cardinality(source.lower_index.at(j)));
+        feature.set("source_record_indices", indices);
+        features.push(feature);
+    }
+    out.set("features", features);
+    out.set("reference", render_record_view(record.at("reference")));
+    return out;
+}
 Json genomic_analysis(const ResourceImages &images, const Json &request,
                       std::shared_ptr<CpuResources> budget,
                       std::optional<AssayFieldsSource> *retained) {
@@ -696,14 +767,15 @@ Json genomic_analysis(const ResourceImages &images, const Json &request,
     if (op == "chromatin_contrast")
         return chromatin_contrast(images, request, retained);
     if (op == "annotation_features") {
-        members(request, {"schema", "operation", "resource", "feature_type", "group_attribute"});
         const auto &r = *image(images, request.at("resource"));
-        auto out = Json::object(), records = Json::array();
-        for (const auto &f : annotation(r, request))
-            records.push(feature_json(f));
-        out.set("features", records);
-        out.set("reference", r.declaration.at("reference"));
-        return out;
+        auto fields = annotation_fields_source(r, request);
+        if (retained) {
+            retained->emplace(std::move(fields));
+            return Json{};
+        }
+        return annotation_fields_view(NativeRecord::create_from_endpoint(
+            std::move(fields.declaration), new_native_record_namespace(),
+            std::move(fields.sources), std::move(fields.endpoint)));
     }
     throw std::invalid_argument("unsupported genomic query");
 }

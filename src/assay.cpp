@@ -1756,6 +1756,9 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
         operation == "assay_sections" || operation == "exact_sequence_alignment" || operation == "sequence_assembly_graph")
         return render_record_view(
             execute_structured(admit_record_view(request), resources, {}, false).at("result"));
+    if (operation == "interval_coverage" || operation == "annotation_features" ||
+        operation == "sequence_motifs")
+        return render_record_view(execute_record(admit_record_view(request), resources).at("result"));
     if (operation == "feature_counts" || operation == "expression_allocations")
         return render_record_view(execute_assignment(admit_record_view(request), resources).at("result"));
     if (operation == "aggregate_assay" || operation == "design_aggregation")
@@ -1843,7 +1846,7 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
         result = spatial_analysis(state_->assays.at(request.at("assay").text()), request);
     } else if (operation == "feature_counts" || operation == "expression_allocations" ||
                operation == "alignment_evidence" || operation == "variant_genotypes" ||
-               operation == "annotation_features" || operation == "chromatin_contrast" ||
+               operation == "chromatin_contrast" ||
                operation == "controlled_coverage" || operation == "read_quality" ||
                operation == "exact_sequence_alignment" ||
                operation == "reference_sequence_matches" ||
@@ -1960,22 +1963,6 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
             "scope",
             Json::string("Full field comparison under the declared measurement map and metric; the "
                          "map's biological validity is supplied by its evidence"));
-    } else if (operation == "interval_coverage") {
-        members(request, {"schema", "operation", "resource", "thresholds", "strand_policy"});
-        const auto id = text(request.at("resource"));
-        require(state_->physical.contains(id), "unknown interval resource");
-        const auto item = state_->physical.at(id);
-        const auto bytes = state_->artifact( item.at("original"));
-        auto reservation = resources->reserve(1);
-        result = interval_analysis(bytes, item.at("declaration"), request);
-    } else if (operation == "sequence_motifs") {
-        members(request, {"schema", "operation", "resource", "motifs", "strands"});
-        const auto id = text(request.at("resource"));
-        require(state_->physical.contains(id), "unknown sequence resource");
-        const auto item = state_->physical.at(id);
-        const auto bytes = state_->artifact( item.at("original"));
-        auto reservation = resources->reserve(1);
-        result = motif_analysis(bytes, item.at("declaration"), request);
     } else if (operation == "allocation_bounds") {
         members(request,
                 {"schema", "operation", "resource", "targets", "candidate_search", "scale",
@@ -3025,6 +3012,35 @@ NativeRecord AssayWorkspace::execute_structured(
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
     const auto query = render_record_view(request);
+    if (query.has("operation") && (query.at("operation").text() == "interval_coverage" ||
+                                   query.at("operation").text() == "annotation_features" ||
+                                   query.at("operation").text() == "sequence_motifs")) {
+        using N = NativeRecordValue;
+        require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
+        const auto id = text(query.at("resource"));
+        require(state_->physical.contains(id), "unknown physical resource");
+        if (!resources) resources = CpuResources::local();
+        auto reservation = resources->reserve(1);
+        const auto item = state_->physical.at(id);
+        const ResourceImage image{item.at("declaration"), state_->artifact(item.at("original")), {}};
+        const auto operation = query.at("operation").text();
+        auto fields = operation == "interval_coverage" ? interval_fields_source(image, query)
+                    : operation == "annotation_features" ? annotation_fields_source(image, query)
+                    : motif_fields_source(image, query);
+        auto owner = native_publication().archive_source(2);
+        const auto bytes = owner.bytes().size();
+        fields.sources.push_back(std::move(owner));
+        N certificate(N::Object{{
+            {"schema", N(std::string("gadget.assay.result.native.v1"))},
+            {"query", import_record_view(query)}, {"source_digest", N(digest())},
+            {"result", std::move(fields.declaration)},
+            {"workspace_publication", N(N::ByteSpan{2, 0, bytes, false})},
+            {"arithmetic", N(std::string("rational"))},
+            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+        return retain_operation(std::move(fields.endpoint), new_native_record_namespace(),
+                                std::move(fields.sources), request, std::move(certificate));
+    }
     if (query.has("operation") && query.at("operation").text() == "read_protocol_evidence") {
         const auto protocol = query.at("protocol");
         ResourceImages images;

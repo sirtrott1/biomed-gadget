@@ -230,6 +230,12 @@ Json render_record_view(const NativeRecord &record) {
                 return assay_detail::genotype_fields_view(record);
             if (schema == "gadget.chromatin.fields.v1")
                 return assay_detail::chromatin_fields_view(record);
+            if (schema == "gadget.intervals.coverage.fields.v1")
+                return assay_detail::interval_fields_view(record);
+            if (schema == "gadget.annotation.features.fields.v1")
+                return assay_detail::annotation_fields_view(record);
+            if (schema == "gadget.sequence.motifs.fields.v1")
+                return assay_detail::motif_fields_view(record);
             if (schema == "gadget.sections.fields.v1" || schema == "gadget.sections.selected.v1")
                 return assay_detail::section_fields_view(record);
         }

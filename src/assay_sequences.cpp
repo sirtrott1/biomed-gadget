@@ -1,4 +1,6 @@
 #include "sequence_detail.hpp"
+#include "source_grade_fields.hpp"
+#include <gadget/record_view.hpp>
 #include <rfc/machine/checked_size.hpp>
 #include <rfc/numeric/exact_matrix.hpp>
 #include <sstream>
@@ -267,9 +269,11 @@ unsigned complement(unsigned m) {
     return ((m & 1) << 3) | ((m & 2) << 1) | ((m & 4) >> 1) | ((m & 8) >> 3);
 }
 } // namespace
-Json motif_analysis(const std::string &bytes, const Json &resource, const Json &request) {
-    require(resource.at("format").text() == "fasta", "motif occurrence analysis requires FASTA");
-    const auto inspected = inspect_resource(bytes, resource);
+AssayFieldsSource motif_fields_source(const ResourceImage &resource, const Json &request) {
+    using N = NativeRecordValue;
+    members(request, {"schema", "operation", "resource", "motifs", "strands"});
+    require(resource.declaration.at("format").text() == "fasta", "motif occurrence analysis requires FASTA");
+    const SequenceSource sequences(resource);
     const auto patterns = request.at("motifs");
     const auto strands = text(request.at("strands"));
     require(strands == "forward" || strands == "both", "motif strand policy");
@@ -286,17 +290,31 @@ Json motif_analysis(const std::string &bytes, const Json &resource, const Json &
             v.push_back(iupac_mask(c));
         motifs.push_back(v);
     }
-    auto hits = Json::array(), summaries = Json::array();
-    for (std::size_t r = 0; r < inspected.at("records").size(); ++r) {
-        const auto record = inspected.at("records").at(r);
-        const auto p = count(record.at("source_start"), bytes.size(), "FASTA offset"),
-                   q = count(record.at("source_end"), bytes.size(), "FASTA offset");
-        const auto part = bytes.substr(p, q - p);
-        const auto ls = lines(part);
+    rfc::core::RelationSignature signature;
+    const auto sequence_role = signature.aspects().add("sequence");
+    const auto motif_role = signature.aspects().add("motif");
+    const auto type = signature.add_type("sequence.motif.occurrence",
+                                        rfc::core::BoundaryPolicy::DeclaredExact, 2, 2);
+    rfc::core::RelationalComplexBuilder builder(signature);
+    builder.declare_grade(rfc::core::Grade{1});
+    const auto witness_count = rfc::machine::checked_size_add(sequences.size(), motifs.size());
+    for (std::size_t i = 0; i < witness_count; ++i)
+        builder.declare_witness_identity(i + 1);
+    struct Hit { std::size_t sequence, motif, start, end; bool reverse, definite; };
+    std::vector<Hit> hits;
+    Vector possible_counts, definite_counts;
+    N::Array original;
+    std::uint64_t occurrence = 1;
+    for (std::size_t r = 0; r < sequences.size(); ++r) {
+        const auto &span = sequences.original_span(r);
+        original.elements.emplace_back(N::Object{{
+            {"id", N(sequences.id(r))},
+            {"length", N(rfc::numeric::Integer(std::to_string(sequences.length(r))))},
+            {"bytes", N(N::ByteSpan{1, span.start, span.end - span.start, false})}}});
         std::vector<unsigned> sequence;
-        for (std::size_t i = 1; i < ls.size(); ++i)
-            for (auto ch : part.substr(ls[i].first, ls[i].second - ls[i].first))
-                sequence.push_back(iupac_mask(ch));
+        sequence.reserve(sequences.length(r));
+        for (auto ch : sequences.bases(r, 0, sequences.length(r)))
+            sequence.push_back(iupac_mask(ch));
         for (std::size_t t = 0; t < motifs.size(); ++t) {
             std::size_t definite = 0, possible = 0;
             for (int strand = 0; strand < (strands == "both" ? 2 : 1); ++strand) {
@@ -319,27 +337,17 @@ Json motif_analysis(const std::string &bytes, const Json &resource, const Json &
                     possible = rfc::machine::checked_size_add(possible, 1);
                     if (certain)
                         definite = rfc::machine::checked_size_add(definite, 1);
-                    auto hit = Json::object();
-                    hit.set("sequence", record.at("id"));
-                    hit.set("motif", patterns.at(t).at("id"));
-                    hit.set("start", cardinality(i));
-                    hit.set("end", cardinality(i + motif.size()));
-                    hit.set("strand", Json::string(strand ? "-" : "+"));
-                    hit.set("definite", Json::boolean(certain));
-                    hits.push(hit);
+                    hits.push_back({r, t, i, i + motif.size(), strand != 0, certain});
+                    builder.add_grade_one(rfc::core::RelationKey{hits.size()}, type,
+                        {{r + 1, true, false, Rational{1}, {{sequence_role, true}}, rfc::core::OccurrenceKey{occurrence++}},
+                         {sequences.size() + t + 1, true, false, Rational{1}, {{motif_role, true}}, rfc::core::OccurrenceKey{occurrence++}}});
                 }
             }
-            auto summary = Json::object();
-            summary.set("sequence", record.at("id"));
-            summary.set("motif", patterns.at(t).at("id"));
-            summary.set("definite_occurrences", cardinality(definite));
-            summary.set("possible_occurrences", cardinality(possible));
-            summaries.push(summary);
+            definite_counts.emplace_back(definite);
+            possible_counts.emplace_back(possible);
         }
     }
     auto result = Json::object();
-    result.set("hits", hits);
-    result.set("summaries", summaries);
     result.set("coordinate_convention", Json::string("zero_based_half_open_within_sequence"));
     result.set(
         "ambiguity",
@@ -348,6 +356,64 @@ Json motif_analysis(const std::string &bytes, const Json &resource, const Json &
                      "bounds, not joint extrema for overlapping ambiguous windows."));
     result.set("measurement", Json::string("Sequence occurrences under declared IUPAC patterns; no "
                                            "background enrichment or regulatory interpretation"));
-    return result;
+    rfc::storage::TemporalEndpoint endpoint(builder.freeze());
+    endpoint.carriers = {
+        {1, rfc::storage::TemporalCarrierKind::SourceGrade, {0}, {}, 0,
+         rfc::numeric::IndexDomain::linear(witness_count)},
+        {2, rfc::storage::TemporalCarrierKind::SourceGrade, {1}, {}, 0,
+         rfc::numeric::IndexDomain::linear(hits.size())}};
+    SourceGradeFields store(endpoint);
+    const auto summary_carrier = store.explicit_carrier(possible_counts.size());
+    N declaration(N::Object{{
+        {"schema", N(std::string("gadget.sequence.motifs.fields.v1"))},
+        {"summary", import_record_view(result)}, {"sequences", N(std::move(original))},
+        {"motifs", import_record_view(patterns)},
+        {"source_bytes", N(N::ByteSpan{1, 0, resource.bytes.size(), false})},
+        {"sequence", store.column("hit.sequence", 1, hits.size(), [&](auto i) { return Rational(hits[i].sequence); })},
+        {"motif", store.column("hit.motif", 1, hits.size(), [&](auto i) { return Rational(hits[i].motif); })},
+        {"start", store.column("hit.start", 1, hits.size(), [&](auto i) { return Rational(hits[i].start); })},
+        {"end", store.column("hit.end", 1, hits.size(), [&](auto i) { return Rational(hits[i].end); })},
+        {"reverse", store.column("hit.reverse", 1, hits.size(), [&](auto i) { return Rational(hits[i].reverse ? 1 : 0); })},
+        {"definite", store.column("hit.definite", 1, hits.size(), [&](auto i) { return Rational(hits[i].definite ? 1 : 0); })},
+        {"summary_carrier", N(rfc::numeric::Integer(std::to_string(summary_carrier)))},
+        {"possible_counts", store.vector("sequence.motif.possible", summary_carrier, possible_counts)},
+        {"definite_counts", store.vector("sequence.motif.definite", summary_carrier, definite_counts)}}});
+    return {std::move(endpoint), std::move(declaration),
+            {RawByteSource(1, std::as_bytes(std::span(resource.bytes)))}};
+}
+Json motif_fields_view(const NativeRecord &record) {
+    auto out = render_record_view(record.at("summary")), hits = Json::array(), summaries = Json::array();
+    const auto sequences = record.at("sequences"), motifs = record.at("motifs");
+    const auto &sequence = retained_tensor(record, record.at("sequence")).tensor;
+    const auto &motif = retained_tensor(record, record.at("motif")).tensor;
+    const auto &start = retained_tensor(record, record.at("start")).tensor;
+    const auto &end = retained_tensor(record, record.at("end")).tensor;
+    const auto &reverse = retained_tensor(record, record.at("reverse")).tensor;
+    const auto &definite = retained_tensor(record, record.at("definite")).tensor;
+    for (std::size_t i = 0; i < sequence.domain().logical_size(); ++i) {
+        auto hit = Json::object();
+        hit.set("sequence", render_record_view(sequences.at(sequence.state(i).value().get_num().get_ui()).at("id")));
+        hit.set("motif", render_record_view(motifs.at(motif.state(i).value().get_num().get_ui()).at("id")));
+        hit.set("start", cardinality(start.state(i).value().get_num().get_ui()));
+        hit.set("end", cardinality(end.state(i).value().get_num().get_ui()));
+        hit.set("strand", Json::string(reverse.state(i).value() == 0 ? "+" : "-"));
+        hit.set("definite", Json::boolean(definite.state(i).value() != 0));
+        hits.push(hit);
+    }
+    const auto &possible_counts = retained_tensor(record, record.at("possible_counts")).tensor;
+    const auto &definite_counts = retained_tensor(record, record.at("definite_counts")).tensor;
+    std::size_t i = 0;
+    for (std::size_t r = 0; r < sequences.size(); ++r)
+        for (std::size_t m = 0; m < motifs.size(); ++m, ++i) {
+            auto summary = Json::object();
+            summary.set("sequence", render_record_view(sequences.at(r).at("id")));
+            summary.set("motif", render_record_view(motifs.at(m).at("id")));
+            summary.set("definite_occurrences", cardinality(definite_counts.state(i).value().get_num().get_ui()));
+            summary.set("possible_occurrences", cardinality(possible_counts.state(i).value().get_num().get_ui()));
+            summaries.push(summary);
+        }
+    out.set("hits", hits);
+    out.set("summaries", summaries);
+    return out;
 }
 } // namespace gadget::assay_detail

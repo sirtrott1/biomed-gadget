@@ -22,5 +22,6 @@ struct Overlay {
 };
 // Connected components of a declared threshold on the complete physical union.
 Json threshold(const std::vector<Atom> &atoms, const Vector &lengths, const Vector &values,
-               const Rational &threshold, bool report_atoms);
+               const Rational &threshold, bool report_atoms,
+               NativeRecordValue *retained = nullptr);
 } // namespace gadget::assay_detail::interval_detail
