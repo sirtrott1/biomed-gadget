@@ -956,6 +956,7 @@ std::uint64_t NativeRecord::format_version() const noexcept {return state_->vers
 NativeRecord NativeRecord::owning_publication() const {return {state_,state_->root_type,state_->root};}
 NativeRecord NativeRecord::historical_publication(std::uint64_t cutoff) const {
     require(state_->history.has_value(),"record has no immutable history");
+    if(cutoff==state_->history->last_sequence())return owning_publication();
     auto history=storage::NativeSeriesPrefix::capture(*state_->history,cutoff).history();
     const auto tail=history.tail();
     auto state=std::make_shared<const State>(tail,std::vector<RawByteSource>{},std::move(history),state_.get());

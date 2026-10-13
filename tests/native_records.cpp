@@ -28,6 +28,10 @@ std::vector<storage::PinnedNativeAccession> concurrent_access(NativeRecord recor
             try {
                 for (std::size_t round = 0; round < rounds; ++round) {
                     const auto view = round % 2 ? record.at("cell") : record;
+                    const auto current = view.historical_publication(endpoint->sequence);
+                    check(current.accession_directory() == record.accession_directory() &&
+                              current.endpoint() == endpoint && current.is_root(),
+                          "current publication prepared a second directory or lost its owner");
                     storage::NativeAccessionRequest request;
                     request.kind = storage::NativeAccessionKind::Tensor;
                     request.subject = 999;
@@ -242,6 +246,13 @@ int main(int argc,char **argv) {
     check(storage::read_file_exact(directory/"data.bin",native_data_limits().max_archive_bytes)==record.encode(),
           "failed exclusive publication changed the previous file");
     const auto reopened=NativeRecord::read(directory/"data.bin");
+    const auto current = reopened.at("cell").historical_publication(reopened.endpoint()->sequence);
+    check(current.accession_directory() == reopened.accession_directory() &&
+              current.source_namespace() == reopened.source_namespace() &&
+              current.encode() == reopened.encode(),
+          "current publication changed directory authority, original source or complete bytes");
+    equal_value(current, reopened);
+    rejects([&] { (void)reopened.historical_publication(reopened.endpoint()->sequence + 1); });
     const auto concurrent_pins = concurrent_access(NativeRecord::decode(reopened.encode()));
     check(concurrent_pins.size() == 24 &&
               concurrent_pins[0].tensor()->state(0) == numeric::Rational{0} &&
