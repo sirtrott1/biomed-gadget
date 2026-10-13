@@ -118,6 +118,14 @@ the selected input versions and output byte digest. The operation requires an
 explicit execution capability and declares temporary filesystem use. Numerical
 execution and source ownership stay in GADGET and RexGraphCpp.
 
+RCQL provider installation is process local. Repeating an installer with the
+same declaration and resolved executable paths reuses the installed callable.
+A different executable binding, conflicting declaration or incomplete
+installation raises `ValueError` and preserves the existing registry entries.
+Initialize these providers before concurrent query execution. If setup was
+interrupted between declaration and callable registration, initialize a fresh
+process; the adapter does not replace or repair an occupied operator name.
+
 Execution stages each complete input once. Canonical admission compares its
 re-encoding with the supplied immutable byte buffer. Output and file-format
 admission compare the canonical file with the captured complete byte buffer
@@ -136,6 +144,14 @@ python3 tests/rcdb_adapter.py build/presets/cpu/gadget \
 Use a fresh test output directory. The native execution contract accepts the
 executable, a native assay workspace, a native assay request and a fresh output
 directory as arguments to `tests/rcdb_native_execution.py`.
+
+The registration contract checks repeated setup, executable bindings and partial
+installation in fresh processes:
+
+```sh
+python3 tests/rcdb_registration.py build/presets/cpu/gadget \
+  build/presets/cpu/gadget_native_field_query
+```
 
 Native files outside the generic-record profile can use RCDB's existing
 compressed blob framing through the file adapter:
