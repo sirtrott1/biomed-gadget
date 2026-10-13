@@ -12,7 +12,11 @@ original=json.loads(spec_path.read_text())
 spans=root/'comparison/spans/study'
 corpus=[]
 def representable(value):
- if isinstance(value,dict):return all('\0' not in key and representable(item) for key,item in value.items())
+ if isinstance(value,str):
+  try:value.encode('utf-8')
+  except UnicodeEncodeError:return False
+  return True
+ if isinstance(value,dict):return all('\0' not in key and representable(key) and representable(item) for key,item in value.items())
  if isinstance(value,list):return all(map(representable,value))
  return True
 def json_case(source):
@@ -25,7 +29,7 @@ def json_case(source):
  if admit:case['value']=value
  corpus.append(case)
 # An independent standard decoder decides every valid token's actual value and
-# whether any nested member name contains an unrepresentable NUL.
+# whether strings have scalar UTF8 representations or member names contain NUL.
 for token in ['null','true','false','0','-17','9223372036854775807','""','"\\u0000"','[]','{}']:
  for whitespace in ['', ' ', '\t\r\n']:
   json_case(whitespace+token+whitespace)
@@ -56,6 +60,25 @@ for token in ['NaN','Infinity','-Infinity']:
 for depth in [31,32,33,64,96]:
  for leaf in ['{"name":"\\u0000"}','{"name\\u0000suffix":1}']:
   json_case('['*depth+leaf+']'*depth)
+for escape in ['\\ud800','\\udbff','\\udc00','\\udfff',
+               '\\ud800x','\\ud800\\u0041','\\ud800\\ud800',
+               '\\udc00\\ud800','\\ud800\\udc00\\udfff',
+               '\\ud800\\ud800\\udc00']:
+ for source in ['"'+escape+'"','{"'+escape+'":1}','{"outer":[{"value":"'+escape+'"}]}']:
+  json_case(source)
+json_case('{"\\ud800":1,"\\ufffd":2}')
+for high in ['d800','dbff','D800','DBFF']:
+ for low in ['dc00','dfff','DC00','DFFF']:
+  pair='\\u'+high+'\\u'+low
+  for source in ['"'+pair+'"','{"'+pair+'":1}',
+                 '{"outer":[{"value":"'+pair+'\\u0000tail"}]}']:
+   json_case(source)
+for code in [0xd7ff,0xe000,0xfdd0,0xfffe,0xffff,0x10000,0x10ffff]:
+ for ascii_only in [False,True]:
+  json_case(json.dumps({chr(code):chr(code)+'\0tail'},ensure_ascii=ascii_only))
+for slashes in range(1,17):
+ for escape in ['uD800','uDC00','uD800\\uDC00','udbff\\udfff']:
+  json_case('"'+'\\'*slashes+escape+'"')
 rng=random.Random(971031)
 names=['', 'schema', 'value', 'β', '🙂', 'quoted"key', '\\u0000', 'nul\0name']
 values=[None,True,False,0,-17,971031,'', '\0','before\0after','quoted" : \\"text','β🙂','\\u0000']

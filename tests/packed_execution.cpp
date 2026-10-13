@@ -18,6 +18,17 @@ template<class Action> void rejects(Action action) {
     try { action(); } catch (const std::exception &) { refused = true; }
     check(refused, "invalid packed operation admitted");
 }
+template<class Action> void cancelled(Action action, bool application_exception = false) {
+    bool stopped = false;
+    try { action(); }
+    catch (const native::runtime::ExecutionCancelled &) { stopped = true; }
+    catch (const std::runtime_error &error) {
+        if (application_exception || std::string_view(error.what()) != "packed execution cancelled")
+            throw;
+        stopped = true;
+    }
+    check(stopped, "host stop did not produce the actual cancellation refusal");
+}
 native::backend::PreparedPackedBinary prepared(std::size_t slots, bool long_word = false) {
     native::composite::AspectSchema schema;
     schema.add("first"); schema.add("second");
@@ -183,7 +194,45 @@ int main() {
             released(*host);
         }
         std::stop_source stopped; stopped.request_stop();
-        rejects([&] { (void)operation.execute(*host, query(1, 1), stopped.get_token()); }); released(*host);
+        cancelled([&] { (void)operation.execute(*host, query(1, 1), stopped.get_token()); }, true);
+        released(*host);
+        {
+            native::runtime::CpuResourcePolicy policy;
+            policy.worker_limit = workers; policy.declared_buffer_byte_limit = 2 * bytes;
+            policy.tile_limit = std::numeric_limits<std::size_t>::max();
+            std::size_t observations{};
+            std::stop_source admission_stop;
+            CpuResources admission(hardware, policy, [&] {
+                ++observations;
+                admission_stop.request_stop();
+                return hardware;
+            });
+            cancelled([&] { (void)operation.execute(admission, query(1, 1), stopped.get_token()); }, true);
+            check(observations == 0, "pre-stopped work reached readmission");
+            cancelled([&] { (void)operation.execute(admission, query(1, 1), admission_stop.get_token()); }, true);
+            check(observations == 1, "stop during readmission was not exercised");
+            released(admission);
+        }
+        {
+            auto &parent = host->coordinator();
+            const auto available_workers = parent.available_workers();
+            const auto available_bytes = parent.available_declared_buffer_bytes();
+            {
+                auto delegated = native::runtime::CpuResourceCoordinator::delegate(parent.reserve(1, 2 * bytes));
+                auto child = host->assigned(delegated);
+                cancelled([&] { (void)operation.execute(*child, query(1, 1), stopped.get_token()); }, true);
+                released(*child);
+                check(parent.available_workers() == available_workers - 1 &&
+                          parent.available_declared_buffer_bytes() == available_bytes - 2 * bytes,
+                      "cancelled child released its retained parent assignment early");
+                oracle(operation.execute(*child, query(1, 3)), 4097);
+                released(*child);
+                child.reset();
+                check(parent.available_workers() == available_workers - 1,
+                      "live delegated authority lost its parent charge");
+            }
+            released(*host);
+        }
 
         const auto slow_source = prepared(65, true);
         PackedOperation slow(slow_source);
@@ -202,11 +251,9 @@ int main() {
             }
         });
         ready.arrive_and_wait();
-        bool cancelled = false;
-        try { (void)slow.execute(*host, query(1, 1), stop.get_token()); }
-        catch (const std::exception &) { cancelled = stop.stop_requested(); }
+        cancelled([&] { (void)slow.execute(*host, query(1, 1), stop.get_token()); });
         cancel.request_stop(); coordinator.notify_waiters(); cancel.join();
-        check(observed && cancelled, "active packed CPU reservation/cancellation not exercised"); released(*host);
+        check(observed && stop.stop_requested(), "active packed CPU reservation/cancellation not exercised"); released(*host);
         oracle(slow.execute(*host, query(1, 1)), 65); released(*host);
 
         // Authored admission control, separately from the measured physical host.
