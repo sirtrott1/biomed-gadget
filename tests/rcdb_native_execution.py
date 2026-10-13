@@ -54,7 +54,9 @@ finally:
 assert len(replacements) == 1
 assert workspace.read_bytes() == workspace_bytes and request.read_bytes() == request_bytes
 codec = adapter.install_codec(gadget=binary, max_bytes=RecordCodec.__dataclass_fields__["max_bytes"].default)
-adapter.install_rcql_executor(gadget=binary)
+name = adapter.install_rcql_executor(gadget=binary)
+assert name == adapter.install_rcql_executor(gadget=binary)
+rejects(lambda: adapter.install_rcql_executor(gadget=workspace))
 with closing(LocalStore(root/"execution.rcdb", compression=compression,
                         record_codecs=(*DEFAULT_RECORD_CODECS, codec))) as store:
     adapter.put_publication(store, "workspace", workspace, expected_version=0)

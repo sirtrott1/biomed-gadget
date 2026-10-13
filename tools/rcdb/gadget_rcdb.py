@@ -13,6 +13,27 @@ _CODEC_NAME = "gadget.native-publication"
 _OPERATOR_NAME = "GADGET_PUBLICATION_BYTES"
 
 
+def _rcql_operator_installed(signature, binding):
+    """Require a complete matching declaration and callable before reusing it."""
+    from rcql.operators import get_operator
+    from rcql.signatures import catalogued, lookup
+    try:
+        operator = get_operator(signature.name)
+    except KeyError:
+        operator = None
+    if signature.name not in catalogued():
+        if operator is not None:
+            raise ValueError("RCQL operator name already has an implementation without a declaration")
+        return False
+    if lookup(signature.name) != signature:
+        raise ValueError("RCQL operator name already has a different declaration")
+    if operator is None:
+        raise ValueError("RCQL operator declaration has no installed implementation")
+    if getattr(operator.fn, "_gadget_rcql_binding", None) != binding:
+        raise ValueError("RCQL operator name already has a different provider binding")
+    return True
+
+
 @contextmanager
 def _open_regular_file(path, *, max_bytes=None, resource="publication"):
     """Open a regular input and check its measured size before reading."""
@@ -179,7 +200,7 @@ def install_rcql_operator():
     from rcql import Domain, Exactness, OperatorSignature, RCType, TypePattern, ValueKind
     from rcql.execution_trace import record_method
     from rcql.operators import register as register_operator
-    from rcql.signatures import catalogued, lookup, register as register_signature
+    from rcql.signatures import register as register_signature
     signature = OperatorSignature(
         name=_OPERATOR_NAME, source_kind=ValueKind.RCDB_STORE,
         inputs=(TypePattern("record_id", literal=str),
@@ -188,9 +209,8 @@ def install_rcql_operator():
                       domain=Domain.BYTES, exactness=Exactness.STRUCTURAL),
         implementation_key="gadget.native-publication.bytes.v1",
         requires=frozenset({"identity", "records"}), source_methods=frozenset({"read_record"}))
-    if _OPERATOR_NAME in catalogued():
-        if lookup(_OPERATOR_NAME) != signature:
-            raise ValueError("RCQL operator name already has a different declaration")
+    binding = (signature.implementation_key,)
+    if _rcql_operator_installed(signature, binding):
         return _OPERATOR_NAME
 
     def retrieve(source, record_id, version=None):
@@ -199,6 +219,7 @@ def install_rcql_operator():
                       record_version=snapshot.record.version, state_digest=snapshot.state_digest)
         return snapshot.value
 
+    retrieve._gadget_rcql_binding = binding
     register_signature(signature)
     register_operator(_OPERATOR_NAME)(retrieve)
     return _OPERATOR_NAME
@@ -249,6 +270,9 @@ def install_rcql_executor(*, gadget):
         requires=frozenset({"identity", "records", "files", "gadget_execute"}),
         effects=frozenset({Effect.READ, Effect.FILESYSTEM}),
         source_methods=frozenset({"read_record"}))
+    binding = (signature.implementation_key, binary)
+    if _rcql_operator_installed(signature, binding):
+        return name
 
     def execute(source, workspace_id, workspace_version, request_id, request_version):
         workspace = read_publication(source, workspace_id, version=workspace_version)
@@ -259,6 +283,7 @@ def install_rcql_executor(*, gadget):
                       request_version=request.record.version, result_sha256=hashlib.sha256(result).hexdigest())
         return result
 
+    execute._gadget_rcql_binding = binding
     register_signature(signature)
     register_operator(name)(execute)
     return name
@@ -306,7 +331,7 @@ def install_rcql_field_selector(*, selector, gadget):
     from rcql.types import Effect
     from rcql.execution_trace import record_method
     from rcql.operators import register as register_operator
-    from rcql.signatures import catalogued, lookup, register as register_signature
+    from rcql.signatures import register as register_signature
     binary = str(Path(selector).resolve(strict=True))
     native_reader = str(Path(gadget).resolve(strict=True))
     name = "GADGET_NATIVE_FIELD"
@@ -321,9 +346,8 @@ def install_rcql_field_selector(*, selector, gadget):
         requires=frozenset({"identity", "records", "files", "gadget_field_select"}),
         effects=frozenset({Effect.READ, Effect.FILESYSTEM}),
         source_methods=frozenset({"read_record"}))
-    if name in catalogued():
-        if lookup(name) != signature:
-            raise ValueError("RCQL operator name already has a different declaration")
+    binding = (signature.implementation_key, binary, native_reader)
+    if _rcql_operator_installed(signature, binding):
         return name
 
     def select(source, publication_id, publication_version, request_id, request_version):
@@ -339,6 +363,7 @@ def install_rcql_field_selector(*, selector, gadget):
                       result_sha256=hashlib.sha256(result).hexdigest())
         return result
 
+    select._gadget_rcql_binding = binding
     register_signature(signature)
     register_operator(name)(select)
     return name
