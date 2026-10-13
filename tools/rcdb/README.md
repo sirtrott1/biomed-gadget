@@ -121,12 +121,40 @@ history or mutation commits. Generic native copies use the existing ungoverned
 profile; use the destination cursor to make publication conditional.
 
 `LocalStore.checkpoint()` creates a checked replay cache and retains the
-authoritative journal and historical payloads. On a failed copy, reopen and
-inspect the selected destination before retrying: a process can stop after
-journal publication but before returning its receipt. A torn journal tail
-requires explicit recovery through RCDB's `LocalJournal` provider; ordinary
-opening refuses it. Checkpoint corruption also refuses. The local profile
-requires trusted storage directories and cooperating provider writers.
+authoritative journal and historical payloads. After any publication write error
+or process interruption, close the affected handle and inspect the destination
+before retrying: the journal can be published before a receipt is returned.
+An ordinary `OSError` can also leave a torn tail; the exception type alone does
+not establish whether a write committed. Ordinary opening refuses an incomplete
+tail. With cooperating writers stopped, use the existing `LocalJournal.inspect()`
+to identify its verified prefix and `repair_torn_tail()` to remove only the
+incomplete final block. A damaged complete frame refuses repair. Keep the damaged
+bytes for diagnosis before an explicit repair. Checkpoint corruption also refuses.
+The local profile requires trusted storage directories and cooperating provider
+writers.
+
+Deleting a native record retains its earlier versions and creates a gap in its
+transaction-time selection. Recreating that literal record ID allocates the next
+version; it does not reuse version one. An already returned snapshot keeps its
+original bytes and metadata. The archive's native source namespace and cutoff
+remain independent of the RCDB record version.
+
+`tests/rcdb_recovery.py` checks these histories through fresh process checkpoint
+replay and all three local compression profiles. Its POSIX failure controls use
+actual file-size write refusals at the journal append and checkpoint staging
+boundaries, verify the committed prefix or previous checkpoint, then reopen and
+retry. It also checks every incomplete length of a final journal frame and refuses
+repair of damaged complete frames. Run it with a fresh output directory:
+
+```sh
+python tests/rcdb_recovery.py /path/to/gadget publication.rfcxs recovery-tests \
+  --compression zstd
+```
+
+The `--original` profile checks the complete supplied publication through deletion,
+recreation and fresh process replay, while omitting the small-frame failure corpus.
+These are local provider checks; they do not establish power-loss behavior or
+automatic recovery of a deployed service.
 
 With an open store, RCQL retrieval returns a byte result:
 
