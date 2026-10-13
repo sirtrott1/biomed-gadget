@@ -3,6 +3,7 @@ from contextlib import closing
 import importlib.util
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 from unittest.mock import patch
@@ -17,6 +18,8 @@ spec = importlib.util.spec_from_file_location(
 adapter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adapter)
 binary, publication, root = (Path(p).resolve() for p in sys.argv[1:4])
+publisher = (Path(sys.argv[sys.argv.index("--publisher") + 1]).resolve()
+             if "--publisher" in sys.argv else None)
 raw = publication.read_bytes()
 codec = adapter.install_codec(gadget=binary, max_bytes=len(raw))
 
@@ -80,7 +83,7 @@ def replace_source(command, **kwargs):
 
 for action in [lambda: io.load(source_copy),
                lambda: adapter.compress_publication(source_copy, root / "changed.rcblob",
-                                                     gadget=binary, codec="zlib")]:
+                                                     gadget=binary, codec="zlib", publisher=publisher)]:
     source_copy.write_bytes(raw)
     subprocess.run = replace_source
     try:
@@ -102,7 +105,8 @@ if hasattr(os, "mkfifo"):
     print(process.stdout.strip())
 for name in ("zstd", "zlib"):
     path = root/(name+".rfcxs.rcblob")
-    assert adapter.compress_publication(publication, path, gadget=binary, codec=name) == path
+    assert adapter.compress_publication(publication, path, gadget=binary, codec=name,
+                                        publisher=publisher) == path
     encoded = path.read_bytes()
     assert len(encoded) < len(raw)
     assert io.load(path) == raw
@@ -130,7 +134,8 @@ for name in ("zstd", "zlib"):
             rejects(lambda: adapter.read_compressed_publication(changing, **budget))
         assert altered == [mutation]
         assert path.read_bytes() == encoded and publication.read_bytes() == raw
-    rejects(lambda: adapter.compress_publication(publication, path, gadget=binary, codec=name))
+    rejects(lambda: adapter.compress_publication(publication, path, gadget=binary, codec=name,
+                                                publisher=publisher))
     assert path.read_bytes() == encoded
     rejects(lambda: adapter.read_compressed_publication(
         path, **{**budget, "max_encoded_bytes": len(encoded)-1}))
@@ -159,8 +164,88 @@ for name in ("zstd", "zlib"):
         assert decompress_blob(payload, max_output_bytes=len(raw)) == raw
     assert encoded_size < len(raw)
 
+    if os.name == "posix":
+        import resource
+        failed = root / (name + "-failed-publication.rcblob")
+        actual_publisher = (binary.with_name("gadget_publish_file") if publisher is None else publisher)
+        ordinary_run = subprocess.run
+
+        def limited():
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+            cap = min(1024, len(encoded) - 1)
+            resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
+
+        def write_failure(command, **kwargs):
+            if Path(command[0]).resolve() == actual_publisher.resolve():
+                kwargs["preexec_fn"] = limited
+            return ordinary_run(command, **kwargs)
+
+        with patch.object(subprocess, "run", write_failure):
+            try:
+                adapter.compress_publication(publication, failed, gadget=binary, codec=name,
+                                             publisher=publisher)
+            except subprocess.CalledProcessError as error:
+                assert error.returncode and any(message in error.stderr for message in
+                    (b"file write failed", b"staged output flush failed", b"staged output close failed"))
+            else:
+                raise AssertionError("Expected actual compressed output file size refusal")
+        assert not failed.exists() and not list(root.glob(".rfc-stage-*"))
+        adapter.compress_publication(publication, failed, gadget=binary, codec=name, publisher=publisher)
+        assert adapter.read_compressed_publication(failed, **budget) == raw
+        assert publication.read_bytes() == raw
+
+    altered_output = root / (name + "-altered-publication.rcblob")
+    ordinary_run = subprocess.run
+    actual_publisher = (binary.with_name("gadget_publish_file") if publisher is None else publisher)
+
+    def alter_publisher_input(command, **kwargs):
+        if Path(command[0]).resolve() == actual_publisher.resolve():
+            body = kwargs["input"]
+            kwargs["input"] = body[:-1] + bytes([body[-1] ^ 1])
+        return ordinary_run(command, **kwargs)
+
+    with patch.object(subprocess, "run", alter_publisher_input):
+        try:
+            adapter.compress_publication(publication, altered_output, gadget=binary, codec=name,
+                                         publisher=publisher)
+        except ValueError as error:
+            assert "differs from the complete supplied bytes" in str(error)
+        else:
+            raise AssertionError("Changed publisher input escaped final byte comparison")
+    assert altered_output.read_bytes() != encoded and publication.read_bytes() == raw
+
+missing = root / "missing-publisher.rcblob"
+try:
+    adapter.compress_publication(publication, missing, gadget=binary, codec="zlib",
+                                 publisher=root / "missing-publisher")
+except FileNotFoundError:
+    pass
+else:
+    raise AssertionError("Missing native publisher used a direct-write fallback")
+assert not missing.exists()
+empty_output = root / "empty-publisher.rcblob"
+if Path("/bin/true").is_file():
+    try:
+        adapter.compress_publication(publication, empty_output, gadget=binary, codec="zlib",
+                                     publisher="/bin/true")
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("A successful process with missing output was accepted")
+    assert not empty_output.exists()
+existing = root / "existing-publisher.rcblob"
+existing.write_bytes(b"original destination")
+try:
+    adapter.compress_publication(publication, existing, gadget=binary, codec="zlib",
+                                 publisher=root / "missing-publisher")
+except FileExistsError:
+    pass
+else:
+    raise AssertionError("Existing destination was changed before publisher admission")
+assert existing.read_bytes() == b"original destination"
+
 rejects(lambda: adapter.compress_publication(publication, root/"invalid.rcblob",
-                                            gadget=binary, codec="unknown"))
+                                            gadget=binary, codec="unknown", publisher=publisher))
 assert not (root/"invalid.rcblob").exists()
 process = subprocess.run([sys.executable, __file__, str(binary), str(publication), str(root),
                           "--reopen"], capture_output=True, text=True,

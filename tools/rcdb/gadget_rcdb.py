@@ -60,6 +60,17 @@ def _read_regular_file(path, *, max_bytes=None, resource="publication"):
         return raw
 
 
+def _file_matches_buffer(path, expected, *, resource="publication"):
+    with _open_regular_file(path, max_bytes=len(expected), resource=resource) as (stream, size):
+        if size != len(expected):
+            return False
+        expected = memoryview(expected)
+        for offset in range(0, size, 1024 * 1024):
+            if stream.read(1024 * 1024) != expected[offset:offset + 1024 * 1024]:
+                return False
+        return not stream.read(1) and os.fstat(stream.fileno()).st_size == size
+
+
 def validate_publication_file(path, *, gadget):
     """Check canonical native bytes without a complete Python archive buffer."""
     return _validate_publication_file(path, gadget=gadget)
@@ -81,10 +92,7 @@ def _validate_publication_file(path, *, gadget, expected=None):
         if expected is None:
             unchanged = filecmp.cmp(source, canonical, shallow=False)
         else:
-            with canonical.open("rb") as stream:
-                unchanged = all(stream.read(1024*1024) == expected[offset:offset+1024*1024]
-                                for offset in range(0, len(expected), 1024*1024))
-                unchanged = unchanged and not stream.read(1)
+            unchanged = _file_matches_buffer(canonical, expected)
         if process.stdout or not unchanged:
             raise ValueError("GADGET publication does not have canonical native bytes")
     return source
@@ -96,18 +104,28 @@ def _read_publication_file(path, *, gadget):
     return raw
 
 
-def compress_publication(source, destination, *, gadget, codec, level=None):
+def compress_publication(source, destination, *, gadget, codec, level=None, publisher=None):
     """Write an RFCXS file in RCDB's existing lossless compressed blob frame."""
     from rcdb.core import compress_blob
     if codec not in ("zstd", "zlib"):
         raise ValueError("compressed publication requires zstd or zlib")
     destination = Path(destination)
-    if destination.exists():
+    if os.path.lexists(destination):
         raise FileExistsError(destination)
+    publisher = (Path(gadget).resolve(strict=True).with_name("gadget_publish_file")
+                 if publisher is None else Path(publisher))
+    publisher = publisher.resolve(strict=True)
     raw = _read_publication_file(source, gadget=gadget)
     encoded = compress_blob(raw, level=level, codec=codec)
-    with destination.open("xb") as stream:
-        stream.write(encoded)
+    try:
+        process = subprocess.run([str(publisher), "--out", str(destination), "--bytes", str(len(encoded))],
+                                 input=encoded, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    except subprocess.CalledProcessError as error:
+        if os.path.lexists(destination):
+            raise FileExistsError(destination) from error
+        raise
+    if process.stdout or not _file_matches_buffer(destination, encoded, resource="compressed publication"):
+        raise ValueError("compressed publication differs from the complete supplied bytes")
     return destination
 
 
