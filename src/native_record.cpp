@@ -96,7 +96,7 @@ std::vector<D> definitions(bool historical_sources = true, bool packed_values = 
 struct Compiler {
     std::uint64_t ns, next{1}, pool;
     std::vector<D> defs = definitions();
-    std::map<std::string,std::uint64_t> name_keys;
+    std::map<std::string,std::uint64_t,std::less<>> name_keys;
     std::vector<V> labels;
     std::vector<std::byte> text_bytes;
     std::map<std::string, std::pair<std::size_t, std::size_t>, std::less<>> text_spans;
@@ -240,10 +240,12 @@ struct Compiler {
 
 struct NativeRecord::State {
     NativeStudy study;
+    // The study owns this immutable endpoint throughout the State lifetime.
+    const storage::TemporalEndpoint &publication;
     std::optional<storage::NativeTemporalSeries> history;
     std::map<std::uint64_t,RawByteSource> sources;
     std::map<std::uint64_t,std::string> labels;
-    std::map<std::string,std::uint64_t> names;
+    std::map<std::string,std::uint64_t,std::less<>> names;
     ID root_type;
     const V *root{};
     std::uint64_t ns, version{}, root_value_key{}, parent_value_key{};
@@ -260,7 +262,7 @@ struct NativeRecord::State {
     std::map<std::uint64_t, SourcePayload> source_payloads;
     SourcePayload source_payload(const V &entry, std::uint64_t sequence) const {
         const V *current = &entry;
-        const storage::TemporalEndpoint *endpoint = study.endpoint().get();
+        const storage::TemporalEndpoint *endpoint = &publication;
         const auto expected_length = machine::checked_size(unsigned_value(parts(entry).at(1)));
         for (;;) {
             const auto &items = parts(*current);
@@ -335,7 +337,7 @@ struct NativeRecord::State {
     std::pair<ID, std::shared_ptr<const V>> unpack(const V &value) const {
         const auto &[type, source, offset, length, bits] = packed_address(value);
         (void)source; (void)offset; (void)length;
-        const auto &declarations = *study.endpoint()->declarations;
+        const auto &declarations = *publication.declarations;
         std::shared_ptr<const composite::CompiledLayout> layout;
         {
             std::lock_guard lock(layout_mutex);
@@ -362,8 +364,8 @@ struct NativeRecord::State {
     State(NativeStudy admitted,std::uint64_t source_namespace,
           std::vector<RawByteSource> compiled_sources,
           std::optional<storage::NativeTemporalSeries> retained={}, const State *reuse=nullptr)
-        :study(std::move(admitted)),history(std::move(retained)),ns(source_namespace) {
-        const auto &endpoint=*study.endpoint();
+        :study(std::move(admitted)),publication(*study.endpoint()),history(std::move(retained)),ns(source_namespace) {
+        const auto &endpoint=publication;
         // Only the private compiler supplies these immutable owners. Every
         // source Integer was built from these bytes, or retained from its
         // admitted parent. Readers still materialize the validated cargo.
@@ -371,7 +373,7 @@ struct NativeRecord::State {
         for(auto &source:compiled_sources)
             require(sources.emplace(source.key(),std::move(source)).second,"duplicate compiled byte source");
         require(endpoint.declarations.has_value(),"native record has no declaration channel");
-        for(const auto &v:study.endpoint()->declarations->values) {values.emplace(v.key,&v);if(v.cell || v.occurrence || v.block)owners.emplace(&v.value,&v);}
+        for(const auto &v:endpoint.declarations->values) {values.emplace(v.key,&v);if(v.cell || v.occurrence || v.block)owners.emplace(&v.value,&v);}
         const auto declared=[&](std::uint64_t key) -> const storage::TemporalDeclaredValue & {
             require(values.contains(key),"native record control declaration is missing");
             return *values.at(key);
@@ -583,19 +585,18 @@ NativeRecord::NativeRecord(std::shared_ptr<const State> state,ID type,const V *v
 }
 std::optional<NativeRecord> NativeRecord::parent() const {
     if(!state_->parent_value_key)return {};
-    const auto endpoint=state_->study.endpoint();
-    for(const auto &v:endpoint->declarations->values)if(v.key==state_->parent_value_key)
-        return NativeRecord(state_,v.type,&v.value);
-    throw std::invalid_argument("native parent value is missing");
+    return declared_value(state_->parent_value_key);
 }
 RawByteSource NativeRecord::byte_source() const {
-    require(kind()==NativeRecordKind::Bytes || kind()==NativeRecordKind::Text,"record is not a raw source span");
+    const auto constructor=kind();
+    require(constructor==NativeRecordKind::Bytes || constructor==NativeRecordKind::Text,"record is not a raw source span");
     const auto &p=parts(*value_);const auto source=state_->sources.at(unsigned_value(p.at(0)));
     require(unsigned_value(p.at(1))==0 && unsigned_value(p.at(2))==source.bytes().size(),"record span is not a complete raw source");
     return source;
 }
 NativeRecord NativeRecord::declared_value(std::uint64_t key) const {
-    require(state_->values.contains(key),"unknown native declared value");const auto &value=*state_->values.at(key);
+    const auto found=state_->values.find(key);
+    require(found!=state_->values.end(),"unknown native declared value");const auto &value=*found->second;
     return NativeRecord(state_,value.type,&value.value);
 }
 NativeRecordValue NativeRecord::materialize_value(const std::map<std::uint64_t,std::uint64_t> &source_map) const {return copy_value(source_map,true);}
@@ -614,8 +615,17 @@ NativeRecordValue NativeRecord::copy_value(const std::map<std::uint64_t,std::uin
         const auto &p=parts(*value_);const auto key=unsigned_value(p.at(0));
         return N(N::ByteSpan{source_map.empty()?key:source_map.at(key),machine::checked_size(unsigned_value(p.at(1))),machine::checked_size(unsigned_value(p.at(2))),kind()==NativeRecordKind::Text});
     }
-    case NativeRecordKind::Object:{N::Object out;for(const auto &name:names())out.members.emplace_back(name,at(name).copy_value(source_map,retain_owner));return N(std::move(out));}
-    case NativeRecordKind::Array:{N::Array out;out.elements.reserve(size());for(std::size_t i=0;i<size();++i)out.elements.push_back(at(i).copy_value(source_map,retain_owner));return N(std::move(out));}
+    case NativeRecordKind::Object:{
+        N::Object out;
+        const auto &factors=state_->publication.declarations->registry.at(type_).factors;
+        const auto &elements=parts(*value_);
+        out.members.reserve(factors.size());
+        for(std::size_t i=0;i<factors.size();++i)
+            out.members.emplace_back(state_->labels.at(factors[i].key),
+                NativeRecord(state_,factors[i].type,&elements.at(i),value_owner_).copy_value(source_map,retain_owner));
+        return N(std::move(out));
+    }
+    case NativeRecordKind::Array:{N::Array out;const auto count=size();out.elements.reserve(count);for(std::size_t i=0;i<count;++i)out.elements.push_back(at(i).copy_value(source_map,retain_owner));return N(std::move(out));}
     case NativeRecordKind::Tensor:return N(tensor());
     }
     throw std::invalid_argument("unknown native record constructor");
@@ -971,45 +981,50 @@ NativeRecordKind NativeRecord::kind() const {
     if(type_==bytes_type)return NativeRecordKind::Bytes;
     if(type_==decimal_type)return NativeRecordKind::Decimal;
     if(type_==exact_number_type)return NativeRecordKind::ExactNumber;
-    const auto &d=endpoint()->declarations->registry.at(type_);
+    const auto &d=state_->publication.declarations->registry.at(type_);
     if(d.kind==composite::DeclarationKind::Product)return NativeRecordKind::Object;
     if(d.kind==composite::DeclarationKind::Repeated)return NativeRecordKind::Array;
     if(d.kind==composite::DeclarationKind::RationalTensor)return NativeRecordKind::Tensor;
     throw std::invalid_argument("unsupported native record view constructor");
 }
 std::size_t NativeRecord::size() const {
-    if(kind()==NativeRecordKind::Object)return parts(*value_).size();
-    if(kind()==NativeRecordKind::Array)return std::get<V::Repeated>(value_->data).elements.size();
+    const auto constructor=kind();
+    if(constructor==NativeRecordKind::Object)return parts(*value_).size();
+    if(constructor==NativeRecordKind::Array)return std::get<V::Repeated>(value_->data).elements.size();
     throw std::invalid_argument("native record size requires a container");
 }
 bool NativeRecord::has(std::string_view name) const {
     if(kind()!=NativeRecordKind::Object)return false;
-    const auto found=state_->names.find(std::string(name));if(found==state_->names.end())return false;
+    const auto found=state_->names.find(name);if(found==state_->names.end())return false;
     try {
-        (void)endpoint()->declarations->registry.factor_ordinal(type_,found->second);
+        (void)state_->publication.declarations->registry.factor_ordinal(type_,found->second);
         return true;
     } catch(const std::out_of_range &) {return false;}
 }
 NativeRecord NativeRecord::at(std::string_view name) const {
     require(kind()==NativeRecordKind::Object,"native member selection requires a product");
-    const auto key=state_->names.at(std::string(name));const auto &d=endpoint()->declarations->registry.at(type_);
-    const auto index=endpoint()->declarations->registry.factor_ordinal(type_,key);
+    const auto found=state_->names.find(name);
+    if(found==state_->names.end())throw std::out_of_range("unknown native factor name");
+    const auto &registry=state_->publication.declarations->registry;
+    const auto &d=registry.at(type_);
+    const auto index=registry.factor_ordinal(type_,found->second);
     return {state_,d.factors.at(index).type,&parts(*value_).at(index),value_owner_};
 }
 NativeRecord NativeRecord::at(std::size_t index) const {
     require(kind()==NativeRecordKind::Array,"native index selection requires a repeated declaration");
-    auto type=endpoint()->declarations->registry.at(type_).element;
+    const auto &registry=state_->publication.declarations->registry;
+    auto type=registry.at(type_).element;
     const auto *value=&std::get<V::Repeated>(value_->data).elements.at(index);
-    const auto &d=endpoint()->declarations->registry.at(type);
+    const auto &d=registry.at(type);
     if(d.kind==composite::DeclarationKind::Alternative) {
-        const auto &a=std::get<V::Alternative>(value->data);type=d.factors.at(endpoint()->declarations->registry.alternative_ordinal(type,a.key)).type;value=&a.element.at(0);
+        const auto &a=std::get<V::Alternative>(value->data);type=d.factors.at(registry.alternative_ordinal(type,a.key)).type;value=&a.element.at(0);
     }
     return {state_,type,value,value_owner_};
 }
 std::optional<NativeRecord::PackedEncoding> NativeRecord::packed_encoding(std::size_t index) const {
     require(kind() == NativeRecordKind::Array, "packed encoding requires an array");
     const auto &value = std::get<V::Repeated>(value_->data).elements.at(index);
-    if (endpoint()->declarations->registry.at(type_).element != packed_value_type)
+    if (state_->publication.declarations->registry.at(type_).element != packed_value_type)
         return std::nullopt;
     const auto &p = parts(value);
     return PackedEncoding{{unsigned_value(p.at(3)), unsigned_value(p.at(4)),
@@ -1018,22 +1033,30 @@ std::optional<NativeRecord::PackedEncoding> NativeRecord::packed_encoding(std::s
 }
 std::vector<std::string> NativeRecord::names() const {
     require(kind()==NativeRecordKind::Object,"native factor names require a product");
-    std::vector<std::string> result;for(const auto &f:endpoint()->declarations->registry.at(type_).factors)result.push_back(state_->labels.at(f.key));return result;
+    const auto &factors=state_->publication.declarations->registry.at(type_).factors;
+    std::vector<std::string> result;result.reserve(factors.size());
+    for(const auto &factor:factors)result.push_back(state_->labels.at(factor.key));
+    return result;
 }
 bool NativeRecord::boolean() const {require(kind()==NativeRecordKind::Boolean,"native value is not Boolean");return std::get<bool>(value_->data);}
 numeric::Integer NativeRecord::integer() const {require(kind()==NativeRecordKind::Integer,"native value is not Integer");return std::get<numeric::Integer>(value_->data);}
 numeric::Rational NativeRecord::rational() const {
-    require(kind()==NativeRecordKind::Rational || kind()==NativeRecordKind::Decimal || kind()==NativeRecordKind::ExactNumber,"native value is not Rational");
-    return std::get<numeric::Rational>(kind()==NativeRecordKind::Rational?value_->data:parts(*value_).at(0).data);
+    const auto constructor=kind();
+    require(constructor==NativeRecordKind::Rational || constructor==NativeRecordKind::Decimal || constructor==NativeRecordKind::ExactNumber,"native value is not Rational");
+    return std::get<numeric::Rational>(constructor==NativeRecordKind::Rational?value_->data:parts(*value_).at(0).data);
 }
 bool NativeRecord::approximate_view() const {require(kind()==NativeRecordKind::ExactNumber,"native value has no approximate presentation flag");return std::get<bool>(parts(*value_).at(1).data);}
 std::span<const std::byte> NativeRecord::bytes() const {
-    require(kind()==NativeRecordKind::Text || kind()==NativeRecordKind::Decimal || kind()==NativeRecordKind::Bytes,"native value has no byte span");
-    return state_->span(kind()==NativeRecordKind::Decimal?parts(*value_).at(1):*value_);
+    const auto constructor=kind();
+    require(constructor==NativeRecordKind::Text || constructor==NativeRecordKind::Decimal || constructor==NativeRecordKind::Bytes,"native value has no byte span");
+    return state_->span(constructor==NativeRecordKind::Decimal?parts(*value_).at(1):*value_);
 }
 std::string NativeRecord::text() const {
-    require(kind()==NativeRecordKind::Text || kind()==NativeRecordKind::Decimal,"opaque bytes require bytes(), not a text view");
-    const auto b=bytes();if(b.empty())return {};return {reinterpret_cast<const char *>(b.data()),b.size()};
+    const auto constructor=kind();
+    require(constructor==NativeRecordKind::Text || constructor==NativeRecordKind::Decimal,"opaque bytes require bytes(), not a text view");
+    const auto b=state_->span(constructor==NativeRecordKind::Decimal?parts(*value_).at(1):*value_);
+    if(b.empty())return {};
+    return {reinterpret_cast<const char *>(b.data()),b.size()};
 }
 const numeric::SparseRationalTensor &NativeRecord::tensor() const {require(kind()==NativeRecordKind::Tensor,"native value is not a tensor");return std::get<numeric::SparseRationalTensor>(value_->data);}
 std::vector<RawByteSource> NativeRecord::raw_sources() const {std::vector<RawByteSource> result;for(const auto &[key,s]:state_->sources){(void)key;result.push_back(s);}return result;}
