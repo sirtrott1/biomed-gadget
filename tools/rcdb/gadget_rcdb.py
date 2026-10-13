@@ -297,6 +297,63 @@ def execute_publication(workspace, request, *, gadget):
         return _read_publication_file(output, gadget=binary)
 
 
+def replay_publication(publication, *, gadget):
+    """Replay a retained scientific operation through its native source owners."""
+    if type(publication) is not bytes or not publication.startswith(_MAGIC):
+        raise ValueError("GADGET scientific replay requires RFCXS bytes")
+    binary = str(Path(gadget).resolve(strict=True))
+    with TemporaryDirectory(prefix="gadget-scientific-replay-") as folder:
+        source = Path(folder)/"operation.rfcxs"
+        output = Path(folder)/"replay.rfcxs"
+        source.write_bytes(publication)
+        _validate_publication_file(source, gadget=binary, expected=publication)
+        process = subprocess.run([binary, "replay-scientific", "--record", str(source),
+                                  "--out-record", str(output)], capture_output=True)
+        if process.returncode:
+            raise ValueError("GADGET scientific replay failed: " +
+                             process.stderr.decode("utf-8", errors="replace").strip())
+        if process.stdout:
+            raise ValueError("GADGET scientific replay produced an unexpected display response")
+        return _read_publication_file(output, gadget=binary)
+
+
+def install_rcql_scientific_replay(*, gadget):
+    """Register replay of one explicit stored native scientific operation version."""
+    import hashlib
+    from rcql import Domain, Exactness, OperatorSignature, RCType, TypePattern, ValueKind
+    from rcql.types import Effect
+    from rcql.execution_trace import record_method
+    from rcql.operators import register as register_operator
+    from rcql.signatures import register as register_signature
+    binary = str(Path(gadget).resolve(strict=True))
+    name = "GADGET_SCIENTIFIC_REPLAY"
+    signature = OperatorSignature(
+        name=name, source_kind=ValueKind.RCDB_STORE,
+        inputs=(TypePattern("record_id", literal=str), TypePattern("version", literal=int)),
+        result=RCType("GadgetScientificOperationBytes", kind=ValueKind.BYTES,
+                      domain=Domain.BYTES, exactness=Exactness.STRUCTURAL),
+        implementation_key="gadget.native-scientific-replay.v1",
+        requires=frozenset({"identity", "records", "files", "gadget_replay"}),
+        effects=frozenset({Effect.READ, Effect.FILESYSTEM}),
+        source_methods=frozenset({"read_record"}))
+    binding = (signature.implementation_key, binary)
+    if _rcql_operator_installed(signature, binding):
+        return name
+
+    def replay(source, record_id, version):
+        original = read_publication(source, record_id, version=version)
+        result = replay_publication(original.value, gadget=binary)
+        record_method("gadget-native-scientific-replay", record_id=original.record.id,
+                      record_version=original.record.version, source_state_digest=original.state_digest,
+                      result_sha256=hashlib.sha256(result).hexdigest())
+        return result
+
+    replay._gadget_rcql_binding = binding
+    register_signature(signature)
+    register_operator(name)(replay)
+    return name
+
+
 def install_rcql_executor(*, gadget):
     """Register binary assay execution on explicitly selected RCDB versions."""
     import hashlib
