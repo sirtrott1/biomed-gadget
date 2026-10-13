@@ -96,11 +96,54 @@ void equal_value(const NativeRecord &a, const NativeRecord &b) {
         break;
     }
 }
+void named_views() {
+    using N = NativeRecordValue;
+    N::Object input;
+    std::vector<std::string> order;
+    for (std::size_t i = 0; i < 256; ++i) {
+        const auto name = "original_declared_parameter_" + std::to_string(255 - i);
+        order.push_back(name);
+        input.members.emplace_back(name, N(numeric::Integer(i)));
+    }
+    const std::string embedded("source\0parameter", 16);
+    order.push_back(embedded);
+    input.members.emplace_back(embedded, N(numeric::Integer(256)));
+    const auto source = NativeRecord::create(N(std::move(input)), 847);
+    check(source.names() == order, "native name selection reordered authored factors");
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        const auto surrounded = "[" + order[i] + "]";
+        const std::string_view selection(surrounded.data() + 1, order[i].size());
+        check(source.has(selection) && source.at(selection).integer() == numeric::Integer(i),
+              "native name selection ignored exact string view bounds");
+        check(!source.at(selection).has(selection), "scalar claimed a product factor");
+    }
+    check(!source.has("source") && !source.has("original_declared_parameter_256"),
+          "native name lookup accepted a prefix or absent factor");
+    rejects([&] { (void)source.at("source"); });
+    for (const bool bound : {false, true}) {
+        const auto value = bound ? source.materialize_value() : source.unbound_value();
+        const auto &members = std::get<N::Object>(value.data).members;
+        check(members.size() == order.size(), "native object copy omitted authored factors");
+        for (std::size_t i = 0; i < order.size(); ++i)
+            check(members[i].first == order[i], "native object copy reordered original factors");
+        equal_value(source, NativeRecord::create(value, bound ? 849 : 848));
+    }
+    const auto selected = source.at(order[127]);
+    const auto retained = [&] {
+        const auto decoded = NativeRecord::decode(source.encode());
+        return decoded.at(order[127]);
+    }();
+    equal_value(selected, retained);
+    check(storage::encode_rfcx(retained.endpoint()->source).bytes ==
+              storage::encode_rfcx(source.endpoint()->source).bytes,
+          "retained native member lost its immutable source owner");
+}
 }
 int main(int argc,char **argv) {
  try {
     const auto directory=std::filesystem::path(argc>1?argv[1]:"native-record-contracts");
     std::filesystem::remove_all(directory);std::filesystem::create_directories(directory);
+    named_views();
     core::RelationSignature signature;const auto relation=signature.add_type("authored-group");
     core::RelationalComplexBuilder builder(signature);builder.declare_grade(core::Grade{3});
     builder.add_grade_one(core::RelationKey{77},relation,{
