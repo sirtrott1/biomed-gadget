@@ -404,6 +404,37 @@ void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_e
         return;
     case NativeRecordKind::Object:
         scientific_detail::require(a.names() == b.names(), "replayed scientific object differs");
+        if(a.has("schema") && a.at("schema").kind()==NativeRecordKind::Text &&
+           a.at("schema").text()=="gadget.trajectory.source.binding.v1") {
+            const auto original=NativeRecord::decode(a.at("publication").bytes());
+            const auto replayed=NativeRecord::decode(b.at("publication").bytes());
+            for(const auto *binding:{&a,&b}) {
+                const auto owner=NativeRecord::decode(binding->at("publication").bytes());
+                scientific_detail::require(binding->at("execution").at("source_namespace").text()==std::to_string(owner.source_namespace()) &&
+                    binding->at("source_cutoff").integer()==owner.publication_history()->last_sequence(),
+                    "trajectory derived source identity binding differs");
+                const auto grades=binding->at("grades");
+                for(std::size_t k=0;k<owner.endpoint()->source.grade_count();++k) {
+                    const auto grade=grades.at(k);const auto carrier=grade.at("producer_carrier").integer();
+                    const auto found=std::find_if(owner.endpoint()->carriers.begin(),owner.endpoint()->carriers.end(),[&](const auto &c){return c.key==carrier;});
+                    scientific_detail::require(found!=owner.endpoint()->carriers.end() && found->kind==rfc::storage::TemporalCarrierKind::SourceGrade &&
+                        found->grade.value==k && found->domain.logical_size()==grade.at("source_coordinates").size(),
+                        "trajectory producer grade carrier differs");
+                    for(std::size_t j=0;j<grade.at("source_coordinates").size();++j)
+                        scientific_detail::require(grade.at("source_coordinates").at(j).integer()==j,"trajectory producer coordinate differs");
+                }
+            }
+            const auto x=original.endpoint(),y=replayed.endpoint();
+            scientific_detail::require(rfc::storage::encode_rfcx(x->source).bytes==rfc::storage::encode_rfcx(y->source).bytes &&
+                x->carriers==y->carriers && x->tensors.size()==y->tensors.size() && original.raw_sources().size()==replayed.raw_sources().size(),
+                "replayed trajectory derived source differs");
+            for(std::size_t i=0;i<x->tensors.size();++i)
+                scientific_detail::require(rfc::storage::temporal_endpoint_detail::tensor_equal(x->tensors[i],y->tensors[i]),
+                    "replayed trajectory derived field differs");
+            same_result_value(original,replayed);
+            for(const auto &name:a.names())if(name!="publication" && name!="execution")same_result_value(a.at(name),b.at(name));
+            return;
+        }
         if (a.has("schema") && a.at("schema").kind() == NativeRecordKind::Text &&
             a.at("schema").text() == "gadget.scientific.publication.view.v1") {
             same_result_value(a.at("schema"), b.at("schema"));

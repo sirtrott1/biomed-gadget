@@ -144,6 +144,9 @@ def run(binary,root):
     bad_series=copy.deepcopy(trajectory['series']);bad_series[0]['fields'][1]='all.y'
     for edit in ({'lambda':'0'},{'minimum_witnesses':1},{'faces':'infer_biology'},{'series':bad_series},{'time':dict(axis='visit',unit='ordinal_visit',positions=['0','2','1','3'])}):query({**trajectory,**edit},False);cases.append(edit)
     replay=query(trajectory);assert replay==tr
+    if len(sys.argv)>3:
+        requests=root/'trajectory-requests.json';requests.write_text(json.dumps({'complete':trajectory,'controlled':{**trajectory,'controls':['all.size','all.size_copy']}}))
+        subprocess.run([sys.argv[3],str(root/'study/study.json'),str(requests),str(root/'native-trajectory')],check=True)
     coverage=query(dict(operation='coverage',field='all.A_change'))['result'];assert all(Q(v['value']['rational']) in (Q(-1),Q(1)) for v in coverage['observations'])
     # Batch extension must reuse immutable certificates and refuse changed
     # sources or already completed queries without damaging prior receipts.

@@ -36,7 +36,7 @@
 
 namespace gadget {
 bool has_native_scientific_publisher(std::string_view operation) noexcept {
-    return operation == "temporal_field_history" || operation == "structure_transition" || operation == "paired_field_contrasts" || operation == "controlled_pairings" ||
+    return operation == "trajectory_structure" || operation == "temporal_field_history" || operation == "structure_transition" || operation == "paired_field_contrasts" || operation == "controlled_pairings" ||
            operation == "linear_model_comparison" || operation == "finite_reference_calibration" ||
            operation == "hodge_frame_decomposition" || operation == "linear_response_observation" ||
            operation == "declared_response_transition" || operation == "metric_relative_novelty" ||
@@ -3077,6 +3077,8 @@ struct ScientificSession::State {
         if (!has_native_scientific_publisher(operation))
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
+            if (operation == "trajectory_structure") return research_detail::trajectory_fields(*owner,admitted,resources,
+                source_execution_lease("scientific-native-trajectory"));
             if (operation == "temporal_field_history") {std::optional<NativeRecord> fields;(void)history_query(admitted,false,&fields);return *fields;}
             if (operation == "structure_transition") return structure_transition_fields(admitted);
             if (operation == "chain_certificate" || operation == "realized_path_comparison") return structural_fields(admitted);
@@ -3156,6 +3158,7 @@ struct ScientificSession::State {
             operation != "adjoint" && operation != "hodge" && operation != "green_action" &&
             operation != "native_boundary" && operation != "support_mask" &&
             operation != "paired_field_contrasts" && operation != "controlled_pairings" &&
+            operation != "trajectory_structure" &&
             operation != "linear_model_comparison" && operation != "finite_reference_calibration" &&
             operation != "relational_field_ensemble" &&
             operation != "structural_reference_calibration" &&
@@ -3247,12 +3250,15 @@ struct ScientificSession::State {
             result.set("result", ensemble_query(query, false));
             return seal(result, "certificate_sha256");
         }
-        if (is_research_operation(operation) && operation != "paired_field_contrasts" &&
+        if (is_research_operation(operation) && operation != "trajectory_structure" && operation != "paired_field_contrasts" &&
             operation != "controlled_pairings") {
             result.set("result", execute_research_query(*owner, query, false, resources));
             return seal(result, "certificate_sha256");
         }
-        if (operation == "structure_transition") {
+        if (operation == "trajectory_structure") {
+            result.set("result",result_fields_view(research_detail::trajectory_fields(*owner,query,resources,
+                native_lease.value_or(source_execution_lease("scientific-native-trajectory")))));
+        } else if (operation == "structure_transition") {
             result.set("result",result_fields_view(structure_transition_fields(query,native_lease)));
         } else if (operation == "paired_field_contrasts" || operation == "controlled_pairings") {
             result.set("result", result_fields_view(research_detail::comparison_fields(*owner, query, resources,
@@ -3314,6 +3320,11 @@ Json ScientificSession::execute(const Json &query) {
 Json ScientificSession::execute_temporal_history(const Json &query,rfc::runtime::ExecutionLease lease) {
     lease.check_cancelled();const auto admitted=Json::parse(query.dump());
     require(admitted.at("operation").text()=="temporal_field_history","temporal lease requires a declared history");
+    std::lock_guard lock(state_->mutex);state_->admit(admitted);return state_->run(admitted,std::move(lease));
+}
+Json ScientificSession::execute_trajectory(const Json &query,rfc::runtime::ExecutionLease lease) {
+    lease.check_cancelled();const auto admitted=Json::parse(query.dump());
+    require(admitted.at("operation").text()=="trajectory_structure","trajectory lease requires declared observed changes");
     std::lock_guard lock(state_->mutex);state_->admit(admitted);return state_->run(admitted,std::move(lease));
 }
 Json ScientificSession::execute_structure_transition(const Json &query, rfc::runtime::ExecutionLease lease) {
