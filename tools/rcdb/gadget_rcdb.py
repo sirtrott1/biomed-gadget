@@ -95,6 +95,67 @@ def _file_matches_buffer(path, expected, *, resource="publication"):
         return not stream.read(1) and os.fstat(stream.fileno()).st_size == size
 
 
+def _file_matches_stream(path, original, size):
+    original.seek(0)
+    with _open_regular_file(path) as (actual, other):
+        if size != other:
+            return False
+        remaining = size
+        while remaining:
+            count = min(remaining, 1024 * 1024)
+            chunk = original.read(count)
+            if len(chunk) != count or chunk != actual.read(count):
+                return False
+            remaining -= count
+        return (not original.read(1) and not actual.read(1)
+                and os.fstat(original.fileno()).st_size == size
+                and os.fstat(actual.fileno()).st_size == size)
+
+
+def _file_state(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _publish_stream(stream, size, destination, publisher):
+    try:
+        process = subprocess.run([str(publisher), "--out", str(destination), "--bytes", str(size)],
+                                 stdin=stream, capture_output=True, check=True)
+    except subprocess.CalledProcessError as error:
+        if os.path.lexists(destination):
+            raise FileExistsError(destination) from error
+        raise
+    if process.stdout:
+        raise ValueError("GADGET file publication produced an unexpected display")
+
+
+def copy_publication_file(source, destination, *, gadget, max_bytes, publisher=None):
+    """Copy a complete admitted native file through exclusive publication."""
+    _positive_byte_budget(max_bytes, "publication")
+    destination = Path(destination)
+    if os.path.lexists(destination):
+        raise FileExistsError(destination)
+    binary = Path(gadget).resolve(strict=True)
+    publisher = (binary.with_name("gadget_publish_file") if publisher is None else Path(publisher))
+    publisher = publisher.resolve(strict=True)
+    with TemporaryDirectory(prefix="gadget-native-file-copy-") as folder:
+        captured = Path(folder)/"source.rfcxs"
+        with _open_regular_file(source, max_bytes=max_bytes) as (stream, size):
+            before = os.fstat(stream.fileno())
+            _publish_stream(stream, size, captured, publisher)
+            after = os.fstat(stream.fileno())
+            if _file_state(before) != _file_state(after):
+                raise ValueError("publication changed while capturing its original byte owner")
+        with _open_regular_file(captured, max_bytes=max_bytes) as (stream, size):
+            before = _file_state(os.fstat(stream.fileno()))
+            _validate_publication_file(captured, gadget=binary)
+            if before != _file_state(os.fstat(stream.fileno())) or before != _file_state(captured.stat()):
+                raise ValueError("captured publication changed during native admission")
+            _publish_stream(stream, size, destination, publisher)
+            if not _file_matches_stream(destination, stream, size):
+                raise ValueError("copied publication differs from its complete admitted bytes")
+    return destination
+
+
 def validate_publication_file(path, *, gadget):
     """Check canonical native bytes without a complete Python archive buffer."""
     return _validate_publication_file(path, gadget=gadget)
