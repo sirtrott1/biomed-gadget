@@ -6,6 +6,7 @@
 #include "research_factored.hpp"
 #include "research_prepared.hpp"
 #include "research_linear.hpp"
+#include "research_comparisons.hpp"
 #include "research_calibration.hpp"
 #include "scientific_result_fields.hpp"
 #include "research_response.hpp"
@@ -35,7 +36,8 @@
 
 namespace gadget {
 bool has_native_scientific_publisher(std::string_view operation) noexcept {
-    return operation == "linear_model_comparison" || operation == "finite_reference_calibration" ||
+    return operation == "paired_field_contrasts" || operation == "controlled_pairings" ||
+           operation == "linear_model_comparison" || operation == "finite_reference_calibration" ||
            operation == "hodge_frame_decomposition" || operation == "linear_response_observation" ||
            operation == "declared_response_transition" || operation == "metric_relative_novelty" ||
            operation == "observed_response_model" || operation == "constrained_response_model" ||
@@ -2905,6 +2907,9 @@ struct ScientificSession::State {
                 (void)response_query(admitted, false, &result);
                 return *result;
             }
+            if (operation == "paired_field_contrasts" || operation == "controlled_pairings")
+                return research_detail::comparison_fields(*owner, admitted, resources,
+                    source_execution_lease("scientific-declared-comparison"));
             if (operation == "linear_model_comparison")
                 return research_detail::linear_model_fields(*owner, admitted, resources).publication;
             if (operation == "finite_reference_calibration")
@@ -3035,11 +3040,15 @@ struct ScientificSession::State {
             result.set("result", ensemble_query(query, false));
             return seal(result, "certificate_sha256");
         }
-        if (is_research_operation(query.at("operation").text())) {
+        if (is_research_operation(operation) && operation != "paired_field_contrasts" &&
+            operation != "controlled_pairings") {
             result.set("result", execute_research_query(*owner, query, false, resources));
             return seal(result, "certificate_sha256");
         }
-        if (operation == "chain_certificate" || operation == "realized_path_comparison") {
+        if (operation == "paired_field_contrasts" || operation == "controlled_pairings") {
+            result.set("result", result_fields_view(research_detail::comparison_fields(*owner, query, resources,
+                native_lease.value_or(source_execution_lease("scientific-declared-comparison")))));
+        } else if (operation == "chain_certificate" || operation == "realized_path_comparison") {
             result.set("result", result_fields_view(structural_fields(query, native_lease)));
         } else if (operation == "local_sections") {
             result.set("result", scientific_detail::result_fields_view(local_section_fields(query)));
@@ -3107,6 +3116,16 @@ Json ScientificSession::execute(const Json &query) {
     std::lock_guard lock(state_->mutex);
     state_->admit(admitted);
     return state_->run(admitted);
+}
+Json ScientificSession::execute_comparison(const Json &query, rfc::runtime::ExecutionLease lease) {
+    lease.check_cancelled();
+    auto admitted = Json::parse(query.dump());
+    const auto operation = admitted.at("operation").text();
+    require(operation == "paired_field_contrasts" || operation == "controlled_pairings",
+            "comparison lease requires paired or controlled fields");
+    std::lock_guard lock(state_->mutex);
+    state_->admit(admitted);
+    return state_->run(admitted, std::move(lease));
 }
 Json ScientificSession::execute_tensor_window(const Json &query,
                                                rfc::runtime::ExecutionLease lease) {

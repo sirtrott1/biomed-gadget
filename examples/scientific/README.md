@@ -96,3 +96,14 @@ identity metrics and the source field realization maps. Occurrence maps retain
 their original flag owner and direction. Compatible fields, residuals, defects
 and complete cohomology frames use native tensor keys; the JSON view is an
 optional rendering. Portable replay retains the original study and request.
+
+`paired_field_contrasts` and `controlled_pairings` retain native results through
+`ScientificSession::execute_record`. Paired counts keep the ordered matched
+units, declared scales, consensus, residual and exact quadrances. Controlled
+comparisons keep the original design, independent frame, full coefficient
+kernel and particular coefficients. A particular coefficient vector does not
+identify coefficients that can vary along the retained kernel. Both preserve
+the complete original source, reported support, original row lifts, declared
+metrics and field producer cutoffs. `execute_comparison` accepts an explicit
+canonical execution lease for host limits and cancellation. JSON renders these
+fields for reading.
