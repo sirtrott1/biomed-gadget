@@ -107,3 +107,17 @@ the complete original source, reported support, original row lifts, declared
 metrics and field producer cutoffs. `execute_comparison` accepts an explicit
 canonical execution lease for host limits and cancellation. JSON renders these
 fields for reading.
+
+`structure_transition` retains native fields for the two declared contexts,
+their complete metrics, original source publications, coordinate lifts and
+field producer cutoffs. Every sector transport block and the complete Green
+and Hodge defects retain their original old and new axes. The factored map
+option stores native matrix fields and ordered declarations; numerical actions
+remain in the canonical provider. Equal dimensions do not establish carrier
+identity. `green_operator_defect` retains `L_new J - J L_old`, while
+`green_response_defect` retains `G_new J - J G_old`. The operator contribution
+applies the latter to the original old field.
+`execute_structure_transition` accepts a canonical execution lease
+for host admission and cancellation. Declared comparison stages and metrics
+must state their scientific meaning before a result is interpreted as change
+over biological time.

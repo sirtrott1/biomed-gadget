@@ -33,6 +33,13 @@ class ResultValue {
         return ResultValue(std::get<NativeRecordValue::Array>(value_.data).elements.at(index));
     }
     std::string text() const {return std::get<std::string>(value_.data);}
+    std::size_t count_value() const {
+        const auto &value = std::get<rfc::numeric::Integer>(value_.data);
+        if (value < 0 || !mpz_fits_ulong_p(value.get_mpz_t()) ||
+            value > rfc::numeric::Integer(std::to_string(std::numeric_limits<std::size_t>::max())))
+            throw std::invalid_argument("native result count exceeds machine addressability");
+        return static_cast<std::size_t>(value.get_ui());
+    }
     std::size_t size() const {return std::get<NativeRecordValue::Array>(value_.data).elements.size();}
     NativeRecordValue release() && {return std::move(value_);}
 };

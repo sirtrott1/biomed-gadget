@@ -103,6 +103,7 @@ class ScientificSession {
     Json execute_native_hodge(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_native_observation(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_native_novelty(const Json &query, rfc::runtime::ExecutionLease lease);
+    Json execute_structure_transition(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_comparison(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_tensor_window(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_green_response(const Json &query, rfc::runtime::ExecutionLease lease);

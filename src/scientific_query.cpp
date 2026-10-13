@@ -36,7 +36,7 @@
 
 namespace gadget {
 bool has_native_scientific_publisher(std::string_view operation) noexcept {
-    return operation == "paired_field_contrasts" || operation == "controlled_pairings" ||
+    return operation == "structure_transition" || operation == "paired_field_contrasts" || operation == "controlled_pairings" ||
            operation == "linear_model_comparison" || operation == "finite_reference_calibration" ||
            operation == "hodge_frame_decomposition" || operation == "linear_response_observation" ||
            operation == "declared_response_transition" || operation == "metric_relative_novelty" ||
@@ -956,6 +956,102 @@ struct ScientificSession::State {
             {"preparation_retained",NativeRecordValue(retain)}}});
         std::get<NativeRecordValue::Object>(retained.data).members.emplace_back("view_execution",std::move(metadata));
         return native.derive(std::move(retained));
+    }
+    NativeRecord structure_transition_fields(const Json &query,
+        std::optional<rfc::runtime::ExecutionLease> requested_lease = {}) {
+        using namespace scientific_detail;
+        const auto lease = requested_lease ? *requested_lease : source_execution_lease("scientific-native-structure-transition");
+        lease.check_cancelled();
+        const auto old_name=query.at("context").text(), new_name=query.at("other_context").text();
+        auto &old_context=context(old_name); auto &new_context=context(new_name);
+        const auto [old_values,grade]=input(old_name,query.at("field").text(),false);
+        const auto new_values=input(new_name,query.at("new_field").text(),false).first;
+        const auto lambda=exact_rational(query.at("lambda").text());
+        std::size_t slots=0,entries=0,bits=0,dimension=0;
+        for (const auto &id : {query.at("field").text(),query.at("new_field").text()}) {
+            const auto &field=tensor(id);
+            slots=rfc::machine::checked_size_add(slots,field.tensor.support().count());
+            entries=rfc::machine::checked_size_add(entries,field.tensor.stored_nonzeros());
+            for (const auto &v : field.tensor.values().entries())
+                bits=rfc::machine::checked_size_add(bits,rfc::storage::native_execution_detail::integer_bits(v.value));
+        }
+        for (const auto *context : {&old_context,&new_context})
+            for (const auto &coordinates : context->to_ambient) dimension=std::max(dimension,coordinates.size());
+        rfc::runtime::admit_execution({2,slots,entries,1,bits},lease.policy());
+        const auto &policy=lease.policy().limits;
+        const rfc::numeric::ExactActionLimits limits{dimension,policy.sparse_entries,policy.scalar_work,policy.integer_bits};
+        const auto checkpoint=[lease] {lease.check_cancelled();};
+        rfc::numeric::ExactActionGuard guard(limits,checkpoint);
+        guard.vector(old_values);guard.vector(new_values);guard.value(lambda);
+        auto reservation=cpu().reserve(1);
+        const auto admit_matrix=[&](const rfc::numeric::ExactMatrix &matrix) {
+            research_detail::admit_structure_matrix(matrix,lease);
+        };
+        const auto old_snapshot=source_snapshot_publication(*old_context.study,owner->native_publication(),old_context.to_ambient,admit_matrix);
+        const auto new_snapshot=source_snapshot_publication(*new_context.study,owner->native_publication(),new_context.to_ambient,admit_matrix);
+        ResultFields publication(new_snapshot.publication);
+        research_detail::StructuralResultFields admission{publication,{},new_snapshot.grade_axes,lease};
+        auto binding=ResultValue::object(), old_grades=ResultValue::array();
+        binding.set("kind",ResultValue::string("actual_structure_transition_endpoints"));
+        binding.set("old_source",publication.publication(old_snapshot.publication));
+        binding.set("new_source",publication.publication(new_snapshot.publication));
+        binding.set("original_study_publication",publication.publication(owner->native_publication()));
+        std::vector<std::uint64_t> old_axes;
+        for (std::size_t k=0;k<old_context.to_ambient.size();++k) {
+            const auto axis=publication.axis(old_context.to_ambient[k].size());old_axes.push_back(axis);
+            auto record=ResultValue::object();record.set("grade",ResultValue::count(k));
+            record.set("source_carrier",ResultValue::count(old_snapshot.grade_axes[k]));
+            record.set("coordinate_carrier",ResultValue::count(axis));
+            record.set("original_source_namespace",ResultValue::string(std::to_string(source.grade_pins.at(k).source_namespace())));
+            record.set("original_source_cutoff",ResultValue::count(source.grade_pins.at(k).sequence()));
+            std::vector<std::size_t> coordinates(old_context.to_ambient[k].begin(),old_context.to_ambient[k].end());
+            record.set("original_coordinates",publication.indices(coordinates,axis));old_grades.push(std::move(record));
+        }
+        binding.set("old_grades",std::move(old_grades));
+        const auto retain_input=[&](const std::string &id,const Vector &values,std::uint64_t axis,
+            const std::vector<std::uint32_t> &coordinates) {
+            const auto &field=tensor(id);const auto &pin=source.field_pins.at(field.key);
+            auto input=ResultValue::object();input.set("id",ResultValue::string(id));
+            input.set("source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));
+            input.set("source_cutoff",ResultValue::count(pin.sequence()));
+            input.set("source_tensor",ResultValue::count(field.key));input.set("source_carrier",ResultValue::count(*field.output));
+            input.set("coordinate_carrier",ResultValue::count(axis));
+            const auto original_axis=publication.axis(field.tensor.domain().logical_size());
+            input.set("original_coordinate_carrier",ResultValue::count(original_axis));
+            rfc::numeric::ExactMatrix lift(values.size(),field.tensor.domain().logical_size());
+            for (std::size_t i=0;i<values.size();++i)lift.set(i,coordinates.at(i),Rational{1});
+            admission.admit(lift);admission.admit(values);
+            input.set("realization",ResultFields::stage_matrix(lift,original_axis,axis));
+            input.set("values",ResultFields::stage_vector(values,axis));
+            input.set("meaning",ResultValue(source.fields.at(id).declaration));return input;
+        };
+        binding.set("old_input",retain_input(query.at("field").text(),old_values,old_axes.at(grade),old_context.to_ambient.at(grade)));
+        binding.set("new_input",retain_input(query.at("new_field").text(),new_values,new_snapshot.grade_axes.at(grade),new_context.to_ambient.at(grade)));
+        binding.set("old_time",ResultValue(source.contexts.at(old_name).declaration.at("time")));
+        binding.set("new_time",ResultValue(source.contexts.at(new_name).declaration.at("time")));
+        admission.admit(lambda);binding.set("lambda",publication.stage_scalar(lambda));publication.bind(std::move(binding));
+        auto definitions=ResultValue::object();
+        definitions.set("kind",ResultValue::string("declared_structure_defect_meanings"));
+        definitions.set("green_operator_defect",ResultValue::string("L_new J - J L_old"));
+        definitions.set("green_response_defect",ResultValue::string("G_new J - J G_old, with G=(I+lambda L)^-1"));
+        definitions.set("operator_term",ResultValue::string("(G_new J - J G_old) applied to the original old field"));
+        publication.bind(std::move(definitions));
+        std::unique_ptr<PreparedTemporalStudy> leased_old,leased_new;
+        const auto prepare=[&](PreparedContext &context,std::unique_ptr<PreparedTemporalStudy> &leased) -> PreparedTemporalStudy & {
+            if (requested_lease) {
+                leased=std::make_unique<PreparedTemporalStudy>(*context.study,limits,checkpoint);
+                return *leased;
+            }
+            if (!context.temporal)
+                context.temporal=std::make_unique<PreparedTemporalStudy>(*context.study,limits,checkpoint);
+            return *context.temporal;
+        };
+        auto &old_prepared=prepare(old_context,leased_old),&new_prepared=prepare(new_context,leased_new);
+        research_detail::StructuralResultFields fields{publication,old_axes,new_snapshot.grade_axes,lease};
+        auto result=research_detail::compare_prepared_structure_fields(old_prepared,new_prepared,rfc::core::Grade{grade},
+            old_context.to_ambient,new_context.to_ambient,old_values,new_values,lambda,nullptr,
+            research_detail::FactoredTemporalMaps::requested(query),fields);
+        lease.check_cancelled();return publication.finish(std::move(result));
     }
     NativeRecord moment_fields(const Json &query) {
         using namespace scientific_detail;
@@ -2083,7 +2179,7 @@ struct ScientificSession::State {
                             .declaration.at("quantity")
                             .text(),
                     "structure field quantity");
-            require(exact_decimal(query.at("lambda").text()) > 0,
+            require(exact_rational(query.at("lambda").text()) > 0,
                     "structure lambda must be positive");
             const auto t0 = source.contexts.at(a).declaration.at("time"),
                        t1 = source.contexts.at(b).declaration.at("time");
@@ -2872,6 +2968,7 @@ struct ScientificSession::State {
         if (!has_native_scientific_publisher(operation))
             return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
         const auto fields = [&] {
+            if (operation == "structure_transition") return structure_transition_fields(admitted);
             if (operation == "chain_certificate" || operation == "realized_path_comparison") return structural_fields(admitted);
             if (operation == "green_response") return green_response_fields(admitted);
             if (operation == "native_boundary") return native_boundary_fields(admitted);
@@ -3045,7 +3142,9 @@ struct ScientificSession::State {
             result.set("result", execute_research_query(*owner, query, false, resources));
             return seal(result, "certificate_sha256");
         }
-        if (operation == "paired_field_contrasts" || operation == "controlled_pairings") {
+        if (operation == "structure_transition") {
+            result.set("result",result_fields_view(structure_transition_fields(query,native_lease)));
+        } else if (operation == "paired_field_contrasts" || operation == "controlled_pairings") {
             result.set("result", result_fields_view(research_detail::comparison_fields(*owner, query, resources,
                 native_lease.value_or(source_execution_lease("scientific-declared-comparison")))));
         } else if (operation == "chain_certificate" || operation == "realized_path_comparison") {
@@ -3074,22 +3173,7 @@ struct ScientificSession::State {
             for (const auto &name : {"result", "field_set", "retained_occurrences", "mathematical_definition"})
                 result.set(name, view.at(name));
             result.set("execution", render_record_view(native.at("execution")));
-        } else {
-            const auto name = query.at("context").text();
-            auto &prepared = context(name);
-            const auto [values, grade] = input(name, query.at("field").text());
-            if (operation == "structure_transition") {
-                const auto other_name = query.at("other_context").text();
-                auto &target = context(other_name);
-                const auto next = input(other_name, query.at("new_field").text()).first;
-                result.set("result",
-                           research_detail::compare_prepared_structures(
-                               temporal(prepared), temporal(target), rfc::core::Grade{grade},
-                               prepared.to_ambient, target.to_ambient, values, next,
-                               exact_decimal(query.at("lambda").text()), nullptr, false,
-                               research_detail::FactoredTemporalMaps::requested(query)));
-            } else throw std::invalid_argument("direct scientific action dispatch mismatch");
-        }
+        } else throw std::invalid_argument("direct scientific action dispatch mismatch");
         return seal(result, "certificate_sha256");
     }
 };
@@ -3116,6 +3200,11 @@ Json ScientificSession::execute(const Json &query) {
     std::lock_guard lock(state_->mutex);
     state_->admit(admitted);
     return state_->run(admitted);
+}
+Json ScientificSession::execute_structure_transition(const Json &query, rfc::runtime::ExecutionLease lease) {
+    lease.check_cancelled();auto admitted=Json::parse(query.dump());
+    require(admitted.at("operation").text()=="structure_transition","structure lease requires a declared transition");
+    std::lock_guard lock(state_->mutex);state_->admit(admitted);return state_->run(admitted,std::move(lease));
 }
 Json ScientificSession::execute_comparison(const Json &query, rfc::runtime::ExecutionLease lease) {
     lease.check_cancelled();

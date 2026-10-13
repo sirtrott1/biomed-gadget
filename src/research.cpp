@@ -666,10 +666,19 @@ Matrix image_on_harmonic(const Matrix &cycles, const Matrix &map, const field::H
     }
     return out;
 }
-Json sectors_from_fields(const field::ExactHodgeOperator &op, const std::array<Vector, 4> &fields,
-                         const Rational &lambda, const Vector *prepared_green = nullptr) {
+template<class Value> Value sector_values(const field::ExactHodgeOperator &op, const std::array<Vector, 4> &fields,
+                         const Rational &lambda, const Vector *prepared_green, ResultFields *publication, std::uint64_t axis,
+                         research_detail::StructuralResultFields *admission = nullptr) {
     const auto &x = fields[0];
-    auto out = Json::object();
+    auto out = Value::object();
+    const auto vector_field = [&](const Vector &v) -> Value {
+        if constexpr (std::is_same_v<Value,ResultValue>) {if (admission) admission->admit(v); return ResultFields::stage_vector(v,axis);}
+        else { (void)axis; return vec(v); }
+    };
+    const auto scalar = [&](const Rational &v) -> Value {
+        if constexpr (std::is_same_v<Value,ResultValue>) {if (admission) admission->admit(v); return publication->stage_scalar(v);}
+        else { (void)publication; return q(v); }
+    };
     auto g = fields[1], c = fields[2], h = fields[3];
     require(numeric::add(numeric::add(g, c), h) == x && op.metric().inner(g, c) == 0 &&
                 op.metric().inner(g, h) == 0 && op.metric().inner(c, h) == 0 &&
@@ -679,16 +688,21 @@ Json sectors_from_fields(const field::ExactHodgeOperator &op, const std::array<V
         prepared_green ? *prepared_green : field::exact_green_apply(op, lambda, x).value;
     require(numeric::add(green, numeric::scale(lambda, op.apply(green))) == x,
             "trajectory Green residual");
-    out.set("input", vec(x));
-    out.set("gradient", vec(g));
-    out.set("curl", vec(c));
-    out.set("harmonic", vec(h));
-    out.set("green", vec(green));
-    out.set("gradient_quadrance", q(op.metric().inner(g, g)));
-    out.set("curl_quadrance", q(op.metric().inner(c, c)));
-    out.set("harmonic_quadrance", q(op.metric().inner(h, h)));
+    out.set("input", vector_field(x));
+    out.set("gradient", vector_field(g));
+    out.set("curl", vector_field(c));
+    out.set("harmonic", vector_field(h));
+    out.set("green", vector_field(green));
+    out.set("gradient_quadrance", scalar(op.metric().inner(g, g)));
+    out.set("curl_quadrance", scalar(op.metric().inner(c, c)));
+    out.set("harmonic_quadrance", scalar(op.metric().inner(h, h)));
     return out;
 }
+Json sectors_from_fields(const field::ExactHodgeOperator &op,const std::array<Vector,4> &fields,
+    const Rational &lambda,const Vector *prepared_green=nullptr) {
+    return sector_values<Json>(op,fields,lambda,prepared_green,nullptr,0);
+}
+
 Json sectors(const field::ExactHodgeOperator &op, const field::HodgeProjectors &p, const Vector &x,
              const Rational &lambda) {
     return sectors_from_fields(
@@ -1009,30 +1023,42 @@ Json compare_research_structures(const NativeStudy &old_study, const NativeStudy
         old_prepared, new_prepared, grade, old_coordinates, new_coordinates, old_field, new_field,
         lambda, declared_maps, sparse_output);
 }
-Json research_detail::compare_prepared_structures(
+template<class Value>
+Value compare_structure_values(
     scientific_detail::PreparedTemporalStudy &old_prepared,
     scientific_detail::PreparedTemporalStudy &new_prepared, core::Grade grade,
     const std::vector<std::vector<std::uint32_t>> &old_coordinates,
     const std::vector<std::vector<std::uint32_t>> &new_coordinates, const Vector &old_field,
     const Vector &new_field, const Rational &lambda, const std::vector<Matrix> *declared_maps,
-    bool sparse_output, bool factored_output) {
+    bool sparse_output, bool factored_output, research_detail::StructuralResultFields *native) {
     const auto &old_study = old_prepared.study(), &new_study = new_prepared.study();
     require(lambda > 0, "structure Green lambda");
-    const auto encode = [&](const Matrix &m) {
-        if (!sparse_output)
-            return matrix(m);
-        auto out = Json::object(), entries = Json::array();
-        out.set("rows", cardinality(m.rows()));
-        out.set("columns", cardinality(m.cols()));
-        for (const auto &[p, v] : m.entries()) {
-            auto e = Json::object();
-            e.set("row", cardinality(p.first));
-            e.set("column", cardinality(p.second));
-            e.set("value", Json::string(v.get_str()));
-            entries.push(e);
+    const auto axis = [&](bool old, std::size_t k) -> std::uint64_t {
+        return native ? (old ? native->old_axes.at(k) : native->new_axes.at(k)) : 0;
+    };
+    const auto vector_field = [&](const Vector &value, std::uint64_t carrier) -> Value {
+        if constexpr (std::is_same_v<Value, ResultValue>) {
+            native->admit(value);return ResultFields::stage_vector(value, carrier);
         }
-        out.set("entries", entries);
-        return out;
+        else { (void)carrier; return vec(value); }
+    };
+    const auto encode = [&](const Matrix &m, std::uint64_t input, std::uint64_t output) -> Value {
+        if constexpr (std::is_same_v<Value, ResultValue>) {
+            native->admit(m);
+            auto field = ResultFields::stage_matrix(m, input, output);
+            field.set("display", ResultValue::string(sparse_output ? "sparse_matrix" : "dense_matrix"));
+            return field;
+        } else {
+            (void)input; (void)output;
+            if (!sparse_output) return matrix(m);
+            auto out = Json::object(), entries = Json::array();
+            out.set("rows", cardinality(m.rows())); out.set("columns", cardinality(m.cols()));
+            for (const auto &[p, v] : m.entries()) {
+                auto e=Json::object(); e.set("row",cardinality(p.first)); e.set("column",cardinality(p.second));
+                e.set("value",Json::string(v.get_str())); entries.push(e);
+            }
+            out.set("entries",entries); return out;
+        }
     };
     auto correspondence = [&](std::size_t k) {
         if (declared_maps)
@@ -1057,70 +1083,77 @@ Json research_detail::compare_prepared_structures(
                                            : old_green_plan.matrix().apply(old_field);
     const auto new_green = factored_output ? new_green_plan.apply(new_field)
                                            : new_green_plan.matrix().apply(new_field);
-    research_detail::FactoredTemporalMaps registry({&old_prepared, &new_prepared});
-    auto out = Json::object();
-    out.set("correspondence", encode(j));
+    research_detail::BasicFactoredTemporalMaps<Value> registry({&old_prepared, &new_prepared},
+        native ? &native->publication : nullptr, native ? std::vector<std::vector<std::uint64_t>>{native->old_axes,native->new_axes}
+                                                        : std::vector<std::vector<std::uint64_t>>{},
+        [native](const Matrix &m) {if (native) native->admit(m);},
+        [native](const Rational &v) {if (native) native->admit(v);});
+    auto out = Value::object();
+    out.set("correspondence", encode(j,axis(true,grade.value),axis(false,grade.value)));
     if (grade.value) {
         const auto old_b = field::materialize_boundary_matrix(old_study.source(), grade);
         const auto new_b = field::materialize_boundary_matrix(new_study.source(), grade);
         auto defect = new_b.multiply(j).add(
             correspondence(grade.value - 1).multiply(old_b).scale(Rational{-1}));
-        out.set("boundary_defect", encode(defect));
-        out.set("boundary_compatible", Json::boolean(defect.entries().empty()));
+        out.set("boundary_defect", encode(defect,axis(true,grade.value),axis(false,grade.value-1u)));
+        out.set("boundary_compatible", Value::boolean(defect.entries().empty()));
     }
     out.set("metric_pullback_defect",
-            encode(temporal::metric_pullback_defect(old_hodge.metric(), new_hodge.metric(), j)));
-    const auto old_sectors = old_p.apply(old_field);
-    out.set("old", sectors_from_fields(old_hodge, old_sectors, lambda, &old_green));
-    out.set("new", sectors_from_fields(new_hodge, new_p.apply(new_field), lambda, &new_green));
-    auto transport = Json::array();
+            encode(temporal::metric_pullback_defect(old_hodge.metric(), new_hodge.metric(), j),
+                   axis(true,grade.value),axis(true,grade.value)));
+    const auto old_sectors = old_p.apply(old_field,old_prepared.checkpoint());
+    out.set("old", sector_values<Value>(old_hodge, old_sectors, lambda, &old_green,
+        native ? &native->publication : nullptr,axis(true,grade.value),native));
+    out.set("new", sector_values<Value>(new_hodge, new_p.apply(new_field,new_prepared.checkpoint()), lambda, &new_green,
+        native ? &native->publication : nullptr,axis(false,grade.value),native));
+    auto transport = Value::array();
     Vector reconstructed(new_field.size(), Rational{0});
     for (std::size_t a = 1; a < old_sectors.size(); ++a) {
-        auto row = Json::array();
-        const auto transported = new_p.apply(j.apply(old_sectors[a]));
+        auto row = Value::array();
+        const auto transported = new_p.apply(j.apply(old_sectors[a]),new_prepared.checkpoint());
         for (std::size_t b = 1; b < transported.size(); ++b) {
-            row.push(vec(transported[b]));
+            row.push(vector_field(transported[b],axis(false,grade.value)));
             reconstructed = numeric::add(reconstructed, transported[b]);
         }
         transport.push(row);
     }
     require(reconstructed == j.apply(old_field), "complete nine-sector transport");
     if (factored_output) {
-        auto blocks = Json::array();
-        const auto j_map = registry.matrix(j);
+        auto blocks = Value::array();
+        const auto j_map = registry.matrix(j,axis(true,grade.value),axis(false,grade.value));
         for (std::size_t a = 0; a < 3; ++a) {
-            auto row = Json::array();
+            auto row = Value::array();
             for (std::size_t b = 0; b < 3; ++b)
                 row.push(registry.compose(
                     {registry.sector(0, grade, a), j_map, registry.sector(1, grade, b)}));
             blocks.push(row);
         }
         out.set("sector_maps", blocks);
-    } else if (sparse_output) {
+    } else if (sparse_output || native) {
         std::vector<std::vector<Matrix>> maps(3,
                                               std::vector<Matrix>(3, Matrix(j.rows(), j.cols())));
         for (std::size_t c = 0; c < j.cols(); ++c) {
             Vector e(j.cols(), Rational{0});
             e[c] = 1;
-            const auto projected = old_p.apply(e);
+            const auto projected = old_p.apply(e,old_prepared.checkpoint());
             for (std::size_t a = 1; a < projected.size(); ++a) {
                 // A certified zero sector has zero images in every target
                 // sector. Its complete declared block remains in the output.
                 if (numeric::is_zero(projected[a]))
                     continue;
-                const auto transported = new_p.apply(j.apply(projected[a]));
+                const auto transported = new_p.apply(j.apply(projected[a]),new_prepared.checkpoint());
                 for (std::size_t b = 1; b < transported.size(); ++b)
                     for (std::size_t i = 0; i < transported[b].size(); ++i)
                         if (transported[b][i] != 0)
                             maps[a - 1][b - 1].set(i, c, transported[b][i]);
             }
         }
-        auto blocks = Json::array();
+        auto blocks = Value::array();
         Matrix total(j.rows(), j.cols());
         for (const auto &source_row : maps) {
-            auto row = Json::array();
+            auto row = Value::array();
             for (const auto &block : source_row) {
-                row.push(encode(block));
+                row.push(encode(block,axis(true,grade.value),axis(false,grade.value)));
                 total = total.add(block);
             }
             blocks.push(row);
@@ -1129,8 +1162,8 @@ Json research_detail::compare_prepared_structures(
         out.set("sector_maps", blocks);
     }
     out.set("sector_transport", transport);
-    out.set("old_transported", vec(j.apply(old_field)));
-    out.set("field_innovation", vec(temporal::field_delta(j, old_field, new_field).innovation));
+    out.set("old_transported", vector_field(j.apply(old_field),axis(false,grade.value)));
+    out.set("field_innovation", vector_field(temporal::field_delta(j, old_field, new_field).innovation,axis(false,grade.value)));
     // Identity injections and complete endpoint Green actions. The ordered
     // native word defect keeps rectangular transport and every new direction.
     const auto innovation = temporal::field_delta(j, old_field, new_field).innovation;
@@ -1141,7 +1174,12 @@ Json research_detail::compare_prepared_structures(
         operator_term = numeric::sub(new_green_plan.apply(j.apply(old_field)), j.apply(old_green));
         out.set("green_operator_defect",
                 registry.defect(registry.hodge(0, grade), registry.hodge(1, grade),
-                                registry.matrix(j), registry.matrix(j)));
+                                registry.matrix(j,axis(true,grade.value),axis(false,grade.value)), registry.matrix(j,axis(true,grade.value),axis(false,grade.value))));
+        if constexpr (std::is_same_v<Value, ResultValue>) {
+            const auto correspondence=registry.matrix(j,axis(true,grade.value),axis(false,grade.value));
+            out.set("green_response_defect",registry.defect(registry.green(0,grade,lambda),
+                registry.green(1,grade,lambda),correspondence,correspondence));
+        }
         out.set("factored_maps", registry.archive());
     } else {
         const auto &old_g = old_green_plan.matrix(), &new_g = new_green_plan.matrix();
@@ -1154,18 +1192,40 @@ Json research_detail::compare_prepared_structures(
                 "native complete Green and Hodge word maps");
         innovation_term = new_g.apply(innovation);
         operator_term = defect.direct.apply(old_field);
-        out.set("green_operator_defect", encode(hodge_defect.direct));
+        out.set("green_operator_defect", encode(hodge_defect.direct,axis(true,grade.value),axis(false,grade.value)));
+        if constexpr (std::is_same_v<Value, ResultValue>)
+            out.set("green_response_defect",encode(defect.direct,axis(true,grade.value),axis(false,grade.value)));
     }
     const auto aggregate = numeric::add(innovation_term, operator_term);
     require(aggregate == numeric::sub(new_green, j.apply(old_green)),
             "native Green word and field reconstruction");
-    out.set("realization_term", vec(realization));
-    out.set("innovation_term", vec(innovation_term));
-    out.set("operator_term", vec(operator_term));
-    out.set("total", vec(aggregate));
-    out.set("identity_exact", Json::boolean(true));
+    out.set("realization_term", vector_field(realization,axis(false,grade.value)));
+    out.set("innovation_term", vector_field(innovation_term,axis(false,grade.value)));
+    out.set("operator_term", vector_field(operator_term,axis(false,grade.value)));
+    out.set("total", vector_field(aggregate,axis(false,grade.value)));
+    out.set("identity_exact", Value::boolean(true));
+    if (native) native->lease.check_cancelled();
     return out;
 }
+Json research_detail::compare_prepared_structures(
+    PreparedTemporalStudy &old_prepared, PreparedTemporalStudy &new_prepared, core::Grade grade,
+    const std::vector<std::vector<std::uint32_t>> &old_coordinates,
+    const std::vector<std::vector<std::uint32_t>> &new_coordinates,
+    const Vector &old_field, const Vector &new_field, const Rational &lambda,
+    const std::vector<Matrix> *declared_maps, bool sparse_output, bool factored_output) {
+    return compare_structure_values<Json>(old_prepared,new_prepared,grade,old_coordinates,new_coordinates,
+        old_field,new_field,lambda,declared_maps,sparse_output,factored_output,nullptr);
+}
+ResultValue research_detail::compare_prepared_structure_fields(
+    PreparedTemporalStudy &old_prepared, PreparedTemporalStudy &new_prepared, core::Grade grade,
+    const std::vector<std::vector<std::uint32_t>> &old_coordinates,
+    const std::vector<std::vector<std::uint32_t>> &new_coordinates,
+    const Vector &old_field, const Vector &new_field, const Rational &lambda,
+    const std::vector<Matrix> *declared_maps, bool factored_output, StructuralResultFields &fields) {
+    return compare_structure_values<ResultValue>(old_prepared,new_prepared,grade,old_coordinates,new_coordinates,
+        old_field,new_field,lambda,declared_maps,false,factored_output,&fields);
+}
+
 bool is_research_operation(const std::string &op) {
     return op == "controlled_pairings" || op == "trajectory_structure" ||
            op == "paired_field_contrasts" || op == "linear_model_comparison" ||

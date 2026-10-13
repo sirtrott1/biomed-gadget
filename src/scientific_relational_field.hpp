@@ -18,11 +18,13 @@ struct PreparedRelationalField {
         require(report.satisfied(), "complete chain family required for Hodge decomposition");
         return report;
     }
-    PreparedRelationalField(const NativeStudy &owner, rfc::core::Grade k)
+    PreparedRelationalField(const NativeStudy &owner, rfc::core::Grade k,
+                           std::optional<rfc::numeric::ExactActionLimits> limits = {},
+                           std::function<void()> checkpoint = {})
         : study(owner), grade(k), metric(owner.tower().metrics().at(k.value)),
           bianchi(chain(owner)),
-          projections{PreparedProjection(owner.hodge(k).gradient_frame(), metric),
-                      PreparedProjection(owner.hodge(k).curl_frame(), metric)} {
+          projections{PreparedProjection(owner.hodge(k).gradient_frame(), metric, limits, checkpoint),
+                      PreparedProjection(owner.hodge(k).curl_frame(), metric, limits, checkpoint)} {
         require(rfc::machine::checked_size_add(projections[0].frame.cols(),
                                                projections[1].frame.cols()) <= metric.size(),
                 "Hodge complementary dimension");

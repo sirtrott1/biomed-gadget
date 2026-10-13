@@ -13,7 +13,8 @@ struct SourceSnapshotPublication {
 };
 inline SourceSnapshotPublication source_snapshot_publication(
     const NativeStudy &study, const NativeRecord &original,
-    const std::vector<std::vector<std::uint32_t>> &to_original) {
+    const std::vector<std::vector<std::uint32_t>> &to_original,
+    std::function<void(const rfc::numeric::ExactMatrix &)> admit_matrix = {}) {
     using namespace scientific_detail;
     using N = NativeRecordValue;
     const auto &source = study.source();
@@ -48,8 +49,10 @@ inline SourceSnapshotPublication source_snapshot_publication(
         auto declaration = ResultValue::object(), identities = ResultValue::array();
         declaration.set("grade", ResultValue::count(k));
         declaration.set("carrier", ResultValue::count(axis));
+        const auto metric = study.tower().metrics().at(k).materialize();
+        if (admit_matrix) admit_matrix(metric);
         declaration.set("metric", ResultFields::stage_matrix(
-            study.tower().metrics().at(k).materialize(), axis, axis,
+            metric, axis, axis,
             rfc::storage::TemporalTensorRole::Metric));
         std::vector<std::size_t> coordinates;
         std::set<std::size_t> unique;
