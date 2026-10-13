@@ -54,6 +54,46 @@ sealed in the store header; reopening never chooses a different codec implicitly
 Existing stores must already declare the publication codec in their immutable headers.
 Every process reading these records must explicitly install the provider.
 
+An installed Agent can retrieve a publication that its local operator has already
+admitted to the store. Use the existing record interface and select the literal
+record ID and version:
+
+```python
+from agent.client import RexClient
+
+client = RexClient(server_url, api_key=your_token, workspace=your_workspace,
+                   frame_key=your_frame_key)
+packet = client.rex_fetch_record(record_id, version=1)
+archive = packet.snapshot().value
+```
+
+The receiving process must install the GADGET codec before opening the snapshot.
+The packet retains exact metadata, store identity, record version and unchanged
+RFCXS bytes. RCDB record versions and native publication cutoffs are separate.
+Time selection uses `as_of` and `valid_at`; an exact version cannot be combined
+with either time selector. The graph frame endpoint accepts Python graph objects
+and does not interpret an RFCXS publication.
+
+Uploading a GADGET packet through `rex_store_record` requires a declared native
+cell admission capability. This adapter supplies byte bounds and canonical
+archive validation, but currently supplies no cell counter. The Agent record
+route refuses such uploads before native decoding or destination publication.
+Local storage and retrieval do not qualify this missing upload capability.
+
+The optional Agent contract uses its installed record routes, authentication,
+workspace and compute budget middleware over an owned loopback listener. It
+checks exact retrieval, upload refusal, complete bytes and restart. It requires
+matching Agent and storage packages with the Agent server dependencies:
+
+```sh
+python -I tests/rcdb_agent.py /path/to/gadget /path/to/publication.rfcxs \
+  /new/test/directory --compression zstd
+```
+
+The test creates its own configuration, identities, journals and stores. It
+qualifies these record routes on the local host; other Agent services, remote
+hosts and mathematical cell admission require their own checks.
+
 Use RCDB's existing `copy_record` to transfer a selected native publication to
 another store. Both stores must declare the GADGET codec. The destination can
 use a different declared compression codec:
