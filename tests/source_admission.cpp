@@ -22,6 +22,16 @@ void json_admission(const gadget::fs::path &corpus_path) {
     rejects([&] { (void)object.at(name); });
     check(object.at("schema").text() == "original" && object.at("").text() == "empty name",
           "invalid member access changed its C-string prefix or empty name");
+    for (const auto *source : {R"("\ud800")", R"("\udc00")",
+                              R"({"\ud800":1,"\ufffd":2})"}) {
+        rejects([&] { (void)Json::parse(source); });
+        const auto bytes = std::string(source);
+        rejects([&] { (void)decode_record(std::as_bytes(std::span(bytes.data(), bytes.size()))); });
+    }
+    const auto distinct = Json::parse(R"({"\ud800\udc00":1,"\ufffd":2})");
+    check(json_object_object_length(distinct.raw()) == 2 && distinct.at("\xf0\x90\x80\x80").integer() == 1 &&
+              distinct.at("\xef\xbf\xbd").integer() == 2,
+          "valid supplementary identity and literal replacement character collapsed");
     for (const auto *token : {"9223372036854775808", "18446744073709551615"}) {
         const auto value = Json::parse(token);
         bool refused = false;

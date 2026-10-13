@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <rfc/machine/checked_size.hpp>
@@ -18,9 +19,27 @@ void validate_json_member_name(std::string_view name) {
     if (name.find('\0') != std::string_view::npos)
         throw std::invalid_argument("JSON member name exceeds json-c C-string representation");
 }
-void validate_json_source_names(std::string_view source) {
+std::optional<unsigned> json_hex_quad(std::string_view source) {
+    if (source.size() < 4)
+        return {};
+    unsigned value{};
+    for (const auto character : source.substr(0, 4)) {
+        unsigned digit;
+        if (character >= '0' && character <= '9')
+            digit = character - '0';
+        else if (character >= 'a' && character <= 'f')
+            digit = character - 'a' + 10;
+        else if (character >= 'A' && character <= 'F')
+            digit = character - 'A' + 10;
+        else
+            return {};
+        value = value * 16 + digit;
+    }
+    return value;
+}
+void validate_json_source_strings(std::string_view source) {
     // json-c owns the grammar and decoding. Inspect only string-token escapes
-    // followed by a member colon, whose decoded NUL the key API cannot retain.
+    // whose replacement or decoded NUL would lose the original identity.
     for (std::size_t position = 0; position < source.size();) {
         const auto byte = source[position++];
         if (byte == '\0')
@@ -40,8 +59,24 @@ void validate_json_source_names(std::string_view source) {
                 const auto escape = source[position++];
                 if (escape == '\0')
                     throw std::invalid_argument("unescaped NUL in JSON source");
-                if (escape == 'u' && source.substr(position, 4) == "0000")
-                    nul = true;
+                if (escape == 'u') {
+                    const auto code = json_hex_quad(source.substr(position));
+                    if (!code)
+                        continue;
+                    position += 4;
+                    if (*code == 0)
+                        nul = true;
+                    if (*code >= 0xd800 && *code <= 0xdbff) {
+                        const auto low = source.substr(position, 2) == "\\u"
+                                             ? json_hex_quad(source.substr(position + 2))
+                                             : std::nullopt;
+                        if (!low || *low < 0xdc00 || *low > 0xdfff)
+                            throw std::invalid_argument("JSON escaped surrogate has no Unicode scalar representation");
+                        position += 6;
+                    } else if (*code >= 0xdc00 && *code <= 0xdfff) {
+                        throw std::invalid_argument("JSON escaped surrogate has no Unicode scalar representation");
+                    }
+                }
             }
         }
         if (!nul || !closed)
@@ -111,7 +146,7 @@ Json Json::number(double n) {
 Json Json::parse(const std::string &s) {
     if (s.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
         throw std::length_error("JSON input exceeds json-c integer representation");
-    validate_json_source_names(s);
+    validate_json_source_strings(s);
     // Grow only when the codec reports insufficient stack depth. Every nested
     // container in valid JSON needs two source bytes; no second parser or
     // application nesting ceiling is needed to size the complete input.
