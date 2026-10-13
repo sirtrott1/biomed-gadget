@@ -17,6 +17,29 @@ prepares the selected publication's indexes, then measures reuse of that same
 directory. `--cutoff N` selects an actual publication sequence; the default is
 the latest endpoint. Publication sequence is separate from biological time.
 
+`--fields` prepares that same accession directory and binds every tensor in the
+selected endpoint. `field_access` measures the complete binding pass;
+`fields_reused` reads the retained pins without binding again. Each pin is checked
+against the original tensor address, source namespace and cutoff. Domain, support
+and nonzero totals cover the complete field family. `fields_lifetime` verifies
+that these pins still own the same tensors after the input history, record and
+study are destroyed. `release_fields` releases the pins and their publication.
+Pin vector capacity is reported separately from the SDK directory's allocations.
+`field_access.materialized_value_fields_after` reports actual coefficient cache
+state after pin reuse and intake owner destruction.
+
+`--encoded-tensor KEY` requests one explicit tensor from the canonical encoded
+field provider. `encoded_select` includes its search of retained base and
+checkpoint channels. When matching storage exists, `encoded_verify` compares the
+complete domain, support and coefficient stream with the original pinned tensor;
+the same comparison runs after intake owner destruction. These reads use the
+existing coefficient cursors without materializing the publication's field.
+`encoded.materialized_field_after` observes that field's cache after both reads.
+`encoded.available` is zero when the selected tensor has no unchanged retained
+encoding. An absent tensor key refuses. This option measures one field and does
+not qualify bulk encoded access to the complete family. Both new options imply
+accession preparation.
+
 `--rewrite FILE` publishes the complete input history to a new file and compares
 every output byte with the original. It preserves all frames and checkpoints,
 including when an earlier cutoff is selected for inspection. An existing output
@@ -27,7 +50,8 @@ current resident bytes and the process peak resident bytes observed after that
 phase. Memory observations come from `/proc/self/status` on Linux; other systems
 report `unavailable`. The peak is cumulative for the process. Phase times exclude
 the subsequent resource accounting unless the phase is named `account`.
-`release` measures destruction of all selected record, study and history owners;
+`release` measures destruction of the selected record, study and history owners;
+when field pins are requested, their publication survives until `release_fields`.
 `total` includes the complete workload and reporting.
 
 Each measured phase also reports a `value` row named

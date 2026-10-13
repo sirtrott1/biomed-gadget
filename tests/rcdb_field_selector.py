@@ -21,6 +21,13 @@ subprocess.run([str(binary), "native-record", "--input", str(request), "--out", 
 codec = adapter.install_codec(gadget=binary, max_bytes=RecordCodec.__dataclass_fields__["max_bytes"].default)
 name = adapter.install_rcql_field_selector(selector=selector, gadget=binary)
 assert name == adapter.install_rcql_field_selector(selector=selector, gadget=binary)
+for wrong in [dict(selector=binary, gadget=binary), dict(selector=selector, gadget=selector)]:
+    try:
+        adapter.install_rcql_field_selector(**wrong)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Field provider must refuse a different executable binding")
 with closing(LocalStore(root / "fields.rcdb", record_codecs=(*DEFAULT_RECORD_CODECS, codec))) as store:
     adapter.put_publication(store, "source", publication, expected_version=0)
     adapter.put_publication(store, "source", publication, expected_version=1)

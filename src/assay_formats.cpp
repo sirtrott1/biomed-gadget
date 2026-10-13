@@ -434,7 +434,9 @@ std::vector<SequenceSpan> read_sequence_spans(std::string_view bytes,const std::
         require(header.size()>1 && header.front()==(format=="fasta"?'>':'@'),"sequence header");
         const auto stop=header.find_first_of(" \t",1);record.id_length=(stop==std::string_view::npos?header.size():stop)-1;
         const auto id=bytes.substr(record.id_start,record.id_length);
-        require(!id.empty() && ids.insert(id).second,"sequence identities must be nonempty and unique");
+        require(!id.empty(),"sequence identifier must be nonempty");
+        if(format=="fasta")
+            require(ids.insert(id).second,"FASTA reference identities must be unique");
         if(format=="fasta") {
             available=reader.next(line);
             while(available && line.front()!='>') {
@@ -493,8 +495,10 @@ Json inspect_resource(const std::string &bytes, const Json &resource,
         out.set("record_count", cardinality(intervals.size()));
     } else if (format == "fasta" || format == "fastq") {
         const auto spans=read_sequence_spans(bytes,format);auto records=Json::array();
-        if (!summary) for(const auto &span:spans) {
+        if (!summary) for(std::size_t i=0;i<spans.size();++i) {
+            const auto &span=spans[i];
             auto record=Json::object();record.set("id",Json::string(bytes.substr(span.id_start,span.id_length)));
+            record.set("record_index",cardinality(i));
             record.set("length",cardinality(span.length));record.set("source_start",cardinality(span.start));record.set("source_end",cardinality(span.end));records.push(record);
         }
         if (!summary) out.set("records", records);

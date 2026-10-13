@@ -40,28 +40,42 @@ Json mat(const Matrix &x) {
     out.set("entries", entries);
     return out;
 }
-struct Word {
+template<class Value> struct BasicWord {
     rfc::temporal::OperationWord operations;
     std::vector<std::uint16_t> grades;
     std::vector<std::function<Vector(const Vector &)>> actions;
-    std::vector<Json> factors;
+    std::vector<Value> factors;
+    std::optional<rfc::numeric::ExactActionLimits> limits;
+    std::function<void()> checkpoint;
     Vector apply_range(Vector x, std::size_t begin, std::size_t end) const {
         for (std::size_t i = begin; i < end; ++i)
             x = actions.at(i)(x);
         return x;
     }
     Vector apply(const Vector &x) const {
-        return actions.empty() ? operations.apply(x) : apply_range(x, 0, actions.size());
+        if(!actions.empty())return apply_range(x,0,actions.size());
+        if(!limits)return operations.apply(x);
+        rfc::numeric::ExactActionGuard guard(*limits,checkpoint);auto value=x;
+        for(std::size_t i=0;i<operations.length();++i)value=rfc::numeric::checked_apply(operations.op(i),value,guard);
+        return value;
     }
 };
-Word word(const TemporalReading &reading, const Json &declarations, bool validate,
-          FactoredTemporalMaps *registry, std::size_t endpoint) {
+template<class Value> BasicWord<Value> word(const TemporalReading &reading, const Json &declarations, bool validate,
+          BasicFactoredTemporalMaps<Value> *registry, std::size_t endpoint,
+          TemporalResultFields *native) {
     const auto &study = *reading.study;
     const auto initial = reading.grade;
     std::vector<Matrix> ops;
     std::vector<std::uint16_t> grades{initial.value};
     auto grade = initial;
-    Word result;
+    BasicWord<Value> result;
+    if(native) {
+        std::size_t dimension=0;
+        for(std::size_t k=0;k<study.source().grade_count();++k)dimension=std::max(dimension,study.source().grade(core::Grade{static_cast<std::uint16_t>(k)}).cell_count());
+        const auto &policy=native->lease.policy().limits;
+        result.limits=numeric::ExactActionLimits{dimension,policy.sparse_entries,policy.scalar_work,policy.integer_bits};
+        result.checkpoint=[lease=native->lease] {lease.check_cancelled();};
+    }
     source_array(declarations, "temporal operation word");
     require(declarations.size(), "operation word requires declared factors");
     for (std::size_t i = 0; i < declarations.size(); ++i) {
@@ -70,7 +84,7 @@ Word word(const TemporalReading &reading, const Json &declarations, bool validat
         const auto kind = d.at("kind").text();
         Matrix op;
         const auto input_grade = grade;
-        Json factor;
+        Value factor;
         std::function<Vector(const Vector &)> action;
         if (kind == "boundary") {
             require(grade.value > 0, "word boundary at grade zero");
@@ -108,7 +122,8 @@ Word word(const TemporalReading &reading, const Json &declarations, bool validat
             if (!validate) {
                 op = Matrix::diagonal(reading.diagonal_fields.at(i));
                 if (registry) {
-                    factor = registry->matrix(op);
+                    factor = registry->matrix(op, native ? std::optional<std::uint64_t>(native->axes.at(endpoint).at(input_grade.value)) : std::nullopt,
+                        native ? std::optional<std::uint64_t>(native->axes.at(endpoint).at(input_grade.value)) : std::nullopt);
                     action = [op](const Vector &x) { return op.apply(x); };
                 }
             }
@@ -141,10 +156,18 @@ Word word(const TemporalReading &reading, const Json &declarations, bool validat
         require(kind == "green" || !d.has("lambda"), "lambda belongs to Green factors");
         require(kind == "diagonal_field" || !d.has("fields"), "fields belong to diagonal factors");
         if (!validate && registry) {
+            if (native) {
+                auto original_action=std::move(action);const auto lease=native->lease;
+                action=[original_action=std::move(original_action),lease](const Vector &x) {
+                    lease.check_cancelled();auto value=original_action(x);lease.check_cancelled();return value;
+                };
+            }
             result.actions.push_back(std::move(action));
             result.factors.push_back(factor);
-        } else
+        } else {
+            if (native && !validate) admit_structure_matrix(op,native->lease);
             ops.push_back(std::move(op));
+        }
         grades.push_back(grade.value);
     }
     if (!validate && !registry)
@@ -153,8 +176,31 @@ Word word(const TemporalReading &reading, const Json &declarations, bool validat
     return result;
 }
 } // namespace
-Json temporal_field_history(const Json &query, const std::vector<TemporalReading> &readings,
-                            const std::vector<TemporalMaps> &maps, bool validate) {
+template<class Value> Value collect_temporal_history(const Json &query, const std::vector<TemporalReading> &readings,
+                            const std::vector<TemporalMaps> &maps, bool validate, TemporalResultFields *native) {
+    const auto axis=[&](std::size_t endpoint,std::uint16_t grade) {return native ? native->axes.at(endpoint).at(grade) : 0;};
+    const auto scalar=[&](const Rational &value) -> Value {
+        if constexpr (std::is_same_v<Value,ResultValue>) {
+            StructuralResultFields admission{native->publication,{},{},native->lease};admission.admit(value);
+            return native->publication.stage_scalar(value);
+        } else return rat(value);
+    };
+    const auto vector=[&](const Vector &value,std::uint64_t carrier) -> Value {
+        if constexpr (std::is_same_v<Value,ResultValue>) {
+            StructuralResultFields admission{native->publication,{},{},native->lease};admission.admit(value);
+            return ResultFields::stage_vector(value,carrier);
+        } else { (void)carrier;return vec(value); }
+    };
+    const auto matrix=[&](const Matrix &value,std::uint64_t input,std::uint64_t output) -> Value {
+        if constexpr (std::is_same_v<Value,ResultValue>) {
+            admit_structure_matrix(value,native->lease);auto field=ResultFields::stage_matrix(value,input,output);
+            field.set("display",ResultValue::string("sparse_matrix"));return field;
+        } else { (void)input;(void)output;return mat(value); }
+    };
+    const auto count=[](std::size_t value) -> Value {
+        if constexpr (std::is_same_v<Value,ResultValue>) return ResultValue::count(value);
+        else return cardinality(value);
+    };
     members(query, {"operation", "endpoints", "correspondences", "word", "lambda"},
             {"lineages", "map_output"});
     require(readings.size() >= 2 && maps.size() + 1 == readings.size(),
@@ -166,8 +212,11 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
     if (!validate)
         for (const auto &r : readings)
             owners.push_back(r.prepared);
-    FactoredTemporalMaps registry(std::move(owners));
-    std::vector<Word> words;
+    BasicFactoredTemporalMaps<Value> registry(std::move(owners),native ? &native->publication : nullptr,
+        native ? native->axes : std::vector<std::vector<std::uint64_t>>{},
+        [native](const Matrix &m) {if(native)admit_structure_matrix(m,native->lease);},
+        [native](const Rational &v) {if(native) {StructuralResultFields admission{native->publication,{},{},native->lease};admission.admit(v);}});
+    std::vector<BasicWord<Value>> words;
     for (const auto &r : readings) {
         require(validate || (r.prepared && &r.prepared->study() == r.study),
                 "temporal preparation must belong to the admitted endpoint");
@@ -176,22 +225,26 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
         if (!words.empty() && r.shared_identity)
             (void)temporal::RelationalSourceDelta(readings[words.size() - 1].study->source(),
                                                   r.study->source());
-        words.push_back(word(r, query.at("word"), validate,
-                             factored && !validate ? &registry : nullptr, words.size()));
+        words.push_back(word<Value>(r, query.at("word"), validate,
+                             factored && !validate ? &registry : nullptr, words.size(),native));
     }
     if (validate)
-        return Json::object();
-    auto out = Json::object(), endpoints = Json::array(), steps = Json::array();
+        return Value::object();
+    auto out = Value::object(), endpoints = Value::array(), steps = Value::array();
     std::vector<Matrix> js;
     std::vector<Vector> innovations;
     for (std::size_t t = 0; t < readings.size(); ++t) {
         const auto &r = readings[t];
-        auto e = Json::object();
-        e.set("declaration", r.declaration);
-        e.set("coordinates", r.coordinates);
-        e.set("field", vec(r.values));
-        e.set("word_field", vec(words[t].apply(r.values)));
-        e.set("grade", cardinality(r.grade.value));
+        auto e = Value::object();
+        if constexpr (std::is_same_v<Value,ResultValue>) {
+            e.set("declaration",native->declarations.at(t));
+            e.set("coordinates",native->coordinates.at(t));
+        } else {
+            e.set("declaration",r.declaration);e.set("coordinates",r.coordinates);
+        }
+        e.set("field", vector(r.values,axis(t,r.grade.value)));
+        e.set("word_field", vector(words[t].apply(r.values),axis(t,words[t].grades.back())));
+        e.set("grade", count(r.grade.value));
         endpoints.push(e);
         if (!t)
             continue;
@@ -202,13 +255,13 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
         std::vector<Matrix> word_maps;
         for (auto k : words[t].grades)
             word_maps.push_back(maps[t - 1].at(k));
-        Json direct_map;
-        std::vector<Json> position_maps, contribution_maps;
+        Value direct_map;
+        std::vector<Value> position_maps, contribution_maps;
         std::vector<Vector> contribution_fields;
         if (factored) {
-            std::vector<Json> declared;
-            for (const auto &map : word_maps)
-                declared.push_back(registry.matrix(map));
+            std::vector<Value> declared;
+            for (std::size_t position=0;position<word_maps.size();++position)
+                declared.push_back(registry.matrix(word_maps[position],axis(t-1,words[t].grades[position]),axis(t,words[t].grades[position])));
             const auto &before = words[t - 1], &after = words[t];
             direct_map =
                 registry.defect(registry.compose(before.factors), registry.compose(after.factors),
@@ -217,7 +270,7 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
             for (std::size_t i = 0; i < before.factors.size(); ++i) {
                 const auto position = registry.defect(before.factors[i], after.factors[i],
                                                       declared[i], declared[i + 1]);
-                std::vector<Json> order(before.factors.begin(), before.factors.begin() + i);
+                std::vector<Value> order(before.factors.begin(), before.factors.begin() + i);
                 order.push_back(position);
                 order.insert(order.end(), after.factors.begin() + i + 1, after.factors.end());
                 position_maps.push_back(position);
@@ -234,102 +287,110 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
             const auto defect = temporal::finite_word_defect(words[t - 1].operations,
                                                              words[t].operations, word_maps);
             require(defect.exact_identity(), "native ordered-word identity");
-            direct_map = mat(defect.direct);
+            direct_map = matrix(defect.direct,axis(t-1,words[t-1].grades.front()),axis(t,words[t].grades.back()));
             for (std::size_t i = 0; i < defect.contributions.size(); ++i) {
-                position_maps.push_back(mat(defect.position_defects[i]));
-                contribution_maps.push_back(mat(defect.contributions[i]));
+                position_maps.push_back(matrix(defect.position_defects[i],axis(t-1,words[t-1].grades[i]),axis(t,words[t].grades[i+1])));
+                contribution_maps.push_back(matrix(defect.contributions[i],axis(t-1,words[t-1].grades.front()),axis(t,words[t].grades.back())));
                 contribution_fields.push_back(defect.contributions[i].apply(old.values));
             }
         }
-        auto step = Json::object(), factors = Json::array();
-        step.set("from", cardinality(t - 1));
-        step.set("to", cardinality(t));
-        step.set("source_maps", Json::array());
-        for (const auto &map : maps[t - 1])
-            step.at("source_maps").push(mat(map));
-        step.set("structure", compare_prepared_structures(*old.prepared, *r.prepared, r.grade, {},
-                                                          {}, old.values, r.values, lambda,
-                                                          &maps[t - 1], true, factored));
-        step.set("source_identity_comparable", Json::boolean(r.shared_identity));
+        auto step = Value::object(), factors = Value::array();
+        step.set("from", count(t - 1));
+        step.set("to", count(t));
+        step.set("source_maps", Value::array());
+        for (std::size_t k=0;k<maps[t-1].size();++k) {
+            auto source_maps=step.at("source_maps");source_maps.push(matrix(maps[t-1][k],axis(t-1,k),axis(t,k)));step.set("source_maps",std::move(source_maps));
+        }
+        if constexpr (std::is_same_v<Value,ResultValue>) {
+            StructuralResultFields fields{native->publication,native->axes.at(t-1),native->axes.at(t),native->lease};
+            step.set("structure",compare_prepared_structure_fields(*old.prepared,*r.prepared,r.grade,{}, {},
+                old.values,r.values,lambda,&maps[t-1],factored,fields,true));
+        } else step.set("structure",compare_prepared_structures(*old.prepared,*r.prepared,r.grade,{}, {},
+            old.values,r.values,lambda,&maps[t-1],true,factored));
+        step.set("source_identity_comparable", Value::boolean(r.shared_identity));
         if (r.declaration.has("lineage"))
-            step.set("lineage", r.declaration.at("lineage"));
-        auto source_changes = Json::array();
+            step.set("lineage", Value(r.declaration.at("lineage")));
+        auto source_changes = Value::array();
         if (r.shared_identity) {
             const temporal::RelationalSourceDelta source_delta(old.study->source(),
                                                                r.study->source());
             for (const auto &g : source_delta.grades()) {
                 if (g.grade == r.grade) {
-                    auto observations = Json::array();
+                    auto observations = Value::array();
                     const auto before = old.declaration.at("observations");
                     const auto after = r.declaration.at("observations");
                     for (std::size_t i = 0; i < g.old_to_new.size(); ++i) {
                         const auto target = g.old_to_new[i];
                         if (target == temporal::GradeSourceDelta::absent_index)
                             continue;
-                        auto observation = Json::object();
-                        observation.set("old_coordinate", cardinality(i));
-                        observation.set("new_coordinate", cardinality(target));
-                        observation.set("old", before.at(i));
-                        observation.set("new", after.at(target));
+                        auto observation = Value::object();
+                        observation.set("old_coordinate", count(i));
+                        observation.set("new_coordinate", count(target));
+                        if constexpr (std::is_same_v<Value,ResultValue>) {
+                            observation.set("old",native->declarations.at(t-1).at("observations").at(i));
+                            observation.set("new",native->declarations.at(t).at("observations").at(target));
+                        } else {
+                            observation.set("old",before.at(i));observation.set("new",after.at(target));
+                        }
                         observations.push(observation);
                     }
                     step.set("retained_observation_alignment", observations);
                 }
 
-                auto record = Json::object(), born = Json::array(), removed = Json::array(),
-                     born_occ = Json::array(), removed_occ = Json::array();
-                record.set("grade", cardinality(g.grade.value));
+                auto record = Value::object(), born = Value::array(), removed = Value::array(),
+                     born_occ = Value::array(), removed_occ = Value::array();
+                record.set("grade", count(g.grade.value));
                 for (const auto &c : g.born_cells)
-                    born.push(Json::string(std::to_string(c.value)));
+                    born.push(Value::string(std::to_string(c.value)));
                 for (const auto &c : g.removed_cells)
-                    removed.push(Json::string(std::to_string(c.value)));
+                    removed.push(Value::string(std::to_string(c.value)));
                 for (const auto &c : g.born_occurrences)
-                    born_occ.push(Json::string(std::to_string(c.value)));
+                    born_occ.push(Value::string(std::to_string(c.value)));
                 for (const auto &c : g.removed_occurrences)
-                    removed_occ.push(Json::string(std::to_string(c.value)));
+                    removed_occ.push(Value::string(std::to_string(c.value)));
                 record.set("born_cell_keys", born);
                 record.set("removed_cell_keys", removed);
                 record.set("born_occurrence_keys", born_occ);
                 record.set("removed_occurrence_keys", removed_occ);
                 record.set("stable_identity_correspondence",
-                           mat(source_delta.correspondence(g.grade)));
-                record.set("structure_unchanged", Json::boolean(g.source_structure_unchanged()));
-                auto occurrence_changes = Json::array();
+                           matrix(source_delta.correspondence(g.grade),axis(t-1,g.grade.value),axis(t,g.grade.value)));
+                record.set("structure_unchanged", Value::boolean(g.source_structure_unchanged()));
+                auto occurrence_changes = Value::array();
                 for (const auto &change : g.occurrence_changes) {
-                    auto c = Json::object();
-                    c.set("key", Json::string(std::to_string(change.occurrence.value)));
-                    c.set("old_lower_key", Json::string(std::to_string(change.old_lower.value)));
-                    c.set("new_lower_key", Json::string(std::to_string(change.new_lower.value)));
-                    c.set("old_parent_key", Json::string(std::to_string(change.old_parent.value)));
-                    c.set("new_parent_key", Json::string(std::to_string(change.new_parent.value)));
-                    c.set("old_coefficient", rat(change.old_coefficient));
-                    c.set("new_coefficient", rat(change.new_coefficient));
-                    c.set("attachment_changed", Json::boolean(change.attachment_changed()));
-                    c.set("existence_term", rat(change.composite.existence));
-                    c.set("orientation_term", rat(change.composite.orientation));
-                    c.set("magnitude_term", rat(change.composite.magnitude));
-                    c.set("coefficient_change", rat(change.composite.aggregate));
-                    auto aspects = Json::array();
+                    auto c = Value::object();
+                    c.set("key", Value::string(std::to_string(change.occurrence.value)));
+                    c.set("old_lower_key", Value::string(std::to_string(change.old_lower.value)));
+                    c.set("new_lower_key", Value::string(std::to_string(change.new_lower.value)));
+                    c.set("old_parent_key", Value::string(std::to_string(change.old_parent.value)));
+                    c.set("new_parent_key", Value::string(std::to_string(change.new_parent.value)));
+                    c.set("old_coefficient", scalar(change.old_coefficient));
+                    c.set("new_coefficient", scalar(change.new_coefficient));
+                    c.set("attachment_changed", Value::boolean(change.attachment_changed()));
+                    c.set("existence_term", scalar(change.composite.existence));
+                    c.set("orientation_term", scalar(change.composite.orientation));
+                    c.set("magnitude_term", scalar(change.composite.magnitude));
+                    c.set("coefficient_change", scalar(change.composite.aggregate));
+                    auto aspects = Value::array();
                     for (auto aspect : change.changed_aspects)
-                        aspects.push(cardinality(aspect));
+                        aspects.push(count(aspect));
                     c.set("changed_aspects", aspects);
                     occurrence_changes.push(c);
                 }
-                auto type_changes = Json::array(), order_changes = Json::array();
+                auto type_changes = Value::array(), order_changes = Value::array();
                 for (const auto &change : g.relation_type_changes) {
-                    auto c = Json::object();
-                    c.set("key", Json::string(std::to_string(change.relation.value)));
-                    c.set("old_type", cardinality(change.old_type));
-                    c.set("new_type", cardinality(change.new_type));
+                    auto c = Value::object();
+                    c.set("key", Value::string(std::to_string(change.relation.value)));
+                    c.set("old_type", count(change.old_type));
+                    c.set("new_type", count(change.new_type));
                     type_changes.push(c);
                 }
                 for (const auto &change : g.attaching_order_changes) {
-                    auto c = Json::object(), old_order = Json::array(), new_order = Json::array();
-                    c.set("key", Json::string(std::to_string(change.relation.value)));
+                    auto c = Value::object(), old_order = Value::array(), new_order = Value::array();
+                    c.set("key", Value::string(std::to_string(change.relation.value)));
                     for (auto k : change.old_order)
-                        old_order.push(Json::string(std::to_string(k.value)));
+                        old_order.push(Value::string(std::to_string(k.value)));
                     for (auto k : change.new_order)
-                        new_order.push(Json::string(std::to_string(k.value)));
+                        new_order.push(Value::string(std::to_string(k.value)));
                     c.set("old_order", old_order);
                     c.set("new_order", new_order);
                     order_changes.push(c);
@@ -344,12 +405,12 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
         step.set("word_defect", direct_map);
         std::vector<temporal::MultiTimeChannel> delta_channels;
         for (std::size_t i = 0; i < contribution_fields.size(); ++i) {
-            auto f = Json::object();
+            auto f = Value::object();
             const auto &v = contribution_fields[i];
-            f.set("position", cardinality(i));
+            f.set("position", count(i));
             f.set("defect", position_maps[i]);
             f.set("contribution", contribution_maps[i]);
-            f.set("field", vec(v));
+            f.set("field", vector(v,axis(t,words[t].grades.back())));
             factors.push(f);
             delta_channels.push_back({"factor_" + std::to_string(i), v});
         }
@@ -369,17 +430,18 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
         }
         require(gram_sum == metric.inner(delta, delta), "complete field-delta Gram contraction");
         step.set("word_factors", factors);
-        step.set("field_delta", vec(delta));
-        step.set("field_delta_channel_gram", mat(gram));
-        auto retained_channels = Json::array();
+        step.set("field_delta", vector(delta,axis(t,words[t].grades.back())));
+        const auto channels_axis=native ? native->publication.axis(delta_channels.size()) : 0;
+        step.set("field_delta_channel_gram",matrix(gram,channels_axis,channels_axis));
+        auto retained_channels = Value::array();
         for (const auto &channel : delta_channels) {
-            auto e = Json::object();
-            e.set("label", Json::string(channel.label));
-            e.set("field", vec(channel.target_field));
+            auto e = Value::object();
+            e.set("label", Value::string(channel.label));
+            e.set("field", vector(channel.target_field,axis(t,words[t].grades.back())));
             retained_channels.push(e);
         }
         step.set("field_delta_channels", retained_channels);
-        step.set("field_delta_quadrance", rat(metric.inner(delta, delta)));
+        step.set("field_delta_quadrance", scalar(metric.inner(delta, delta)));
         const auto old_word_field = words[t - 1].apply(old.values),
                    new_word_field = words[t].apply(r.values);
         // Contract the two complete cause fields, rather than constructing
@@ -404,17 +466,27 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
                                     old.study->tower().metrics()[words[t - 1].grades.back()].inner(
                                         old_word_field, old_word_field),
                 "native endpoint quadrance-change identity");
-        auto terms = Json::object();
-        terms.set("pullback_form", rat(change.pullback_form));
-        terms.set("left_innovation", rat(change.left_innovation));
-        terms.set("right_innovation", rat(change.right_innovation));
-        terms.set("innovation_interaction", rat(change.innovation_interaction));
-        terms.set("total", rat(change.total));
+        auto terms = Value::object();
+        if constexpr (std::is_same_v<Value,ResultValue>) {
+            const auto causes=native->publication.axis(2);
+            terms.set("old_form",matrix(old_form,causes,causes));
+            terms.set("new_form",matrix(new_form,causes,causes));
+            terms.set("correspondence",matrix(channel_identity,causes,causes));
+            terms.set("old_left",vector(Vector{Rational{1},Rational{0}},causes));
+            terms.set("old_right",vector(Vector{Rational{1},Rational{0}},causes));
+            terms.set("new_left",vector(Vector{Rational{1},Rational{1}},causes));
+            terms.set("new_right",vector(Vector{Rational{1},Rational{1}},causes));
+        }
+        terms.set("pullback_form", scalar(change.pullback_form));
+        terms.set("left_innovation", scalar(change.left_innovation));
+        terms.set("right_innovation", scalar(change.right_innovation));
+        terms.set("innovation_interaction", scalar(change.innovation_interaction));
+        terms.set("total", scalar(change.total));
         const Rational interval = exact_decimal(r.declaration.at("time").at("position").text()) -
                                   exact_decimal(old.declaration.at("time").at("position").text());
-        terms.set("finite_rate", rat(temporal::finite_rate(change.total, interval)));
-        terms.set("interval", rat(interval));
-        terms.set("time_unit", r.declaration.at("time").at("unit"));
+        terms.set("finite_rate", scalar(temporal::finite_rate(change.total, interval)));
+        terms.set("interval", scalar(interval));
+        terms.set("time_unit",Value(r.declaration.at("time").at("unit")));
         step.set("endpoint_quadrance_change", terms);
         steps.push(step);
     }
@@ -425,11 +497,11 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
     for (std::size_t t = 0; t < accumulation.propagated_innovations.size(); ++t)
         channels.push_back(
             {"innovation_" + std::to_string(t), accumulation.propagated_innovations[t]});
-    auto fields = Json::array();
+    auto fields = Value::array();
     for (const auto &c : channels) {
-        auto e = Json::object();
-        e.set("label", Json::string(c.label));
-        e.set("field", vec(c.target_field));
+        auto e = Value::object();
+        e.set("label", Value::string(c.label));
+        e.set("field",vector(c.target_field,axis(readings.size()-1,readings.back().grade.value)));
         fields.push(e);
     }
     const auto &terminal = readings.back();
@@ -445,12 +517,21 @@ Json temporal_field_history(const Json &query, const std::vector<TemporalReading
     out.set("endpoints", endpoints);
     out.set("steps", steps);
     out.set("terminal_channels", fields);
-    out.set("terminal_channel_gram", mat(gram));
-    out.set("terminal_quadrance", rat(sum));
+    const auto terminal_channels_axis=native ? native->publication.axis(channels.size()) : 0;
+    out.set("terminal_channel_gram",matrix(gram,terminal_channels_axis,terminal_channels_axis));
+    out.set("terminal_quadrance", scalar(sum));
     if (factored)
         out.set("factored_maps", registry.archive());
-    out.set("identity_verified", Json::boolean(true));
+    out.set("identity_verified", Value::boolean(true));
     return out;
+}
+Json temporal_field_history(const Json &query,const std::vector<TemporalReading> &readings,
+    const std::vector<TemporalMaps> &maps,bool validate) {
+    return collect_temporal_history<Json>(query,readings,maps,validate,nullptr);
+}
+ResultValue temporal_history_fields(const Json &query,const std::vector<TemporalReading> &readings,
+    const std::vector<TemporalMaps> &maps,TemporalResultFields &fields) {
+    return collect_temporal_history<ResultValue>(query,readings,maps,false,&fields);
 }
 scientific_detail::ResultValue censored_endpoint_bounds(const NativeStudy &study, const Json &query,
                               const std::map<std::string, Vector> &fields,

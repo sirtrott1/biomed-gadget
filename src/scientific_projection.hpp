@@ -15,14 +15,16 @@ struct PreparedProjection {
     rfc::numeric::ExactActionLimits limits;
     rfc::numeric::PreparedExactSolve solve;
     explicit PreparedProjection(rfc::numeric::ExactMatrix independent_frame,
-                                std::optional<rfc::field::ExactMetric> form = {})
+                                std::optional<rfc::field::ExactMetric> form = {},
+                                std::optional<rfc::numeric::ExactActionLimits> action_limits = {},
+                                std::function<void()> checkpoint = {})
         : frame(std::move(independent_frame)), dual(frame.transpose()),
           metric(form ? std::move(*form) : rfc::field::ExactMetric::identity(frame.rows())),
-          limits{frame.cols(),
+          limits(action_limits ? *action_limits : rfc::numeric::ExactActionLimits{frame.cols(),
                  rfc::machine::checked_size_mul(
                      rfc::machine::checked_size_mul(frame.cols(), frame.cols()), 2),
-                 std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()},
-          solve(rfc::field::metric_gram(frame, metric, frame), limits) {}
+                 std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max()}),
+          solve(rfc::field::metric_gram(frame, metric, frame), limits, std::move(checkpoint)) {}
     rfc::numeric::RationalVector coefficients(const rfc::numeric::RationalVector &input,
                                               std::function<void()> checkpoint = {}) const {
         return solve.apply(dual.apply(metric.apply(input)), limits, std::move(checkpoint));

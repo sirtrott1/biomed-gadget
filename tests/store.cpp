@@ -53,6 +53,69 @@ int main() {
         import_measurements(updated, root / "input/measurements.json");
         save_snapshot(updated, root / "updated", true);
         fs::rename(root / "input", root / "raw-unavailable");
+        // Optional views may use different whitespace without changing the native study.
+        fs::copy(root / "original", root / "spaced", fs::copy_options::recursive);
+        for (const auto *name : {"snapshot.json", "metadata.json"})
+            write_text(root / "spaced" / name, "\n" + read_text(root / "spaced" / name) + "\n");
+        check(load_snapshot(root / "spaced").fields == original.fields,
+              "valid optional view fixture changed native fields");
+        const auto spaced = initialize_store(root / "spaced", root / "spaced-store");
+        for (const auto *name : {"snapshot.json", "metadata.json", "study.rfcxs"})
+            check(read_text(root / "spaced-store/studies/0000000000000000" / name) ==
+                      read_text(root / "spaced" / name),
+                  "preparation changed original artifact bytes");
+        check(load_store(root / "spaced-store").fields == original.fields &&
+                  load_store(root / "spaced-store").field_presence == original.field_presence,
+              "optional view whitespace changed stored coefficients or support");
+        const auto spaced_request = request(spaced.at("root"), 41);
+        rejects([&] {
+            publish_store(root / "spaced-store", root / "spaced", spaced_request, {},
+                          [](auto stage) {
+                              if (stage == StudyPreparationStage::Renamed)
+                                  throw std::runtime_error("interrupt prepared provenance");
+                          });
+        }, "prepared interruption did not occur");
+        const auto spaced_completion = read_text(root / "spaced/snapshot.json");
+        const auto spaced_metadata = read_text(root / "spaced/metadata.json");
+        for (const auto *name : {"snapshot.json", "metadata.json"}) {
+            const auto original_bytes = read_text(root / "spaced" / name);
+            fs::remove(root / "spaced" / name);
+            rejects([&] { publish_store(root / "spaced-store", root / "spaced", spaced_request); },
+                    "prepared retry lost an original optional artifact");
+            write_text(root / "spaced" / name, original_bytes + "\n");
+            rejects([&] { publish_store(root / "spaced-store", root / "spaced", spaced_request); },
+                    "prepared retry changed original optional bytes");
+            write_text(root / "spaced" / name, original_bytes);
+            check(store_status(root / "spaced-store", 41).at("status").text() == "absent",
+                  "refused prepared retry published a native transaction");
+        }
+        publish_store(root / "spaced-store", root / "spaced", spaced_request);
+        check(read_text(root / "spaced-store/studies/0000000000000029/snapshot.json") ==
+                  spaced_completion &&
+                  read_text(root / "spaced-store/studies/0000000000000029/metadata.json") ==
+                  spaced_metadata,
+              "exact prepared retry changed optional bytes");
+        fs::copy(root / "original", root / "native-only", fs::copy_options::recursive);
+        fs::remove(root / "native-only/snapshot.json");
+        fs::remove(root / "native-only/metadata.json");
+        const auto native_only = initialize_store(root / "native-only", root / "native-only-store");
+        const auto native_only_request = request(native_only.at("root"), 44);
+        publish_store(root / "native-only-store", root / "native-only", native_only_request);
+        check(load_store(root / "native-only-store").fields == original.fields,
+              "native-only study preparation failed");
+        write_text(root / "native-only/metadata.json", read_text(root / "original/metadata.json"));
+        rejects([&] {
+            publish_store(root / "native-only-store", root / "native-only", native_only_request);
+        }, "prepared retry added an optional artifact");
+        fs::remove(root / "native-only/metadata.json");
+        check(publish_store(root / "native-only-store", root / "native-only", native_only_request)
+                      .at("receipt").at("root").at("sequence").text() == "1",
+              "exact native-only retry did not retain its receipt");
+        fs::create_symlink("absent-view", root / "native-only/snapshot.json");
+        rejects([&] { initialize_store(root / "native-only", root / "dangling-view-store"); },
+                "dangling optional view bypassed regular-file admission");
+        check(!fs::exists(root / "dangling-view-store"),
+              "refused snapshot created a store directory");
         const auto initial = initialize_store(root / "original", root / "store");
         const auto initial_root = Json::parse(initial.at("root").dump());
         rejects([&] { initialize_store(root / "updated", root / "store"); }, "genesis overwritten");

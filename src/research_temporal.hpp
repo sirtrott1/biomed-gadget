@@ -15,8 +15,17 @@ struct TemporalReading {
     scientific_detail::PreparedTemporalStudy *prepared = nullptr;
 };
 using TemporalMaps = std::vector<rfc::numeric::ExactMatrix>;
+struct TemporalResultFields {
+    scientific_detail::ResultFields &publication;
+    std::vector<std::vector<std::uint64_t>> axes;
+    std::vector<scientific_detail::ResultValue> declarations, coordinates;
+    rfc::runtime::ExecutionLease lease;
+};
 Json temporal_field_history(const Json &query, const std::vector<TemporalReading> &readings,
                             const std::vector<TemporalMaps> &maps, bool validate);
+scientific_detail::ResultValue temporal_history_fields(const Json &query,
+    const std::vector<TemporalReading> &readings, const std::vector<TemporalMaps> &maps,
+    TemporalResultFields &fields);
 struct CensoredResultFields {
     scientific_detail::ResultFields &publication;
     std::uint64_t source, groups, contrasts;

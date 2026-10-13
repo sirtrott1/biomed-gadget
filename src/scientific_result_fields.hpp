@@ -33,6 +33,13 @@ class ResultValue {
         return ResultValue(std::get<NativeRecordValue::Array>(value_.data).elements.at(index));
     }
     std::string text() const {return std::get<std::string>(value_.data);}
+    std::size_t count_value() const {
+        const auto &value = std::get<rfc::numeric::Integer>(value_.data);
+        if (value < 0 || !mpz_fits_ulong_p(value.get_mpz_t()) ||
+            value > rfc::numeric::Integer(std::to_string(std::numeric_limits<std::size_t>::max())))
+            throw std::invalid_argument("native result count exceeds machine addressability");
+        return static_cast<std::size_t>(value.get_ui());
+    }
     std::size_t size() const {return std::get<NativeRecordValue::Array>(value_.data).elements.size();}
     NativeRecordValue release() && {return std::move(value_);}
 };
@@ -154,6 +161,19 @@ class ResultFields {
         return staged(assay_detail::SourceGradeFields::tensor(value.size(),
             [&](auto i) {return value[i];}, rfc::numeric::StructuralSupport::full(value.size())),
             {}, carrier, std::move(display));
+    }
+    static ResultValue stage_cell_vector(const Vector &value, std::uint64_t carrier,
+                                         rfc::storage::StableCellKey cell,
+                                         std::string display = "vector") {
+        auto result = stage_vector(value, carrier, std::move(display));
+        result.set("cell_grade", ResultValue::count(cell.grade.value));
+        result.set("cell_key", ResultValue::count(cell.key));
+        return result;
+    }
+    ResultValue cell_vector(const Vector &value, std::uint64_t carrier,
+                            rfc::storage::StableCellKey cell, std::string display = "vector") {
+        return ResultValue(consume_staged(std::move(stage_cell_vector(value, carrier, cell,
+            std::move(display))).release()));
     }
     static ResultValue stage_matrix(const rfc::numeric::ExactMatrix &value,
                                     std::uint64_t input, std::uint64_t output,

@@ -220,6 +220,12 @@ def main():
     tiny_reference={f'r{i}':s for i,s in enumerate(map(''.join,itertools.product('AC',repeat=3)))}
     tiny_reference.update(ambiguity='ANCA',left='A',right='C')
     resource('partition-queries.fa',tiny_reads);resource('partition-reference.fa',tiny_reference)
+    repeated_reads=['AC','AC','CA']
+    repeated=root/'repeated.fastq'
+    repeated.write_bytes(b'@same first lane\r\nac\r\n+same first lane\r\n!!\r\n'
+                         b'@same second lane\nAC\n+\n55\n@same\nCA\n+\n~~\n')
+    resources.append(dict(id=repeated.name,format='fastq',method='Distinct original read occurrences with repeated labels',
+                          source=dict(path=repeated.name,sha256='sha256:'+hashlib.sha256(repeated.read_bytes()).hexdigest())))
     long_size=20065
     resource('long-reference.fa',{'long':'A'*long_size});resource('long-query.fa',{'long':'A'*long_size})
     # Many source reads, and enough placements to cross the old 10000-result cap.
@@ -296,6 +302,77 @@ def main():
         dict(read_partition_records=1,reference_block_bases=2,ignored=True)]):
         run('assay-query','--workspace',workspace,'--request',save(f'invalid-partition-{i}.json',
             dict(schema='gadget.assays.query.v1',**dict(base,execution=execution))),fail=True)
+    for budget in [0,1]:
+        expected=set()
+        for occurrence,read in enumerate(repeated_reads):
+            for strand in ['+','-']:
+                oriented=read if strand=='+' else reverse(read)
+                for rid,reference_bases in tiny_reference.items():
+                    for start in range(len(reference_bases)):
+                        for end in range(start+1,len(reference_bases)+1):
+                            cost=edit(oriented,reference_bases[start:end])
+                            if cost<=budget:expected.add((occurrence,rid,strand,start,end,cost))
+        for batch,width in [(1,1),(3,2)]:
+            result=query(f'repeated-edits-{budget}-{batch}',**dict(base,
+                query_resource=repeated.name,reference_resource='partition-reference.fa',maximum_edits=budget,
+                execution=dict(read_partition_records=batch,reference_block_bases=width)))
+            actual={(m['query_record_index'],m['reference_id'],m['strand'],m['start'],m['end'],int(m['minimum_edits']))
+                    for m in result['matches']}
+            check(actual==expected and len(result['matches'])==len(expected),
+                  'every repeated original read has every independently enumerated placement')
+            check([q['query_record_index'] for q in result['queries']]==[0,1,2] and
+                  all(q['query_id']=='same' for q in result['queries']),
+                  'repeated read labels retain distinct ordered summary occurrences')
+            for m in result['matches']:
+                check(m['query_id']=='same' and m['query_record_index']==m['query_evidence']['record_index'] and
+                      m['query_evidence']['source_sha256']=='sha256:'+hashlib.sha256(repeated.read_bytes()).hexdigest(),
+                      'indexed placement source occurrence differs from retained original bytes')
+            for q in result['queries']:
+                check(q['matches']==sum(row[0]==q['query_record_index'] for row in expected),
+                      'repeated read summary merged occurrence counts')
+        mismatch=query(f'repeated-mismatches-{budget}',operation='reference_sequence_matches',
+            query_resource=repeated.name,reference_resource='partition-reference.fa',strands=['+','-'],
+            ambiguity='literal',maximum_mismatches=budget,junctions=[],minimum_overhang=1,
+            evidence='Every fixed length original read occurrence')
+        mismatch_expected=set()
+        for occurrence,read in enumerate(repeated_reads):
+            for strand in ['+','-']:
+                oriented=read if strand=='+' else reverse(read)
+                for rid,reference_bases in tiny_reference.items():
+                    for start in range(len(reference_bases)-len(read)+1):
+                        cost=sum(a!=b for a,b in zip(oriented,reference_bases[start:start+len(read)]))
+                        if cost<=budget:mismatch_expected.add((occurrence,rid,strand,start,cost))
+        actual={(m['query_record_index'],m['reference_id'],m['strand'],m['blocks'][0][0],int(m['mismatches']))
+                for m in mismatch['matches']}
+        check(actual==mismatch_expected and len(mismatch['matches'])==len(mismatch_expected),
+              'complete mismatch placements retain repeated original occurrences')
+        check([q['query_record_index'] for q in mismatch['queries']]==[0,1,2],
+              'mismatch summaries retain original occurrence order')
+    spliced=query('repeated-splice',operation='sequence_splice_discovery',query_resource=repeated.name,
+        reference_resource='partition-reference.fa',strands=['+','-'],minimum_exon_bases=2,
+        minimum_intron_bases=4,maximum_intron_bases=4,maximum_junctions=1,motifs=['GT-AG'],
+        evidence='Every original short read; exact contiguous placements in this source')
+    check([q['query_record_index'] for q in spliced['queries']]==[0,1,2] and
+          all(q['query_id']=='same' for q in spliced['queries']),
+          'splice summaries retain repeated original read occurrences')
+    for m in spliced['matches']:
+        check(m['query_id']=='same' and m['query_record_index']==m['query_evidence']['record_index'],
+              'splice placement preserves original read occurrence')
+    covered=query('repeated-cover',operation='read_overlap_reconstruction',resource=repeated.name,
+        minimum_overlap=1,objective='minimum_suffix_prefix_read_cover',evidence='Every original repeated record')
+    expected_layouts=set()
+    best=None
+    for order in itertools.permutations(range(3)):
+        spelling=repeated_reads[order[0]]
+        for a,b in zip(order,order[1:]):
+            overlap=max(n for n in range(1,3) if repeated_reads[a][-n:]==repeated_reads[b][:n])
+            spelling+=repeated_reads[b][overlap:]
+        if best is None or len(spelling)<best:best=len(spelling);expected_layouts=set()
+        if len(spelling)==best:expected_layouts.add((tuple(order),spelling))
+    actual_layouts={(tuple(p['source_read'] for p in layout['gluing']['placements']),layout['spelling'])
+                    for layout in covered['layouts']}
+    check(actual_layouts==expected_layouts and len(covered['layouts'])==len(expected_layouts),
+          'every minimum literal read cover retains all repeated original occurrences')
     query('inspect-no-execution',operation='inspect')
     run('assay-query','--workspace',workspace,'--request',save('foreign-execution.json',
         dict(schema='gadget.assays.query.v1',operation='inspect',

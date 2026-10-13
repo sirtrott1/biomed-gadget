@@ -241,10 +241,23 @@ void verify_green(const std::shared_ptr<const ScientificStudy> &study) {
         ScientificSession session(study, resources);
         const auto result = session.execute_green_response(query, rfc::runtime::ExecutionLease(policy));
         check(result.at("result").at("interface_coordinates").size() == 0, "complete interior became a truncated partition");
-        const auto field = result.at("result").at("field");
-        check(field.size() == n, "Green truncated output coordinates");
+        const auto result_field = result.at("result").at("field");
+        check(result_field.size() == n, "Green truncated output coordinates");
         for (std::size_t i = 0; i < n; ++i)
-            check(exact_rational(field.at(i).at("value").at("rational").text()) == Rational(std::to_string(i)), "Green line oracle differs");
+            check(exact_rational(result_field.at(i).at("value").at("rational").text()) == Rational(std::to_string(i)), "Green line oracle differs");
+        const auto native = session.execute_record(admit_record_view(query));
+        const auto native_fields = native.at("result").at("fields");
+        const auto binding = native_fields.at("bindings").at(0);
+        const auto *retained = field(native_fields, binding.at("output"));
+        check(retained->tensor.domain().logical_size() == n && retained->tensor.support().count() == n,
+              "Green native result omitted original coordinate support");
+        for (std::size_t i = 0; i < n; ++i)
+            check(state(retained->tensor, i) == Rational(std::to_string(i)), "native Green line oracle differs");
+        const auto replayed = replay_scientific_record(native);
+        const auto replay_fields = replayed.at("result").at("fields");
+        check(rfc::storage::temporal_endpoint_detail::tensor_equal(*retained,
+                  *field(replay_fields, replay_fields.at("bindings").at(0).at("output"))),
+              "native Green portable replay changed complete support or values");
         check(session.execute(query).at("result").at("factorization_reused").boolean(), "Green discarded source-bound preparation");
         if (n == 3) {
             for (std::size_t i = 1; i < 137; ++i) {

@@ -4,6 +4,22 @@
 publication reader. It imports RCDB and RCQL from the active Python environment.
 It does not install either package or implement their storage codecs.
 
+Use matching RexGraph, RCDB and RCQL releases. The current package profile uses
+`rexgraph`, `rexgraph-rcdb` and `rexgraph-rcql` version 1.3.1. Build and
+install these independent distributions in a dedicated environment, then run
+the adapter contracts with that environment's interpreter. A noneditable wheel
+installation allows imports to be checked from outside the source checkouts:
+
+```sh
+python -m pip show rexgraph rexgraph-rcdb rexgraph-rcql
+python -I -c "import rexgraph, rcdb, rcql; print(rexgraph.__file__, rcdb.__file__, rcql.__file__)"
+```
+
+These native publication contracts require the Python core and storage/query
+packages. Zstandard tests also require `zstandard`; zlib is built into Python.
+Agent services, native Python bindings, model backends and physical device
+execution have separate prerequisites and qualification.
+
 The RCDB payload is the unchanged RFCXS archive. Its owning relational complex,
 occurrences, exact fields, declaration channel, raw byte sources and publication
 history remain in the C++ format. Admission invokes GADGET's native reader and
@@ -37,6 +53,108 @@ The example selects RCDB's existing lossless Zstandard compression and requires
 sealed in the store header; reopening never chooses a different codec implicitly.
 Existing stores must already declare the publication codec in their immutable headers.
 Every process reading these records must explicitly install the provider.
+
+An installed Agent can retrieve a publication that its local operator has already
+admitted to the store. Use the existing record interface and select the literal
+record ID and version:
+
+```python
+from agent.client import RexClient
+
+client = RexClient(server_url, api_key=your_token, workspace=your_workspace,
+                   frame_key=your_frame_key)
+packet = client.rex_fetch_record(record_id, version=1)
+archive = packet.snapshot().value
+```
+
+The receiving process must install the GADGET codec before opening the snapshot.
+The packet retains exact metadata, store identity, record version and unchanged
+RFCXS bytes. RCDB record versions and native publication cutoffs are separate.
+Time selection uses `as_of` and `valid_at`; an exact version cannot be combined
+with either time selector. The graph frame endpoint accepts Python graph objects
+and does not interpret an RFCXS publication.
+
+Uploading a GADGET packet through `rex_store_record` requires a declared native
+cell admission capability. This adapter supplies byte bounds and canonical
+archive validation, but currently supplies no cell counter. The Agent record
+route refuses such uploads before native decoding or destination publication.
+Local storage and retrieval do not qualify this missing upload capability.
+
+The optional Agent contract uses its installed record routes, authentication,
+workspace and compute budget middleware over an owned loopback listener. It
+checks exact retrieval, upload refusal, complete bytes and restart. It requires
+matching Agent and storage packages with the Agent server dependencies:
+
+```sh
+python -I tests/rcdb_agent.py /path/to/gadget /path/to/publication.rfcxs \
+  /new/test/directory --compression zstd
+```
+
+The test creates its own configuration, identities, journals and stores. It
+qualifies these record routes on the local host; other Agent services, remote
+hosts and mathematical cell admission require their own checks.
+
+Use RCDB's existing `copy_record` to transfer a selected native publication to
+another store. Both stores must declare the GADGET codec. The destination can
+use a different declared compression codec:
+
+```python
+from rcdb import copy_record
+
+selected = store.read_record("coverage", version=1)
+receipt = copy_record(
+    store, destination_store, selected.record,
+    expected_digest=selected.state_digest,
+    expected_cursor=destination_store.change_cursor,
+    preserve_signature=True, return_receipt=True,
+)
+```
+
+The source version is selected before destination publication. The digest binds
+that source object, and the destination cursor refuses a concurrent change.
+The copy retains native bytes, metadata, tags and validity intervals while
+allocating a destination record version. Its `CopyReceipt` names both store
+identities, record addresses, versions and object digests; `to_bytes` and
+`CopyReceipt.from_bytes` preserve that receipt. Native publication cutoffs stay
+inside the unchanged archive. Copying a record does not transplant a store's
+history or mutation commits. Generic native copies use the existing ungoverned
+profile; use the destination cursor to make publication conditional.
+
+`LocalStore.checkpoint()` creates a checked replay cache and retains the
+authoritative journal and historical payloads. After any publication write error
+or process interruption, close the affected handle and inspect the destination
+before retrying: the journal can be published before a receipt is returned.
+An ordinary `OSError` can also leave a torn tail; the exception type alone does
+not establish whether a write committed. Ordinary opening refuses an incomplete
+tail. With cooperating writers stopped, use the existing `LocalJournal.inspect()`
+to identify its verified prefix and `repair_torn_tail()` to remove only the
+incomplete final block. A damaged complete frame refuses repair. Keep the damaged
+bytes for diagnosis before an explicit repair. Checkpoint corruption also refuses.
+The local profile requires trusted storage directories and cooperating provider
+writers.
+
+Deleting a native record retains its earlier versions and creates a gap in its
+transaction-time selection. Recreating that literal record ID allocates the next
+version; it does not reuse version one. An already returned snapshot keeps its
+original bytes and metadata. The archive's native source namespace and cutoff
+remain independent of the RCDB record version.
+
+`tests/rcdb_recovery.py` checks these histories through fresh process checkpoint
+replay and all three local compression profiles. Its POSIX failure controls use
+actual file-size write refusals at the journal append and checkpoint staging
+boundaries, verify the committed prefix or previous checkpoint, then reopen and
+retry. It also checks every incomplete length of a final journal frame and refuses
+repair of damaged complete frames. Run it with a fresh output directory:
+
+```sh
+python tests/rcdb_recovery.py /path/to/gadget publication.rfcxs recovery-tests \
+  --compression zstd
+```
+
+The `--original` profile checks the complete supplied publication through deletion,
+recreation and fresh process replay, while omitting the small-frame failure corpus.
+These are local provider checks; they do not establish power-loss behavior or
+automatic recovery of a deployed service.
 
 With an open store, RCQL retrieval returns a byte result:
 
@@ -112,11 +230,74 @@ operation = run(
 result_bytes = operation.values[0]
 ```
 
+A stored native scientific operation can also be replayed from its retained
+original study and request. This calls GADGET's existing `replay-scientific`
+provider; it returns a fresh native operation, preserving the complete source,
+fields, supported zeroes and missing support. No numerical display is imported.
+
+```python
+from gadget_rcdb import install_rcql_scientific_replay
+
+install_rcql_scientific_replay(gadget="/absolute/path/to/gadget")
+replayed = run(
+    query(source("db"), call("GADGET_SCIENTIFIC_REPLAY", "operation", 1)),
+    sources={"db": BoundSource(store, SourcePolicy.allow(
+        "identity", "records", "files", "gadget_replay"))},
+)
+replayed_bytes = replayed.values[0]
+```
+
+The record version is required. The receipt records the selected literal ID,
+version, source state digest and replayed byte digest. `replay_publication(bytes,
+gadget=...)` offers the same native delegation without an RCQL query. A native
+archive without the admitted scientific source/request contract refuses replay.
+Input archives and complete returned archives undergo native admission and exact
+canonical byte checks. Replay uses a private temporary directory and leaves the
+RCDB source unchanged; publish returned bytes explicitly when they should persist.
+
+The same replay provider accepts retained scientific plans. Each ordered step
+keeps its complete native operation and original study/request owners; the native
+provider refuses missing steps, changed step identities and mixed study sources.
+Fresh replayed child publications can have different operational namespaces.
+Compare their actual fields, carriers, support and original source bytes rather
+than requiring their enclosing archive buffers to match.
+
+`tests/rcdb_scientific_plan.py` checks old and current plan versions under all
+three local compression profiles, repeated replay, checked restart, malformed
+plan refusal and canonical `copy_record` transfers. Its fixture uses public
+`ScientificStudy`/`ScientificSession` APIs and original native query declarations.
+The native comparison consumer checks every ordered child tensor and its exact
+original study/request bytes.
+
 Both input versions are required. The executor admits their native archives,
 submits the retained request to GADGET, validates its native output, and records
 the selected input versions and output byte digest. The operation requires an
 explicit execution capability and declares temporary filesystem use. Numerical
 execution and source ownership stay in GADGET and RexGraphCpp.
+
+RCQL provider installation is process local. Repeating an installer with the
+same declaration and resolved executable paths reuses the installed callable.
+A different executable binding, conflicting declaration or incomplete
+installation raises `ValueError` and preserves the existing registry entries.
+Initialize these providers before concurrent query execution. If setup was
+interrupted between declaration and callable registration, initialize a fresh
+process; the adapter does not replace or repair an occupied operator name.
+
+Native and compressed file-format setup also reuses the installed reader when
+its resolved executable, read-only format declaration and declared byte budgets
+match. A different reader, saver, executable, extension owner or budget raises
+`ValueError` before changing the registry. Compression budgets must be positive
+integers at setup; booleans are refused. The adapter inspects RexGraph's existing
+format registry and keeps no separate registry. To change a registered file
+reader, explicitly remove its name through `rexgraph.io.unregister_format()`
+before installing the new profile. Initialize formats before concurrent use;
+the underlying registry does not provide an atomic compare-and-register operation.
+
+`tests/rcdb_format_registration.py` checks repeated setup, adapter reload, resolved
+path aliases, occupied names and extensions, incomplete format declarations,
+budget refusals and exact native/compressed reads. It requires a native archive,
+the GADGET executable and its `gadget_publish_file` sibling, or an explicit
+`--publisher` executable, with a fresh output directory.
 
 Execution stages each complete input once. Canonical admission compares its
 re-encoding with the supplied immutable byte buffer. Output and file-format
@@ -136,6 +317,23 @@ python3 tests/rcdb_adapter.py build/presets/cpu/gadget \
 Use a fresh test output directory. The native execution contract accepts the
 executable, a native assay workspace, a native assay request and a fresh output
 directory as arguments to `tests/rcdb_native_execution.py`.
+
+The registration contract checks repeated setup, executable bindings and partial
+installation in fresh processes:
+
+```sh
+python3 tests/rcdb_registration.py build/presets/cpu/gadget \
+  build/presets/cpu/gadget_native_field_query
+```
+
+The native transfer contract accepts a canonical publication and a fresh output
+directory. It checks compressed destinations, checkpoints, conditional writers
+and POSIX process interruption around local publication:
+
+```sh
+python3 tests/rcdb_transfer.py build/presets/cpu/gadget \
+  coverage.rfcxs new-transfer-contracts
+```
 
 Native files outside the generic-record profile can use RCDB's existing
 compressed blob framing through the file adapter:
@@ -158,6 +356,45 @@ canonical native admission. Compression changes storage bytes; decoding restores
 the original archive byte for byte. The destination must be new. Encoded and
 decoded admission budgets are supplied by the caller. This file transport does
 not change the installed RCDB generic-record bound.
+
+Compressed output uses `gadget_publish_file`, normally installed beside the
+resolved `gadget` executable. Set `publisher="/path/to/gadget_publish_file"` to
+select another installed location. If that helper is unavailable, compression
+refuses before creating output.
+
+The helper passes the complete encoded byte stream to the SDK's staged
+`CreateNew` operation. Short input, trailing input and ordinary write, flush or
+close failures refuse without publishing a partial destination; retry uses the
+same path. Concurrent exclusive writers produce one complete destination and
+refuse the others. Existing files, directories and symbolic links are preserved.
+After publication the adapter compares every output byte against the complete
+encoded buffer, using bounded reads rather than another whole output copy.
+
+This local profile requires trusted parent directories and filesystem hard-link
+support. It observes write, flush and close completion; it does not promise
+fsync durability. An abruptly stopped process can retain an unpublished staging
+directory. Its final destination stays absent or complete, and recovery of owned
+staging residue is a separate operator action.
+
+The generic helper also accepts a caller-declared exact byte stream:
+
+```sh
+gadget_publish_file --out new-file.bin --bytes 123 < complete-input.bin
+python -I tests/file_publication.py /path/to/gadget_publish_file \
+  /path/to/file-publication-contracts /new/test/directory
+```
+
+The byte count must equal the complete input size. The helper stores opaque bytes
+and does not infer a scientific format, build a complex or change its fields.
+
+File admission captures one opened regular file within its measured size. RCDB
+record admission checks the installed codec's byte budget on that descriptor
+before reading; compressed admission checks the caller's encoded byte budget.
+Growth and truncation during capture refuse before store publication or native
+admission. Nonregular inputs refuse, including FIFOs without a writer on POSIX.
+The captured bytes still undergo the existing complete native validation.
+These checks do not provide an atomic snapshot of concurrent edits of the same
+size; inputs must remain immutable during admission.
 
 `install_compressed_format(gadget=..., max_encoded_bytes=...,
 max_output_bytes=...)` registers `.rcblob` files with RexGraph's format registry.

@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <gadget/snapshot.hpp>
 #include <rfc/core/axioms.hpp>
+#include <rfc/runtime/hardware_inventory.hpp>
+#include <rfc/storage/mapped_file.hpp>
 #include <rfc/storage/native_series_codec.hpp>
 #include <set>
 #include <stdexcept>
@@ -432,12 +434,18 @@ Workspace load_snapshot(const fs::path &requested) {
     validate_file_path(requested);
     require(fs::is_directory(fs::symlink_status(requested)), "expected regular snapshot directory");
     const auto root = fs::canonical(requested);
-    const auto publication=NativeRecord::read(root/"study.rfcxs");
+    require(fs::is_regular_file(fs::symlink_status(root / "study.rfcxs")),
+            "artifact must be a regular file");
+    const ReadOnlyMappedFile archive(root / "study.rfcxs");
+    auto limits = native_data_limits();
+    if (const auto room = rfc::runtime::detect_hardware().advisory_memory_headroom())
+        limits.temporal.declarations.max_materialized_bytes = std::max<std::size_t>(1, *room);
+    const auto publication = NativeRecord::decode(archive.bytes(), limits);
     require(publication.at("schema").text()=="gadget.workspace.native.v1","unsupported native workspace declaration");
     auto endpoint=publication.endpoint();
     require(publication.source_namespace()==study_namespace && endpoint->sequence==0,"snapshot is not a single source publication");
     auto metadata=render_record_view(publication.at("study"));
-    const auto source_bytes=artifact(root,"study.rfcxs",artifact_limit);
+    const auto source_bytes = archive.bytes();
     const auto creator=render_record_view(publication.at("creator"));
     const auto completion=completion_view(metadata,source_bytes,creator);
     const auto completion_text=completion.dump()+"\n";

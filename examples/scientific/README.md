@@ -96,3 +96,39 @@ identity metrics and the source field realization maps. Occurrence maps retain
 their original flag owner and direction. Compatible fields, residuals, defects
 and complete cohomology frames use native tensor keys; the JSON view is an
 optional rendering. Portable replay retains the original study and request.
+
+`paired_field_contrasts` and `controlled_pairings` retain native results through
+`ScientificSession::execute_record`. Paired counts keep the ordered matched
+units, declared scales, consensus, residual and exact quadrances. Controlled
+comparisons keep the original design, independent frame, full coefficient
+kernel and particular coefficients. A particular coefficient vector does not
+identify coefficients that can vary along the retained kernel. Both preserve
+the complete original source, reported support, original row lifts, declared
+metrics and field producer cutoffs. `execute_comparison` accepts an explicit
+canonical execution lease for host limits and cancellation. JSON renders these
+fields for reading.
+
+`structure_transition` retains native fields for the two declared contexts,
+their complete metrics, original source publications, coordinate lifts and
+field producer cutoffs. Every sector transport block and the complete Green
+and Hodge defects retain their original old and new axes. The factored map
+option stores native matrix fields and ordered declarations; numerical actions
+remain in the canonical provider. Equal dimensions do not establish carrier
+identity. `green_operator_defect` retains `L_new J - J L_old`, while
+`green_response_defect` retains `G_new J - J G_old`. The operator contribution
+applies the latter to the original old field.
+`execute_structure_transition` accepts a canonical execution lease
+for host admission and cancellation. Declared comparison stages and metrics
+must state their scientific meaning before a result is interpreted as change
+over biological time.
+
+`temporal_field_history` retains each original endpoint publication, its actual
+context complex and metrics, field producer cutoffs, coordinate lifts and
+reported support. Declared completions remain separate from observations.
+All grade maps, ordered word position defects and contributions, nine sector
+blocks, source occurrence changes and complete channel pairings remain native
+fields. Factored maps keep actual endpoint axes and ordered declarations.
+`execute_temporal_history` accepts a canonical execution lease for action and
+output admission and cancellation. Default sessions reuse their prepared
+endpoint owners. Recorded availability and biological observation time retain
+their separate declared meanings.
