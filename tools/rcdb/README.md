@@ -54,6 +54,38 @@ sealed in the store header; reopening never chooses a different codec implicitly
 Existing stores must already declare the publication codec in their immutable headers.
 Every process reading these records must explicitly install the provider.
 
+For a whole native file, including one outside the RCDB record size profile,
+copy it through the installed exclusive file writer:
+
+```python
+from gadget_rcdb import copy_publication_file
+
+copy_publication_file(
+    "source.rfcxs", "new-copy.rfcxs",
+    gadget="/absolute/path/to/gadget", max_bytes=your_file_byte_budget,
+)
+```
+
+The writer defaults to `gadget_publish_file` beside the resolved native
+executable; `publisher=` can select its explicit installed path. Copying captures
+one opened original file into a private fixed snapshot, admits that snapshot
+with the selected native reader and compares every published byte against its
+opened owner. Python does not allocate a complete archive buffer. Temporary disk
+space must hold the capture and native admission output. A changed source during
+capture or a substituted snapshot during admission refuses before final output.
+Later changes to the original file locator do not change the captured owner.
+Existing destinations, including links, remain unchanged. The underlying writer
+requires a trusted parent and hard-link publication support; it supplies no
+fsync durability or automatic process-stop recovery.
+
+The file path retains the selected provider's admission contract. A native series
+from a different application or SDK profile must pass the actual GADGET reader
+before this API can copy it as a GADGET publication. It does not wrap unknown
+artifacts, infer mathematical cell counts or weaken a socket admission budget.
+`tests/rcdb_file_copy.py` checks fixed source ownership, fresh process replay,
+exclusive writers, real output exhaustion and complete large files with measured
+Python allocations.
+
 An installed Agent can retrieve a publication that its local operator has already
 admitted to the store. Use the existing record interface and select the literal
 record ID and version:
