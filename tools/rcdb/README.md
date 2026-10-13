@@ -244,6 +244,22 @@ Initialize these providers before concurrent query execution. If setup was
 interrupted between declaration and callable registration, initialize a fresh
 process; the adapter does not replace or repair an occupied operator name.
 
+Native and compressed file-format setup also reuses the installed reader when
+its resolved executable, read-only format declaration and declared byte budgets
+match. A different reader, saver, executable, extension owner or budget raises
+`ValueError` before changing the registry. Compression budgets must be positive
+integers at setup; booleans are refused. The adapter inspects RexGraph's existing
+format registry and keeps no separate registry. To change a registered file
+reader, explicitly remove its name through `rexgraph.io.unregister_format()`
+before installing the new profile. Initialize formats before concurrent use;
+the underlying registry does not provide an atomic compare-and-register operation.
+
+`tests/rcdb_format_registration.py` checks repeated setup, adapter reload, resolved
+path aliases, occupied names and extensions, incomplete format declarations,
+budget refusals and exact native/compressed reads. It requires a native archive,
+the GADGET executable and its `gadget_publish_file` sibling, or an explicit
+`--publisher` executable, with a fresh output directory.
+
 Execution stages each complete input once. Canonical admission compares its
 re-encoding with the supplied immutable byte buffer. Output and file-format
 admission compare the canonical file with the captured complete byte buffer
