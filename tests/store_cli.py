@@ -17,7 +17,7 @@ def invoke(*arguments, code=0):
     return json.loads(completed.stdout) if code == 0 else completed.stderr
 
 
-invoke("snapshot", "--input", root / "input", "--measurements", root / "input/measurements.json", "--out", root / "study")
+completion = invoke("snapshot", "--input", root / "input", "--measurements", root / "input/measurements.json", "--out", root / "study")
 initial = invoke("store-init", "--snapshot", root / "study", "--out", root / "store")
 assert initial["root"]["sequence"] == "0"
 contract = json.loads(schema.read_text())
@@ -33,6 +33,23 @@ assert invoke("store-status", "--store", root / "store", "--transaction", "17")[
 audit = invoke("audit", "--store", root / "store")
 assert audit.pop("store")["root"] == published["root"]
 assert audit == invoke("audit", "--snapshot", root / "study")
+shutil.copytree(root / "study", root / "spaced")
+metadata = subprocess.run(
+    [str(binary), "record-view", "--input", str(root / "study/study.rfcxs"),
+     "--member", "study", "--format", "compact"],
+    check=True, capture_output=True,
+).stdout
+for name, view in (("snapshot.json", json.dumps(completion).encode()), ("metadata.json", metadata)):
+    (root / "spaced" / name).write_bytes(b"\n" + view + b"\n")
+spaced = invoke("store-init", "--snapshot", root / "spaced", "--out", root / "spaced-store")
+assert invoke("audit", "--store", root / "spaced-store").pop("store")["root"] == spaced["root"]
+for name in ("snapshot.json", "metadata.json", "study.rfcxs"):
+    assert (root / "spaced-store/studies/0000000000000000" / name).read_bytes() == (root / "spaced" / name).read_bytes()
+shutil.copytree(root / "spaced", root / "native-only")
+for name in ("snapshot.json", "metadata.json"):
+    (root / "native-only" / name).unlink()
+invoke("store-init", "--snapshot", root / "native-only", "--out", root / "native-only-store")
+assert invoke("audit", "--store", root / "native-only-store")["source_digest"] == audit["source_digest"]
 for arguments in [
     ("audit", "--store", root / "store", "--input", root / "input"),
     ("audit", "--store", root / "store", "--measurements", root / "input/measurements.json"),
@@ -45,4 +62,4 @@ for arguments in [
     ("store-init", "--snapshot", root / "study", "--out", root / "store"),
 ]:
     invoke(*arguments, code=2)
-print("PASS: durable CLI roundtrip, equal-output retained history, uint64 maximum, exact retry, status and strict flags")
+print("PASS: durable CLI roundtrip, optional view bytes, native-only studies, retained history, uint64 maximum, exact retry, status and strict flags")
