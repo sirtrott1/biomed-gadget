@@ -3,20 +3,22 @@
 
 namespace gadget::assay_detail {
 namespace {
-Json glue_reads(const std::vector<SequenceRecord> &reads, const std::vector<std::size_t> &order,
+NativeRecord glue_reads(const std::vector<SequenceRecord> &reads, const std::vector<std::size_t> &order,
                 const std::vector<std::size_t> &overlaps, const std::string &spelling) {
     using namespace rfc;
+    using namespace sequence;
     require(spelling.size() <= std::numeric_limits<std::uint32_t>::max(),
             "glued sequence native cell representation");
     core::RelationSignature signature;
     core::RelationalComplexBuilder builder(signature);
+    builder.declare_grade(core::Grade{1});
     for (std::size_t i = 0; i < spelling.size(); ++i)
         builder.declare_witness_identity(i + 1);
     const auto source = builder.freeze();
     const local::RelationalLocalCarrier carrier(source);
     local::BasicSection<char> global;
     algebra::SubcomplexMask global_patch(source);
-    auto placements = Json::array();
+    auto placements = N::Array{};
     std::size_t start = 0;
     for (std::size_t i = 0; i < order.size(); ++i) {
         const auto &read = reads[order[i]];
@@ -36,13 +38,13 @@ Json glue_reads(const std::vector<SequenceRecord> &reads, const std::vector<std:
                 core::CellId{core::Grade{0}, static_cast<std::uint32_t>(start + p)});
         require(local::restrict_section(carrier, global, patch) == section,
                 "native read restriction reconstruction");
-        auto row = Json::object();
-        row.set("read_id", Json::string(read.id));
-        row.set("source_read", cardinality(order[i]));
-        row.set("start", cardinality(start));
-        row.set("end", cardinality(start + read.bases.size()));
-        row.set("evidence", read.evidence);
-        placements.push(row);
+        auto row = N::Object{};
+        member(row, "read_id", N(read.id));
+        member(row, "source_read", integer(order[i]));
+        member(row, "start", integer(start));
+        member(row, "end", integer(start + read.bases.size()));
+        member(row, "evidence", import_record_view(read.evidence));
+        element(placements, row);
     }
     require(global.size() == spelling.size(),
             "read sections must cover the reconstructed sequence");
@@ -50,16 +52,21 @@ Json glue_reads(const std::vector<SequenceRecord> &reads, const std::vector<std:
         require(global.at(core::CellId{core::Grade{0}, static_cast<std::uint32_t>(p)}) ==
                     spelling[p],
                 "native categorical gluing disagrees with spelling");
-    auto out = Json::object();
-    out.set("placements", placements);
-    out.set("complete_overlap_gluing_verified", Json::boolean(true));
-    out.set("every_read_restriction_verified", Json::boolean(true));
-    out.set("value_domain",
-            Json::string("literal DNA tokens with equality; no numerical encoding"));
-    return out;
+    auto out = N::Object{};
+    member(out, "placements", placements);
+    member(out, "complete_overlap_gluing_verified", N(true));
+    member(out, "every_read_restriction_verified", N(true));
+    member(out, "value_domain",
+            N("literal DNA tokens with equality; no numerical encoding"));
+    N::Array tokens;
+    for (std::size_t i = 0; i < spelling.size(); ++i)
+        element(tokens, N(N::Owned{0, storage::StableCellKey{{0}, i + 1}, {},
+            std::make_shared<const N>(std::string(1, global.at(core::CellId{{0}, static_cast<std::uint32_t>(i)})))}));
+    N::Object declaration; member(declaration, "view", std::move(out)); member(declaration, "tokens", std::move(tokens));
+    return NativeRecord::create_from_endpoint(N(std::move(declaration)), new_native_record_namespace(), {}, source_endpoint(source));
 }
 } // namespace
-Json read_reconstruction(const ResourceImage &resource, const Json &request) {
+AssayFieldsSource read_reconstruction_fields_source(const ResourceImage &resource, const Json &request) {
     using namespace sequence;
     members(request,
             {"schema", "operation", "resource", "minimum_overlap", "objective", "evidence"});
@@ -70,55 +77,60 @@ Json read_reconstruction(const ResourceImage &resource, const Json &request) {
         count(request.at("minimum_overlap"), std::numeric_limits<std::size_t>::max(),
               "minimum overlap representation");
     require(minimum > 0, "read overlap must be positive");
-    const auto reads = sequence_records(resource);
+    const SequenceSource original_source(resource);
+    const auto reads = records(original_source);
     require(!reads.empty(), "read cover requires source reads");
     const auto n = reads.size();
     std::vector<std::vector<std::size_t>> overlap(n, std::vector<std::size_t>(n));
-    auto overlap_records = Json::array(), source_reads = Json::array();
+    auto overlap_records = N::Array{}, source_reads = N::Array{};
     Routes overlap_routes(n, "sequence.read_overlap.compatibility");
     for (std::size_t a = 0; a < n; ++a) {
         require(reads[a].bases.size() >= minimum, "read is shorter than declared overlap");
-        auto row = Json::object();
-        row.set("read_id", Json::string(reads[a].id));
-        row.set("bases", Json::string(reads[a].bases));
-        row.set("evidence", reads[a].evidence);
-        source_reads.push(row);
+        auto row = N::Object{};
+        member(row, "read_id", N(reads[a].id));
+        member(row, "bases", N(reads[a].bases));
+        member(row, "evidence", import_record_view(reads[a].evidence));
+        element(source_reads, row);
         for (std::size_t b = 0; b < n; ++b) {
             if (a == b)
                 continue;
-            auto lengths = Json::array();
+            auto lengths = N::Array{};
             for (std::size_t length = minimum;
                  length <= std::min(reads[a].bases.size(), reads[b].bases.size()); ++length)
                 if (reads[a].bases.compare(reads[a].bases.size() - length, length, reads[b].bases,
                                            0, length) == 0) {
                     overlap[a][b] = length;
-                    lengths.push(cardinality(length));
+                    element(lengths, integer(length));
                 }
-            if (lengths.size()) {
-                auto r = Json::object();
-                r.set("left_read", cardinality(a));
-                r.set("right_read", cardinality(b));
-                r.set("admissible_lengths", lengths);
-                r.set("retained_length", cardinality(overlap[a][b]));
-                overlap_records.push(r);
+            if (lengths.elements.size()) {
+                auto r = N::Object{};
+                member(r, "left_read", integer(a));
+                member(r, "right_read", integer(b));
+                member(r, "admissible_lengths", lengths);
+                member(r, "retained_length", integer(overlap[a][b]));
+                element(overlap_records, r);
                 overlap_routes.add(a, b,
                                    Rational{std::to_string(reads[b].bases.size() - overlap[a][b])});
             }
         }
     }
     const auto overlap_source = overlap_routes.freeze();
+    std::vector<RawByteSource> sources{RawByteSource(1, std::as_bytes(std::span(resource.bytes)))};
+    auto native_overlap = route_source(overlap_source, overlap_routes);
+    SourceGradeFields overlap_fields(native_overlap.endpoint);
+    N::Array reachability_routes, gluing_publications, gluing_contexts;
     const auto overlap_graph =
         rfc::view::project_pairwise_directed(overlap_source, overlap_routes.costs());
     for (std::size_t a = 0; a < n; ++a)
         require(overlap_graph.object_index(a + 1) == a, "native source read coordinate order");
-    auto start_receipts = Json::array();
+    auto start_receipts = N::Array{};
     std::vector<std::size_t> starts;
     rfc::numeric::Integer reachability_calls{0};
     for (std::size_t a = 0; a < n; ++a) {
         std::vector<bool> reached(n, false);
         reached[a] = true;
-        auto receipt = Json::object(), histories = Json::array();
-        receipt.set("source_read", cardinality(a));
+        auto receipt = N::Object{}; auto histories = N::Array{};
+        member(receipt, "source_read", integer(a));
         bool eligible = true;
         for (std::size_t b = n; b-- > 0;) {
             if (reached[b])
@@ -129,22 +141,27 @@ Json read_reconstruction(const ResourceImage &resource, const Json &request) {
                                         overlap_graph.object_index(b + 1));
             if (!route.reachable) {
                 eligible = false;
-                receipt.set("unreachable_source_read", cardinality(b));
+                member(receipt, "unreachable_source_read", integer(b));
                 break;
             }
-            auto history = Json::object(), relations = Json::array();
+            auto history = N::Object{}; auto relations = N::Array{};
             for (auto e : route.projected_edges) {
                 const auto &edge = overlap_graph.edge(e);
                 reached[edge.target_object] = true;
-                relations.push(cardinality(edge.source_relation));
+                element(relations, integer(edge.source_relation));
             }
-            history.set("target_read", cardinality(b));
-            history.set("ordered_relations", relations);
-            histories.push(history);
+            member(history, "target_read", integer(b));
+            member(history, "ordered_relations", relations);
+            std::vector<std::uint32_t> native_relations;
+            for (const auto edge : route.projected_edges) native_relations.push_back(overlap_graph.edge(edge).source_relation);
+            Rational native_cost{0};
+            for (const auto e : native_relations) native_cost += overlap_routes.costs().at(e);
+            element(reachability_routes, retain_route(overlap_fields, overlap_source, overlap_routes, native_relations, a, b, native_cost));
+            element(histories, history);
         }
-        receipt.set("eligible_start", Json::boolean(eligible));
-        receipt.set("native_reachability_histories", histories);
-        start_receipts.push(receipt);
+        member(receipt, "eligible_start", N(eligible));
+        member(receipt, "native_reachability_histories", histories);
+        element(start_receipts, receipt);
         if (eligible)
             starts.push_back(a);
     }
@@ -218,52 +235,59 @@ Json read_reconstruction(const ResourceImage &resource, const Json &request) {
         witnesses->verify(rfc::field::boundary_matrix(source, rfc::core::Grade{1}), routes.costs(),
                           0, sink);
     }
-    auto out = Json::object(), c = carrier(source, routes), state_records = Json::array(),
-         layouts = Json::array(), sequences = Json::array();
+    auto native = route_source(source, routes);
+    SourceGradeFields fields(native.endpoint);
+    N::Object out, c;
+    N::Array state_records, layouts, sequences, native_routes, native_histories;
     for (std::size_t v = 0; v < states.size(); ++v) {
         const auto &state = states[v];
-        auto row = Json::object(), members = Json::array();
+        auto row = N::Object{}; auto members = N::Array{};
         rfc::numeric::Integer mask{0};
         for (std::size_t w = 0; w < state.seen.word_count(); ++w)
             mask += rfc::numeric::Integer(std::to_string(state.seen.word(w)))
                     << rfc::machine::checked_size_mul(w, Bits::bits_per_word);
-        state.seen.for_each_set([&](std::size_t a) { members.push(cardinality(a)); });
-        row.set("vertex", cardinality(v + 1));
-        row.set("source_read_mask", exact_count(mask));
-        row.set("source_reads", members);
-        row.set("last_read", cardinality(state.last));
+        state.seen.for_each_set([&](std::size_t a) { element(members, integer(a)); });
+        member(row, "vertex", integer(v + 1));
+        member(row, "source_read_mask", N(mask));
+        member(row, "source_reads", members);
+        member(row, "last_read", integer(state.last));
         if (witnesses) {
-            row.set("minimum_prefix_length", Json::string(witnesses->prefix[v + 1].get_str()));
-            row.set("minimum_suffix_length", witnesses->suffix_reachable[v + 1]
-                                                 ? Json::string(witnesses->suffix[v + 1].get_str())
-                                                 : Json{});
+            member(row, "minimum_prefix_length", N(witnesses->prefix[v + 1]));
+            member(row, "minimum_suffix_length", witnesses->suffix_reachable[v + 1]
+                                                 ? N(witnesses->suffix[v + 1])
+                                                 : N{});
         }
-        state_records.push(row);
+        element(state_records, row);
     }
-    c.set("states", state_records);
-    c.set("source_vertex", cardinality(0));
-    c.set("sink_vertex", cardinality(sink));
-    c.set("state_domain", Json::string("Reachable prefix states from every start not excluded by "
+    member(c, "states", state_records);
+    member(c, "source_vertex", integer(0));
+    member(c, "sink_vertex", integer(sink));
+    member(c, "state_domain", N("Reachable prefix states from every start not excluded by "
                                        "native directed reachability; exact subset and last-read "
                                        "coordinates, with no source identity merged"));
-    out.set("carrier", c);
-    out.set("source_reads", source_reads);
-    out.set("overlaps", overlap_records);
-    out.set("overlap_carrier", carrier(overlap_source, overlap_routes));
-    out.set("start_reachability", start_receipts);
-    out.set("native_reachability_calls", exact_count(reachability_calls));
-    out.set("minimum_length",
-            optimum.reachable ? Json::string(optimum.distance.get_str()) : Json{});
+    member(out, "source_reads", source_reads);
+    member(out, "overlaps", overlap_records);
+    member(out, "start_reachability", start_receipts);
+    member(out, "native_reachability_calls", N(reachability_calls));
+    member(out, "minimum_length",
+            optimum.reachable ? N(optimum.distance) : N{});
     if (witnesses) {
-        auto absent = Json::array();
+        auto absent = N::Array{};
         for (auto v : witnesses->unreachable_suffix_vertices)
-            absent.push(cardinality(v));
-        out.set("route_witnesses", witnesses->histories_view());
-        out.set("unreachable_suffix_vertices", absent);
-        out.set("native_route_calls", cardinality(witnesses->histories.size() +
+            element(absent, integer(v));
+        for (const auto &history : witnesses->histories) {
+            N::Object row; member(row, "kind", history.kind); member(row, "from_vertex", integer(history.from));
+            member(row, "to_vertex", integer(history.to)); member(row, "minimum_cost", history.route.distance);
+            N::Array ordered_history; for (auto e : history.route.relations) element(ordered_history, integer(e));
+            member(row, "ordered_relations", std::move(ordered_history)); element(native_histories, std::move(row));
+            element(native_routes, retain_route(fields, source, routes, history.route.relations, history.from, history.to, history.route.distance));
+        }
+        member(out, "route_witnesses", native_histories);
+        member(out, "unreachable_suffix_vertices", absent);
+        member(out, "native_route_calls", integer(witnesses->histories.size() +
                                                   witnesses->unreachable_suffix_vertices.size()));
-        out.set("prefix_dual_verified", Json::boolean(true));
-        out.set("viable_suffix_dual_verified", Json::boolean(true));
+        member(out, "prefix_dual_verified", N(true));
+        member(out, "viable_suffix_dual_verified", N(true));
     }
     std::map<std::string, std::vector<std::size_t>> spellings;
     std::vector<rfc::path::RealizedPath> representatives;
@@ -273,25 +297,40 @@ Json read_reconstruction(const ResourceImage &resource, const Json &request) {
     rfc::numeric::Integer visits{0};
     const auto emit = [&](std::size_t v) {
         relations.push_back(static_cast<std::uint32_t>(*exits[v]));
-        auto layout = Json::object(), ids = Json::array(), lengths = Json::array();
+        auto layout = N::Object{}; auto ids = N::Array{}, lengths = N::Array{};
         for (auto a : order)
-            ids.push(cardinality(a));
+            element(ids, integer(a));
         for (auto length : overlaps)
-            lengths.push(cardinality(length));
-        layout.set("read_order", ids);
-        layout.set("overlap_lengths", lengths);
-        layout.set("spelling", Json::string(spelling));
+            element(lengths, integer(length));
+        member(layout, "read_order", ids);
+        member(layout, "overlap_lengths", lengths);
+        member(layout, "spelling", N(spelling));
         const bool new_spelling = !spellings.contains(spelling);
         rfc::path::RealizedPath realized;
-        layout.set("route", realized_receipt(source, routes, relations, 0, sink, optimum.distance,
-                                             new_spelling ? &realized : nullptr));
-        layout.set("gluing", glue_reads(reads, order, overlaps, spelling));
+        member(layout, "route_index", integer(native_routes.elements.size()));
+        element(native_routes, retain_route(fields, source, routes, relations, 0, sink, optimum.distance,
+                                           new_spelling ? &realized : nullptr));
+        member(layout, "gluing_index", integer(gluing_publications.elements.size()));
+        const auto glued = glue_reads(reads, order, overlaps, spelling);
+        element(gluing_publications, archive_child(glued, sources));
+        N::Object context;
+        member(context, "publication", gluing_publications.elements.back());
+        member(context, "native_context", child_context(glued));
+        N::Array inputs;
+        for (const auto a : order) {
+            N::Object input;
+            member(input, "source_read", integer(a));
+            member(input, "bases", original_bases(original_source, 1, a, 0, original_source.length(a)));
+            element(inputs, std::move(input));
+        }
+        member(context, "inputs", std::move(inputs));
+        element(gluing_contexts, std::move(context));
         if (new_spelling) {
             representatives.push_back(std::move(realized));
-            representative_layouts.push_back(layouts.size());
+            representative_layouts.push_back(layouts.elements.size());
         }
-        spellings[spelling].push_back(layouts.size());
-        layouts.push(layout);
+        spellings[spelling].push_back(layouts.elements.size());
+        element(layouts, layout);
         relations.pop_back();
     };
     if (witnesses) {
@@ -348,58 +387,113 @@ Json read_reconstruction(const ResourceImage &resource, const Json &request) {
             relations.pop_back();
         }
     }
-    require(!optimum.reachable || layouts.size() > 0,
+    require(!optimum.reachable || layouts.elements.size() > 0,
             "native minimum must have an enumerated cover");
     for (const auto &[text, indices] : spellings) {
-        auto row = Json::object(), ids = Json::array();
+        auto row = N::Object{}; auto ids = N::Array{};
         for (auto i : indices)
-            ids.push(cardinality(i));
-        row.set("sequence", Json::string(text));
-        row.set("layouts", ids);
-        sequences.push(row);
+            element(ids, integer(i));
+        member(row, "sequence", N(text));
+        member(row, "layouts", ids);
+        element(sequences, row);
     }
-    auto comparison = Json::object(), gram = Json::array(), representative_ids = Json::array();
+    N::Object comparison;
+    N::Array representative_ids;
+    const auto representative_carrier = fields.explicit_carrier(representatives.size());
+    rfc::numeric::ExactMatrix G(representatives.size(), representatives.size());
     if (!representatives.empty()) {
-        const auto G = rfc::path::inherited_gram(
+        G = rfc::path::inherited_gram(
             representatives, rfc::field::ExactMetric::identity(routes.steps.size()));
         for (std::size_t a = 0; a < representatives.size(); ++a) {
-            auto row = Json::array();
-            representative_ids.push(cardinality(representative_layouts[a]));
-            for (std::size_t b = 0; b < representatives.size(); ++b)
-                row.push(Json::string(G.get(a, b).get_str()));
-            gram.push(row);
+            element(representative_ids, integer(representative_layouts[a]));
         }
     }
-    comparison.set("representative_layouts", representative_ids);
-    comparison.set("shared_field_gram", gram);
-    comparison.set("all_endpoint_columns_equal", Json::boolean(true));
-    comparison.set("metric",
-                   Json::string("identity on the declared read-cover transition carrier"));
-    out.set("path_comparison", comparison);
-    out.set("layouts", layouts);
-    out.set("sequences", sequences);
-    out.set("identifiable_sequence", Json::boolean(spellings.size() == 1));
-    out.set("status",
-            Json::string(!optimum.reachable      ? "no_complete_read_cover"
+    member(comparison, "representative_layouts", representative_ids);
+    member(comparison, "all_endpoint_columns_equal", N(true));
+    member(comparison, "metric",
+                   N("identity on the declared read-cover transition carrier"));
+    member(out, "path_comparison", comparison);
+    member(out, "layouts", layouts);
+    member(out, "sequences", sequences);
+    member(out, "identifiable_sequence", N(spellings.size() == 1));
+    member(out, "status",
+            N(!optimum.reachable      ? "no_complete_read_cover"
                          : spellings.size() == 1 ? "one_sequence_under_declared_constraints"
                                                  : "multiple_minimum_sequences"));
-    out.set("enumeration_visits", exact_count(visits));
-    out.set("complete", Json::boolean(true));
-    out.set("dominance_argument",
-            Json::string(
+    member(out, "enumeration_visits", N(visits));
+    member(out, "complete", N(true));
+    member(out, "dominance_argument",
+            N(
                 "For fixed visited source reads, last read and next read, the longest exact "
                 "overlap reaches the same next state at strictly smaller added length than any "
                 "shorter overlap. Every valid full cover starts at a read from which all other "
                 "source reads are reachable in the complete overlap graph. Native reachability "
                 "excludes only impossible starts; exact native suffix witnesses prune only "
                 "nonminimizing prefixes. All original overlap alternatives remain retained."));
-    out.set(
+    member(out,
         "search_universe",
-        Json::string(
+        N(
             "All suffix-prefix covers using every distinct source read exactly once, in its "
             "retained orientation, with at least the declared overlap. All minimum-length layouts "
             "and distinct spellings are retained; source duplicates remain distinct reads. "
             "Interior containment and orientation changes require a different declaration."));
+    auto &declaration = std::get<N::Object>(native.declaration.data);
+    auto &overlap_declaration = std::get<N::Object>(native_overlap.declaration.data);
+    member(overlap_declaration, "reachability_routes", std::move(reachability_routes));
+    const auto overlap_record = source_record(std::move(native_overlap));
+    member(declaration, "overlap_context", child_context(overlap_record));
+    member(declaration, "overlap_publication", archive_child(overlap_record, sources));
+    member(declaration, "gluing_publications", std::move(gluing_publications));
+    member(declaration, "gluing_contexts", std::move(gluing_contexts));
+    member(declaration, "routes", std::move(native_routes));
+    member(declaration, "view", std::move(out)); member(declaration, "carrier_view", std::move(c));
+    member(declaration, "schema", std::string("gadget.sequence.read_cover.fields.v1"));
+    member(declaration, "protocol", import_record_view(request));
+    member(declaration, "original_reads", original_records(original_source, 1));
+    member(declaration, "source_bytes", N(N::ByteSpan{1, 0, resource.bytes.size(), false}));
+    member(declaration, "representative_gram", fields.map("representative.field_gram", representative_carrier,
+        representative_carrier, G, rfc::storage::TemporalTensorRole::CrossForm));
+    if (witnesses) {
+        member(declaration, "prefix", fields.field("route.prefix", 0, witnesses->prefix));
+        std::vector<std::size_t> viable;
+        for (std::size_t i = 0; i < witnesses->suffix.size(); ++i) if (witnesses->suffix_reachable[i]) viable.push_back(i);
+        member(declaration, "suffix", fields.column("route.suffix", 0, witnesses->suffix.size(),
+            [&](auto i) { return witnesses->suffix[i]; }, rfc::numeric::StructuralSupport::sparse(witnesses->suffix.size(), viable)));
+        member(declaration, "optimal_support", fields.column("route.optimal", 1, routes.steps.size(), [&](auto i) {
+            const auto &step = routes.steps[i];
+            return Rational(witnesses->suffix_reachable[step.to] &&
+                witnesses->prefix[step.from] + step.cost + witnesses->suffix[step.to] == optimum.distance ? 1 : 0);
+        }));
+    }
+    native.sources = std::move(sources);
+    return native;
+}
+Json read_reconstruction_fields_view(const NativeRecord &record) {
+    using namespace sequence;
+    auto out = render_record_view(record.at("view"));
+    auto main = carrier_fields_view(record, false);
+    const auto extra = render_record_view(record.at("carrier_view"));
+    for (const auto &key : record.at("carrier_view").names()) main.set(key, extra.at(key));
+    out.set("carrier", main);
+    out.set("overlap_carrier", carrier_fields_view(NativeRecord::decode(record.at("overlap_publication").bytes())));
+    for (std::size_t i = 0; i < out.at("layouts").size(); ++i) {
+        auto layout = out.at("layouts").at(i);
+        const auto native = record.at("view").at("layouts").at(i);
+        const auto route = native.at("route_index").integer().get_ui(), glue = native.at("gluing_index").integer().get_ui();
+        json_object_object_del(layout.raw(), "route_index"); json_object_object_del(layout.raw(), "gluing_index");
+        layout.set("route", retained_route_view(record.at("routes").at(route)));
+        layout.set("gluing", render_record_view(NativeRecord::decode(record.at("gluing_publications").at(glue).bytes()).at("view")));
+    }
+    const auto &gram = retained_tensor(record, record.at("representative_gram")).tensor;
+    auto rows = Json::array(); const auto n = gram.domain().extents().at(0);
+    for (std::size_t i = 0; i < n; ++i) { auto row = Json::array();
+        for (std::size_t j = 0; j < n; ++j) row.push(Json::string(gram.state(i * n + j).value().get_str()));
+        rows.push(row);
+    }
+    out.at("path_comparison").set("shared_field_gram", rows);
     return out;
+}
+Json read_reconstruction(const ResourceImage &resource, const Json &request) {
+    return read_reconstruction_fields_view(sequence::source_record(read_reconstruction_fields_source(resource, request)));
 }
 } // namespace gadget::assay_detail

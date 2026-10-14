@@ -240,6 +240,14 @@ Json render_record_view(const NativeRecord &record) {
                 return assay_detail::query_batch_fields_view(record);
             if (schema == "gadget.persistence.fields.v1")
                 return assay_detail::persistence_fields_view(record);
+            if (schema == "gadget.sequence.indexed.fields.v1")
+                return assay_detail::indexed_alignment_fields_view(record);
+            if (schema == "gadget.sequence.reference.fields.v1")
+                return assay_detail::reference_match_fields_view(record);
+            if (schema == "gadget.sequence.splice.fields.v1")
+                return assay_detail::splice_search_fields_view(record);
+            if (schema == "gadget.sequence.read_cover.fields.v1")
+                return assay_detail::read_reconstruction_fields_view(record);
             if (schema == "gadget.sections.fields.v1" || schema == "gadget.sections.selected.v1")
                 return assay_detail::section_fields_view(record);
         }

@@ -170,8 +170,11 @@ int main() {
             rfc::path::dijkstra_exact(graph, graph.object_index(1), graph.object_index(3));
         check(route.reachable && route.distance == 0 && route.relations.size() == 2,
               "native shortest route across complete parallel source");
-        const auto realization =
-            realized_receipt(source, routes, route.relations, 0, 2, route.distance);
+        auto retained = route_source(source, routes);
+        SourceGradeFields fields(retained.endpoint);
+        member(std::get<N::Object>(retained.declaration.data), "witness",
+               retain_route(fields, source, routes, route.relations, 0, 2, route.distance));
+        const auto realization = retained_route_view(source_record(std::move(retained)).at("witness"));
         check(realization.at("boundary_verified").boolean() &&
                   realization.at("cost_verified").boolean(),
               "complete native route realization");

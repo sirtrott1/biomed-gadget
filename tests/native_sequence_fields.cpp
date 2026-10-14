@@ -3,6 +3,7 @@
 #include <gadget/record_view.hpp>
 #include <atomic>
 #include <rfc/storage/file_io.hpp>
+#include <rfc/field/boundary.hpp>
 #include <iostream>
 
 using namespace gadget;
@@ -20,18 +21,42 @@ void refuse(const std::function<void()> &action) {
     try {action();} catch (const std::exception &) {rejected = true;}
     check(rejected, "invalid native request was admitted");
 }
+bool source_bytes_equal(const NativeRecord &record, std::string_view bytes) {
+    const auto expected = std::as_bytes(std::span(bytes));
+    return std::ranges::equal(record.bytes(), expected);
+}
+void verify_routes(const NativeRecord &record, std::string_view name = "routes") {
+    const auto &costs = field(record, record.at("costs")).tensor;
+    check(costs.support().count() == record.endpoint()->source.grade({1}).cell_count(),
+          "route cost support omitted declared zero");
+    const auto boundary = rfc::field::boundary_matrix(record.endpoint()->source, {1});
+    for (std::size_t i = 0; i < record.at(name).size(); ++i) {
+        const auto route = record.at(name).at(i);
+        const auto &values = field(record, route.at("realized_field")).tensor;
+        const auto &demand = field(record, route.at("boundary")).tensor;
+        const auto dense = values.values().dense();
+        Vector ordered(dense.size(), Rational{0});
+        for (std::size_t j = 0; j < route.at("ordered_relations").size(); ++j)
+            ordered.at(route.at("ordered_relations").at(j).integer().get_ui()) += 1;
+        check(dense == ordered && boundary.apply(dense) == demand.values().dense() &&
+                  rfc::numeric::dot(costs.values().dense(), dense) == route.at("minimum_cost").rational(),
+              "native ordered route field, boundary or cost changed");
+    }
+}
 }
 int main(int argc, char **argv) {
     const fs::path root = argc > 1 ? argv[1] : "build/native-sequence-fields";
     fs::remove_all(root); fs::create_directories(root);
     const std::string reads = ">q0\r\nAC\r\n>q1\nAAA\n", reference = ">r0\nAC\n>r1\nAC\n";
     auto resources = Json::array();
-    for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}, {"ambiguous", ">a\nAN\n>b\nTA\n"}, {"quality", "@q0\nAC\n+\n!I\n"}}) {
+    const std::string comparisons = "@q0\r\nAC\r\n+\r\nII\r\n@q0\nGT\n+\nII\n";
+    for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}, {"ambiguous", ">a\nAN\n>b\nTA\n"}, {"quality", "@q0\nAC\n+\n!I\n"}, {"comparisons", comparisons}, {"cover", ">a\nACA\n>b\nCAC\n>c\nACA\n"}, {"classes", "2\n1\nA\nB\n2 0 1 3\n"}}) {
         const auto filename = id + (id == "quality" ? ".fastq" : ".fa");
         write_text(root / filename, bytes);
         auto resource = Json::parse(R"({"id":"","format":"fasta","source":{"path":"","sha256":""},"method":"Authored source fixture"})");
         resource.set("id", Json::string(id)); resource.at("source").set("path", Json::string(filename));
-        if (id == "quality") resource.set("format", Json::string("fastq"));
+        if (id == "quality" || id == "comparisons") resource.set("format", Json::string("fastq"));
+        if (id == "classes") resource.set("format", Json::string("salmon_eq"));
         resource.at("source").set("sha256", Json::string("sha256:" + sha256(bytes))); resources.push(resource);
     }
     auto spec = Json::parse(R"({"schema":"gadget.assays.import.v1","id":"sequences","design":{"question":"Preserve ordered source witnesses","population":"Authored fixture","selection":"All source records","limitations":["Verification fixture"]},"assays":[],"resources":[],"links":[]})");
@@ -249,19 +274,26 @@ int main(int argc, char **argv) {
     invalid_batch = Json::parse(batch.dump());
     invalid_batch.at("queries").at(2).at("query").set("operation", Json::string("unknown"));
     refuse([&] { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); });
-    const auto unconverted = Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"reference_sequence_matches","query_resource":"reads","reference_resource":"reference","strands":["+"],"ambiguity":"literal","maximum_mismatches":0,"junctions":[],"minimum_overhang":1,"evidence":"Original exact placements"})");
-    check(!AssayWorkspace::supports_native_publication("reference_sequence_matches") &&
-              workspace->execute(unconverted).at("result").at("matches").size() == 2,
+    const auto unconverted = Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"allocation_bounds","resource":"classes","targets":[{"id":"A","candidates":["A"]}],"candidate_search":{"method":"Authored candidate set","completeness":"All declared candidates","reference_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000"},"scale":"1","scale_provenance":"Original raw count"})");
+    check(workspace->execute(unconverted).at("result").at("samples").size() == 1,
           "unconverted-child refusal fixture is not an otherwise valid query");
     invalid_batch = Json::parse(batch.dump());
     invalid_batch.at("queries").at(batch_jobs.size() - 1).set("query", unconverted);
-    bool unconverted_refused = false;
-    try { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); }
-    catch (const std::invalid_argument &error) {
-        unconverted_refused = std::string(error.what()) ==
-                              "scientific study: source query child has no native publisher";
+    if (!AssayWorkspace::supports_native_publication("allocation_bounds")) {
+        bool unconverted_refused = false;
+        try { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); }
+        catch (const std::invalid_argument &error) {
+            unconverted_refused = std::string(error.what()) ==
+                                  "scientific study: source query child has no native publisher";
+        }
+        check(unconverted_refused, "mixed batch admitted an unconverted mathematical child");
+    } else {
+        const auto admitted = assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu);
+        const auto child = NativeRecord::decode(admitted.at("result").at("result").at("results")
+            .at(batch_jobs.size() - 1).at("child_publication").bytes());
+        check(render_record_view(child.at("result")).at("result").dump() == workspace->execute(unconverted).at("result").dump(),
+              "new native publisher batch child differs from its complete direct result");
     }
-    check(unconverted_refused, "mixed batch admitted an unconverted mathematical child");
     auto small_policy = policy; small_policy.declared_buffer_byte_limit = sizeof(std::size_t) - 1;
     const auto small_cpu = std::make_shared<CpuResources>(hardware, small_policy, [hardware] { return hardware; });
     refuse([&] { assay_detail::query_batch_record(*workspace, batch_request, small_cpu); });
@@ -276,11 +308,84 @@ int main(int argc, char **argv) {
     check(cancelled, "native child cancellation was converted to a published partial batch");
     { auto recovered = cancelled_cpu->coordinator().reserve(2); }
     { auto recovered = cpu->coordinator().reserve(2); }
+    const std::vector<Json> searches{
+        Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"indexed_sequence_alignment","query_resource":"reads","reference_resource":"reference","strands":["+","-"],"maximum_edits":1,"scoring":"unit_edit_cost","evidence":"Every original placement"})"),
+        Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"reference_sequence_matches","query_resource":"comparisons","reference_resource":"reference","strands":["+","-"],"ambiguity":"literal","maximum_mismatches":1,"junctions":[],"minimum_overhang":1,"evidence":"Every original comparison"})"),
+        Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"sequence_splice_discovery","query_resource":"reads","reference_resource":"reference","strands":["+"],"minimum_exon_bases":2,"minimum_intron_bases":4,"maximum_intron_bases":10,"maximum_junctions":1,"motifs":["GT-AG"],"evidence":"Every original exon chain"})"),
+        Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"read_overlap_reconstruction","resource":"cover","minimum_overlap":2,"objective":"minimum_suffix_prefix_read_cover","evidence":"Every original read"})")};
+    std::vector<NativeRecord> search_publications;
+    for (std::size_t i = 0; i < searches.size(); ++i) {
+        const auto publication = workspace->execute_record(admit_record_view(searches[i]), cpu);
+        const auto result = publication.at("result").at("result");
+        check(AssayWorkspace::supports_native_publication(searches[i].at("operation").text()) &&
+                  workspace->execute(searches[i], cpu).at("result").dump() == render_record_view(result).dump(),
+              "sequence native admission or same-owner display failed");
+        if (i == 3) {
+            verify_routes(result);
+            const auto overlap = NativeRecord::decode(result.at("overlap_publication").bytes());
+            verify_routes(overlap, "reachability_routes");
+            check(source_bytes_equal(result.at("source_bytes"), ">a\nACA\n>b\nCAC\n>c\nACA\n") &&
+                      result.at("view").at("layouts").size() == 4,
+                  "cover discarded repeated original reads or minimum layouts");
+            for (std::size_t g = 0; g < result.at("gluing_publications").size(); ++g) {
+                const auto glued = NativeRecord::decode(result.at("gluing_publications").at(g).bytes());
+                check(glued.at("tokens").size() == glued.endpoint()->source.grade({0}).cell_count(),
+                      "categorical gluing tokens lost their source cells");
+            }
+        } else {
+            check(source_bytes_equal(result.at("query_bytes"), i == 1 ? comparisons : reads) && source_bytes_equal(result.at("reference_bytes"), reference) &&
+                      result.at("placements").size() == result.at("view").at("matches").size(),
+                  "sequence original bytes or placement couplings changed");
+            for (std::size_t c = 0; c < result.at("children").size(); ++c) {
+                const auto child = NativeRecord::decode(result.at("children").at(c).bytes());
+                check(child.source_namespace() != result.source_namespace(), "child lost its independent source namespace");
+                if (i != 1) verify_routes(child);
+                else {
+                    check(child.endpoint()->source.grade({1}).cell_count() == 0 &&
+                              child.endpoint()->carriers.at(2).domain.logical_size() == 0,
+                          "comparison lost its explicitly empty source grade");
+                    const auto map_key = child.at("count_map");
+                    const auto &map = field(child, map_key);
+                    check(map.input == 1 && map.output == child.at("scalar_carrier").integer().get_ui() &&
+                              map.tensor.support().count() == child.endpoint()->source.grade({0}).cell_count(),
+                          "count map is detached from its declared source and scalar carriers");
+                    for (std::size_t p = 0; p < child.at("comparisons").size(); ++p) {
+                        const auto comparison = child.at("comparisons").at(p);
+                        const auto &disagreement = field(child, comparison.at("disagreement")).tensor;
+                        Rational sum{0};
+                        for (std::size_t b = 0; b < disagreement.domain().logical_size(); ++b) {
+                            sum += disagreement.state(b).value();
+                            check(map.tensor.state(b).value() == 1 &&
+                                      field(child, comparison.at("oriented_positions")).tensor.state(b).value() ==
+                                          Rational(std::to_string(comparison.at("reverse").boolean() ? disagreement.domain().logical_size() - 1 - b : b)),
+                                  "comparison map or reverse original-coordinate permutation changed");
+                        }
+                        check(sum == field(child, comparison.at("count")).tensor.state(0).value(),
+                              "retained comparison operands disagree with native scalar output");
+                    }
+                }
+            }
+        }
+        publication.write(root / ("search-" + std::to_string(i) + ".rfcxs"));
+        check(NativeRecord::read(root / ("search-" + std::to_string(i) + ".rfcxs")).encode() == publication.encode(),
+              "native sequence I/O changed complete archive bytes");
+        search_publications.push_back(publication);
+    }
     batched.write(root / "batch.rfcxs");
     auto invalid = Json::parse(R"({"schema":"gadget.assays.materialize.v1","id":"invalid","source_namespace":"730020","channel":"observation","design":{},"recipe":{}})");
     invalid.set("design", spec.at("design")); invalid.set("recipe", impossible);
     refuse([&] {workspace->materialize_workspace(admit_record_view(invalid), root / "invalid");});
     fs::rename(root / "input", root / "input-away"); workspace.reset();
+    for (std::size_t i = 0; i < searches.size(); ++i) {
+        const auto publication = NativeRecord::read(root / ("search-" + std::to_string(i) + ".rfcxs"));
+        NativeRecord::decode(publication.at("result").at("workspace_publication").bytes())
+            .write(root / ("search-workspace-" + std::to_string(i) + ".rfcxs"));
+        const AssayWorkspace replay_workspace(root / ("search-workspace-" + std::to_string(i) + ".rfcxs"));
+        const auto replay = replay_workspace.execute_record(NativeRecord::decode(publication.at("request_publication").bytes()), cpu);
+        check(render_record_view(replay.at("result").at("result")).dump() ==
+                  render_record_view(search_publications[i].at("result").at("result")).dump(),
+              "sequence embedded replay depends on the former intake paths");
+    }
     const auto relocated_batch = NativeRecord::read(root / "batch.rfcxs");
     check(relocated_batch.encode() == batched.encode() &&
               render_record_view(relocated_batch.at("result").at("result")).dump() == batch_view.dump(),
