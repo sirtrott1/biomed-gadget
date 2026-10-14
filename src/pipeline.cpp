@@ -69,7 +69,7 @@ const std::map<std::string, std::vector<std::string>> profiles{
     {"sequence",
      {"bind_assays", "read_quality", "sequence_motifs", "exact_sequence_alignment",
       "reference_sequence_matches", "indexed_sequence_alignment", "sequence_splice_discovery",
-      "sequence_assembly_graph", "read_overlap_reconstruction", "relational_persistence",
+      "sequence_assembly_graph", "read_overlap_reconstruction", "read_edit_consensus", "relational_persistence",
       "native_query"}},
     {"custom", {}}};
 struct Recipe {
@@ -116,6 +116,7 @@ const std::map<std::string, Recipe> recipes{
     {"sequence_splice_discovery", {"sequence_splice_discovery"}},
     {"sequence_assembly_graph", {"sequence_assembly_graph", false, true}},
     {"read_overlap_reconstruction", {"read_overlap_reconstruction"}},
+    {"read_edit_consensus", {"read_edit_consensus"}},
     {"constrained_allocations", {"constrained_allocations", false, true}},
     {"relational_persistence", {"relational_persistence"}},
     {"chain_certificate", {"chain_certificate", true}},

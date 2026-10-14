@@ -1,4 +1,5 @@
 #include <gadget/assay.hpp>
+#include <gadget/pipeline.hpp>
 #include "../src/genomic_detail.hpp"
 #include <gadget/record_view.hpp>
 #include <atomic>
@@ -53,6 +54,7 @@ int main(int argc, char **argv) {
     const std::string comparisons = "@q0\r\nAC\r\n+\r\nII\r\n@q0\nGT\n+\nII\n";
     const std::string edited_queries = "@same\r\nAACC\r\n+\r\nIIII\r\n@same\nAACC\n+\nIIII\n@inserted\nAATCC\n+\nIIIII\n";
     const std::string edited_reference = ">r0\r\nAAGT\r\nAGCC\r\n>r1\nAAGTAGCC\n";
+    const std::string consensus_reads = "@same\r\nAC\r\n+\r\nII\r\n@same\nAG\n+\nII\n";
     for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}, {"ambiguous", ">a\nAN\n>b\nTA\n"}, {"quality", "@q0\nAC\n+\n!I\n"}, {"comparisons", comparisons}, {"history-query", "@same\nAAA\n+\nIII\n@same\nAAA\n+\nIII\n"}, {"history-reference", ">r0\nAAA\n>r1\nAAA\n"}, {"cover", ">a\nACA\n>b\nCAC\n>c\nACA\n"}, {"classes", "2\n1\nA\nB\n2 0 1 3\n"}}) {
         const auto filename = id + (id == "quality" ? ".fastq" : ".fa");
         write_text(root / filename, bytes);
@@ -63,7 +65,8 @@ int main(int argc, char **argv) {
         resource.at("source").set("sha256", Json::string("sha256:" + sha256(bytes))); resources.push(resource);
     }
     for (const auto &[id, bytes, format] : std::vector<std::tuple<std::string, std::string, std::string>>{
-            {"edited-query", edited_queries, "fastq"}, {"edited-reference", edited_reference, "fasta"}}) {
+            {"edited-query", edited_queries, "fastq"}, {"edited-reference", edited_reference, "fasta"},
+            {"consensus", consensus_reads, "fastq"}}) {
         const auto filename = id + ".source"; write_text(root / filename, bytes);
         auto resource = Json::parse(R"({"id":"","format":"","source":{"path":"","sha256":""},"method":"Original edited splice fixture"})");
         resource.set("id", Json::string(id)); resource.set("format", Json::string(format));
@@ -421,6 +424,66 @@ int main(int argc, char **argv) {
     edited_publication.write(root / "edited-splice.rfcxs");
     check(NativeRecord::read(root / "edited-splice.rfcxs").encode() == edited_publication.encode(),
           "edited splice complete archive I/O changed");
+    const auto consensus_request = Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"read_edit_consensus","resource":"consensus","strands":["+"],"maximum_edits":1,"minimum_paired_bases":2,"objective":"minimum_length_then_total_unit_edits","ambiguity":"literal_ACGT","evidence":"Every joint source alignment"})");
+    const auto consensus_publication = workspace->execute_record(admit_record_view(consensus_request), cpu);
+    const auto consensus_fields = consensus_publication.at("result").at("result");
+    check(source_bytes_equal(consensus_fields.at("source_bytes"), consensus_reads) &&
+              consensus_fields.at("original_reads").size() == 2 && consensus_fields.at("original_tokens").size() == 4 &&
+              consensus_fields.at("view").at("family_count").integer() == 2 &&
+              consensus_fields.at("view").at("minimum_edits").integer() == 1,
+          "consensus original repeated read/quality bytes or tied minimizing families changed");
+    const auto consensus_optimization = NativeRecord::decode(consensus_fields.at("optimization_publication").bytes());
+    verify_routes(consensus_optimization);
+    check(consensus_optimization.source_namespace() != consensus_fields.source_namespace(),
+          "consensus binary optimization replaced its independent biological source");
+    const auto association_key = consensus_fields.at("paired_occurrence_map");
+    const auto &association = field(consensus_fields, association_key);
+    const auto &biological_costs = field(consensus_fields, consensus_fields.at("edit_costs")).tensor;
+    const auto &biological = consensus_fields.endpoint()->source.grade({1});
+    check(association.input == 1 && association.output == 1 &&
+              biological_costs.support().count() == biological.cell_count(),
+          "consensus source maps or supported zero edit costs lost their carriers");
+    for (std::size_t f = 0; f < consensus_fields.at("view").at("families").size(); ++f) {
+        const auto family = consensus_fields.at("view").at("families").at(f);
+        check(family.at("read_alignments").size() == 2 && family.at("tokens").size() == 2,
+              "consensus discarded complete original read contributions");
+        for (std::size_t p = 0; p < family.at("tokens").size(); ++p) {
+            const auto relation = family.at("tokens").at(p).at("relation").integer().get_ui() - 1;
+            const auto range = biological.incidence_range(relation);
+            check(range.second - range.first == 6, "joint consensus evidence was expanded into binary pairs");
+            const auto output = biological.lower_index[range.first + 1];
+            const auto width = consensus_fields.endpoint()->source.grade({0}).cell_count();
+            Rational total{0};
+            for (std::size_t input = 0; input < width; ++input) total += association.tensor.state(output * width + input).value();
+            check(total == 2, "consensus paired occurrence association changed or erased a contradictory token");
+        }
+    }
+    check(workspace->execute(consensus_request, cpu).at("result").dump() == render_record_view(consensus_fields).dump(),
+          "consensus compatibility view replaced retained native results");
+    consensus_publication.write(root / "consensus.rfcxs");
+    check(NativeRecord::read(root / "consensus.rfcxs").encode() == consensus_publication.encode(),
+          "complete consensus archive changed during I/O");
+    auto consensus_defaults = Json::parse(R"({"schema":"gadget.pipeline.default.v1","profile":"sequence","question":"Every joint source alignment","goals":[{"id":"consensus","method":"read_edit_consensus","parameters":{}}]})");
+    auto consensus_parameters = Json::object();
+    json_object_object_foreach(consensus_request.raw(), key, value) {
+        (void)value;
+        if (std::string_view(key) != "schema" && std::string_view(key) != "operation")
+            consensus_parameters.set(key, consensus_request.at(key));
+    }
+    consensus_defaults.at("goals").at(0).set("parameters", consensus_parameters);
+    const auto consensus_plan = admit_record_view(default_pipeline(*workspace, consensus_defaults));
+    const auto consensus_pipeline = execute_pipeline_record(workspace, consensus_plan,
+        root / "consensus-pipeline", {}, cpu);
+    check(consensus_pipeline.at("result").at("status").text() == "complete",
+          "default consensus pipeline did not execute");
+    const auto consensus_artifact = NativeRecord::read(root / "consensus-pipeline/consensus/result.rfcxs");
+    check(source_bytes_equal(consensus_artifact.at("result").at("result").at("source_bytes"), consensus_reads) &&
+              render_record_view(consensus_artifact.at("result").at("result")).dump() ==
+                  render_record_view(consensus_fields).dump(),
+          "pipeline changed original consensus bytes or minimizing families");
+    consensus_artifact.write(root / "consensus-pipeline-roundtrip.rfcxs");
+    check(NativeRecord::read(root / "consensus-pipeline-roundtrip.rfcxs").encode() == consensus_artifact.encode(),
+          "pipeline consensus changed complete native owners during archive I/O");
     for (std::size_t i = 0; i < searches.size(); ++i) {
         const auto publication = workspace->execute_record(admit_record_view(searches[i]), cpu);
         const auto result = publication.at("result").at("result");
@@ -483,6 +546,27 @@ int main(int argc, char **argv) {
     invalid.set("design", spec.at("design")); invalid.set("recipe", impossible);
     refuse([&] {workspace->materialize_workspace(admit_record_view(invalid), root / "invalid");});
     fs::rename(root / "input", root / "input-away"); workspace.reset();
+    NativeRecord::decode(consensus_publication.at("result").at("workspace_publication").bytes())
+        .write(root / "consensus-workspace.rfcxs");
+    const AssayWorkspace consensus_workspace(root / "consensus-workspace.rfcxs");
+    const auto consensus_replay = consensus_workspace.execute_record(
+        NativeRecord::decode(consensus_publication.at("request_publication").bytes()), cpu);
+    check(render_record_view(consensus_replay.at("result").at("result")).dump() == render_record_view(consensus_fields).dump(),
+          "consensus native replay depends on original intake paths");
+    NativeRecord::decode(consensus_artifact.at("result").at("workspace_publication").bytes())
+        .write(root / "pipeline-consensus-workspace.rfcxs");
+    const AssayWorkspace pipeline_consensus_workspace(root / "pipeline-consensus-workspace.rfcxs");
+    const auto pipeline_consensus_replay = pipeline_consensus_workspace.execute_record(
+        NativeRecord::decode(consensus_artifact.at("request_publication").bytes()), cpu);
+    const auto before_consensus = consensus_artifact.endpoint(), after_consensus = pipeline_consensus_replay.endpoint();
+    check(before_consensus->tensors.size() == after_consensus->tensors.size(),
+          "pipeline consensus replay changed its native field family");
+    for (std::size_t t = 0; t < before_consensus->tensors.size(); ++t)
+        check(rfc::storage::temporal_endpoint_detail::tensor_equal(before_consensus->tensors.at(t), after_consensus->tensors.at(t)),
+              "pipeline consensus replay changed values, support, roles or carriers");
+    check(source_bytes_equal(pipeline_consensus_replay.at("result").at("result").at("source_bytes"), consensus_reads) &&
+              render_record_view(pipeline_consensus_replay.at("result").at("result")).dump() == render_record_view(consensus_fields).dump(),
+          "pipeline consensus source/request replay depends on former intake paths");
     NativeRecord::decode(edited_publication.at("result").at("workspace_publication").bytes())
         .write(root / "edited-splice-workspace.rfcxs");
     const AssayWorkspace edited_workspace(root / "edited-splice-workspace.rfcxs");

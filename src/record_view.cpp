@@ -255,6 +255,8 @@ Json render_record_view(const NativeRecord &record) {
                 return assay_detail::gluing_fields_view(record);
             if (schema == "gadget.assays.transfer.fields.v1")
                 return assay_detail::transfer_fields_view(record);
+            if (schema == "gadget.sequence.consensus.fields.v1")
+                return assay_detail::read_consensus_fields_view(record);
             if (schema == "gadget.sections.fields.v1" || schema == "gadget.sections.selected.v1")
                 return assay_detail::section_fields_view(record);
         }

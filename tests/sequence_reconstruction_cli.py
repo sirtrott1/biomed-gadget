@@ -409,6 +409,8 @@ def main():
     caps = run('bioinformatics')
     check(all(op in caps['workspace_methods'] for op in ['indexed_sequence_alignment', 'sequence_splice_discovery', 'read_overlap_reconstruction']), 'all three generic services discoverable')
     from method_answers import qualify
+    from read_consensus_cli import qualify as qualify_consensus
+    checks += qualify_consensus(binary, root/'consensus')
     checks += qualify(binary, root/'typed-answers', workspace,
                       {name: (request, results[name]) for name, request in requests.items()})
     save('cases.json', dict(requests=requests, results=results))
