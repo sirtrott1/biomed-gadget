@@ -142,6 +142,11 @@ const std::map<std::string, Observable> observables{
      {{"read_overlap_reconstruction"},
       "All minimum suffix-prefix read-cover layouts and spellings with complete source-read "
       "gluing"}},
+    {"read_edit_consensus",
+     {{"read_edit_consensus"},
+      "Every source-supported complete-read consensus family minimizing length then total unit "
+      "edits under declared strands, paired bases and budget, including alignment ambiguity and "
+      "no admissible family"}},
     {"constrained_allocations",
      {{"constrained_allocations"},
       "Feasibility, sharp marginal and optimal-face ranges in the declared bounded integer or "

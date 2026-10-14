@@ -164,10 +164,82 @@ void allocation(const NativeRecord &fields) {
         for (std::size_t t = 0; t < coordinates.domain().logical_size(); ++t)
             check(bound.tensor.state(coordinates.state(t)->get_num().get_ui()).has_value(), "target bound lost support");
     }
+    const auto coordinate_record = fields.at("target_coordinates");
+    const auto &coordinates = coordinate_record.tensor();
+    const auto forged = [&](const numeric::Rational &coordinate) {
+        auto declaration = fields.unbound_value();
+        auto &members = std::get<NativeRecordValue::Object>(declaration.data).members;
+        for (auto &[name, value] : members)
+            if (name == "target_coordinates")
+                value = NativeRecordValue(assay_detail::SourceGradeFields::tensor(
+                    coordinates.domain().logical_size(),
+                    [&](auto i) { return i == 0 ? coordinate : coordinates.state(i).value(); },
+                    coordinates.support()));
+        storage::TemporalEndpoint endpoint(source, fields.endpoint()->sequence);
+        endpoint.carriers = fields.endpoint()->carriers;
+        endpoint.tensors = fields.endpoint()->tensors;
+        return NativeRecord::create_from_endpoint(std::move(declaration),
+            new_native_record_namespace(), fields.raw_sources(), std::move(endpoint));
+    };
+    check(render_record_view(forged(numeric::Rational{0})).dump() == render_record_view(fields).dump(),
+          "forged-coordinate fixture changed an unrelated field");
+    for (const auto &coordinate : numeric::RationalVector{-1, numeric::Rational{3, 2},
+             numeric::Rational{1, 2}, 1, 5, numeric::Rational{"1208925819614629174706176"}}) {
+        bool refused = false;
+        try { (void)render_record_view(forged(coordinate)); }
+        catch (const std::invalid_argument &) { refused = true; }
+        check(refused, "allocation renderer accepted an invalid native target coordinate");
+    }
 }
 } // namespace
 int main(int argc, char **argv) {
     try {
+        if (argc == 3 && std::string(argv[1]) == "--consensus-artifact") {
+            const auto publication = NativeRecord::read(argv[2]);
+            const auto certificate = publication.at("result"), fields = certificate.at("result");
+            check(certificate.at("schema").text() == "gadget.assay.result.native.v1" &&
+                      fields.at("schema").text() == "gadget.sequence.consensus.fields.v1",
+                  "typed consensus answer references a numerical display");
+            const auto view = fields.at("view"), families = view.at("families");
+            check(view.at("family_count").kind() == NativeRecordKind::Integer &&
+                      view.at("family_count").integer() == families.size() && view.at("complete").boolean(),
+                  "typed consensus answer lost complete native family count");
+            const auto optimizer = NativeRecord::decode(fields.at("optimization_publication").bytes());
+            check(optimizer.source_namespace() != fields.source_namespace(),
+                  "typed consensus conflated biological and optimizer sources");
+            check(!fields.at("source_bytes").bytes().empty() && fields.at("original_tokens").size() > 0,
+                  "typed consensus lost original raw tokens");
+            const auto &cost = tensor(fields, "edit_costs"), &pairs = tensor(fields, "paired_occurrence_map");
+            check(cost.role == storage::TemporalTensorRole::Field && cost.output == 2 &&
+                      cost.tensor.domain().logical_size() == fields.endpoint()->source.grade({1}).cell_count() &&
+                      pairs.input == 1 && pairs.output == 1,
+                  "typed consensus lost actual biological source grade fields");
+            if (families.size()) {
+                bool full_arity = false;
+                const auto &relations = fields.endpoint()->source.grade({1});
+                for (std::size_t r = 0; r < relations.cell_count(); ++r)
+                    full_arity = full_arity || relations.offsets.at(r + 1) - relations.offsets.at(r) > 2;
+                check(full_arity, "typed consensus projected full-arity biology into binary optimization");
+                check(view.at("minimum_cost").kind() == NativeRecordKind::Rational,
+                      "typed consensus lost native exact objective");
+                for (std::size_t f = 0; f < families.size(); ++f) {
+                    const auto family = families.at(f);
+                    check(family.at("read_alignments").size() == fields.at("original_reads").size() &&
+                              family.at("route_index").integer() < optimizer.at("routes").size(),
+                          "typed consensus dropped an original read or route selector");
+                }
+            } else {
+                check(view.at("status").text() == "no_admissible_consensus" &&
+                          view.at("minimum_length").kind() == NativeRecordKind::Null &&
+                          view.at("minimum_edits").kind() == NativeRecordKind::Null &&
+                          view.at("minimum_cost").kind() == NativeRecordKind::Null,
+                      "empty family evidence became an asserted consensus");
+            }
+            check(NativeRecord::decode(publication.encode()).encode() == publication.encode(),
+                  "typed consensus complete parent roundtrip changed");
+            std::cout << "{\"status\":\"PASS\",\"native_checks\":" << checks << "}\n";
+            return 0;
+        }
         if (argc == 3 && std::string(argv[1]) == "--planning") {
             const auto planning = NativeRecord::read(argv[2]).at("result");
             check(planning.at("schema").text() == "gadget.scientific.fields.v1", "planning retained numerical admission displays");
