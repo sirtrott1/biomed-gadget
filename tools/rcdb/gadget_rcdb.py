@@ -469,7 +469,8 @@ def install_rcql_executor(*, gadget):
         result = execute_publication(workspace.value, request.value, gadget=binary)
         record_method("gadget-native-assay-query", workspace_id=workspace.record.id,
                       workspace_version=workspace.record.version, request_id=request.record.id,
-                      request_version=request.record.version, result_sha256=hashlib.sha256(result).hexdigest())
+                      request_version=request.record.version, workspace_state_digest=workspace.state_digest,
+                      request_state_digest=request.state_digest, result_sha256=hashlib.sha256(result).hexdigest())
         return result
 
     execute._gadget_rcql_binding = binding

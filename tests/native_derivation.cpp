@@ -118,6 +118,14 @@ int main(int argc, char **argv) {
     write_text(root / "import.json", spec.dump());
     import_assays(root / "import.json", root / "input");
     AssayWorkspace original(root / "input/workspace.rfcxs");
+    check(AssayWorkspace::supports_native_publication("alignment_evidence") &&
+              !AssayWorkspace::supports_native_materialization("alignment_evidence") &&
+              !AssayWorkspace::supports_native_publication("unknown"),
+          "native alignment publication availability or unsupported boundary changed");
+    const auto unknown = admit_record_view(Json::parse(
+        R"({"schema":"gadget.assays.query.v1","operation":"unknown"})"));
+    refuse([&] { original.execute_record(unknown).write(root / "unknown-result.rfcxs"); });
+    check(!fs::exists(root / "unknown-result.rfcxs"), "unsupported native query published output");
     const auto resource_owner =
         std::make_shared<const AssayWorkspace>(root / "input/workspace.rfcxs");
     check_artifact_owners(original.native_publication());
@@ -132,6 +140,10 @@ int main(int argc, char **argv) {
     request.set("channel", Json::string("observation"));
     request.set("recipe", recipe);
     write_text(root / "derive.json", request.dump());
+    auto unsupported_native_recipe = Json::parse(request.dump());
+    unsupported_native_recipe.at("recipe").set("operation", Json::string("read_quality"));
+    refuse([&] { original.materialize_record(admit_record_view(unsupported_native_recipe), root / "unsupported-native"); });
+    check(!fs::exists(root / "unsupported-native"), "unsupported native materialization published output");
     const auto generating_request = read_record(root / "derive.json").native();
     auto adopted = original.materialize_workspace(generating_request, root / "derived");
     check(AssayWorkspace::supports_native_materialization("controlled_coverage") &&
