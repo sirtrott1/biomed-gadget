@@ -50,12 +50,12 @@ int main(int argc, char **argv) {
     const std::string reads = ">q0\r\nAC\r\n>q1\nAAA\n", reference = ">r0\nAC\n>r1\nAC\n";
     auto resources = Json::array();
     const std::string comparisons = "@q0\r\nAC\r\n+\r\nII\r\n@q0\nGT\n+\nII\n";
-    for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}, {"ambiguous", ">a\nAN\n>b\nTA\n"}, {"quality", "@q0\nAC\n+\n!I\n"}, {"comparisons", comparisons}, {"cover", ">a\nACA\n>b\nCAC\n>c\nACA\n"}, {"classes", "2\n1\nA\nB\n2 0 1 3\n"}}) {
+    for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}, {"ambiguous", ">a\nAN\n>b\nTA\n"}, {"quality", "@q0\nAC\n+\n!I\n"}, {"comparisons", comparisons}, {"history-query", "@same\nAAA\n+\nIII\n@same\nAAA\n+\nIII\n"}, {"history-reference", ">r0\nAAA\n>r1\nAAA\n"}, {"cover", ">a\nACA\n>b\nCAC\n>c\nACA\n"}, {"classes", "2\n1\nA\nB\n2 0 1 3\n"}}) {
         const auto filename = id + (id == "quality" ? ".fastq" : ".fa");
         write_text(root / filename, bytes);
         auto resource = Json::parse(R"({"id":"","format":"fasta","source":{"path":"","sha256":""},"method":"Authored source fixture"})");
         resource.set("id", Json::string(id)); resource.at("source").set("path", Json::string(filename));
-        if (id == "quality" || id == "comparisons") resource.set("format", Json::string("fastq"));
+        if (id == "quality" || id == "comparisons" || id == "history-query") resource.set("format", Json::string("fastq"));
         if (id == "classes") resource.set("format", Json::string("salmon_eq"));
         resource.at("source").set("sha256", Json::string("sha256:" + sha256(bytes))); resources.push(resource);
     }
@@ -314,6 +314,42 @@ int main(int argc, char **argv) {
         Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"sequence_splice_discovery","query_resource":"reads","reference_resource":"reference","strands":["+"],"minimum_exon_bases":2,"minimum_intron_bases":4,"maximum_intron_bases":10,"maximum_junctions":1,"motifs":["GT-AG"],"evidence":"Every original exon chain"})"),
         Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"read_overlap_reconstruction","resource":"cover","minimum_overlap":2,"objective":"minimum_suffix_prefix_read_cover","evidence":"Every original read"})")};
     std::vector<NativeRecord> search_publications;
+    auto history_request = Json::parse(searches[0].dump());
+    history_request.set("query_resource", Json::string("history-query"));
+    history_request.set("reference_resource", Json::string("history-reference"));
+    history_request.set("strands", Json::parse(R"(["+"])"));
+    const auto one_history = workspace->execute(history_request, cpu).at("result");
+    history_request.set("edit_histories", Json::string("one_minimum"));
+    check(workspace->execute(history_request, cpu).at("result").dump() == one_history.dump(),
+          "explicit one-history mode changed the compatibility result");
+    history_request.set("edit_histories", Json::string("all_minimum"));
+    const auto all_history_publication = workspace->execute_record(admit_record_view(history_request), cpu);
+    const auto all_history = all_history_publication.at("result").at("result");
+    check(all_history.at("view").at("matches").size() == 12 &&
+              all_history.at("view").at("work").at("minimum_edit_histories").integer() == 28,
+          "complete tied edit history family or repeated original records changed");
+    bool absent_suffix = false;
+    for (std::size_t c = 0; c < all_history.at("children").size(); ++c)
+        verify_routes(NativeRecord::decode(all_history.at("children").at(c).bytes()));
+    for (std::size_t p = 0; p < all_history.at("placements").size(); ++p) {
+        const auto placement = all_history.at("placements").at(p);
+        const auto child = NativeRecord::decode(placement.at("child_publication").bytes());
+        const auto evidence = placement.at("minimum_history_evidence");
+        const auto &suffix = field(child, evidence.at("suffix")).tensor;
+        absent_suffix |= suffix.support().count() != suffix.domain().logical_size();
+        const auto operations = placement.at("minimum_history_operations");
+        const auto count = all_history.at("view").at("matches").at(p).at("minimum_edit_history_count").integer();
+        check(count == operations.size() && (count == 1 || count == 3), "native family selectors lost minimum histories");
+        const auto primary = all_history.at("view").at("matches").at(p).at("route_index").integer();
+        check(primary == placement.at("operation_index").integer(), "primary route context became a family ordinal");
+    }
+    check(absent_suffix, "unreachable edit suffix became supported zero");
+    all_history_publication.write(root / "all-history.rfcxs");
+    check(NativeRecord::read(root / "all-history.rfcxs").encode() == all_history_publication.encode(),
+          "all-history native archive roundtrip changed");
+    auto invalid_history = Json::parse(history_request.dump());
+    invalid_history.set("edit_histories", Json::string("sampled"));
+    refuse([&] { workspace->execute_record(admit_record_view(invalid_history), cpu); });
     for (std::size_t i = 0; i < searches.size(); ++i) {
         const auto publication = workspace->execute_record(admit_record_view(searches[i]), cpu);
         const auto result = publication.at("result").at("result");
@@ -376,6 +412,13 @@ int main(int argc, char **argv) {
     invalid.set("design", spec.at("design")); invalid.set("recipe", impossible);
     refuse([&] {workspace->materialize_workspace(admit_record_view(invalid), root / "invalid");});
     fs::rename(root / "input", root / "input-away"); workspace.reset();
+    NativeRecord::decode(all_history_publication.at("result").at("workspace_publication").bytes())
+        .write(root / "all-history-workspace.rfcxs");
+    const AssayWorkspace history_workspace(root / "all-history-workspace.rfcxs");
+    const auto history_replay = history_workspace.execute_record(
+        NativeRecord::decode(all_history_publication.at("request_publication").bytes()), cpu);
+    check(render_record_view(history_replay.at("result").at("result")).dump() == render_record_view(all_history).dump(),
+          "all-history embedded replay depends on original intake paths");
     for (std::size_t i = 0; i < searches.size(); ++i) {
         const auto publication = NativeRecord::read(root / ("search-" + std::to_string(i) + ".rfcxs"));
         NativeRecord::decode(publication.at("result").at("workspace_publication").bytes())

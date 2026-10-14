@@ -1460,6 +1460,11 @@
           "minimum": 0,
           "description": "Must be strictly less than every declared query length; all admitted placements are retained."
         },
+        "edit_histories": {
+          "enum": ["one_minimum", "all_minimum"],
+          "default": "one_minimum",
+          "description": "Retain one native minimum edit history or every distinct ordered minimum history per placement."
+        },
         "execution": {
           "type": "object",
           "description": "Complete read batches and original reference byte blocks. These execution widths do not limit reads, placements or results.",
