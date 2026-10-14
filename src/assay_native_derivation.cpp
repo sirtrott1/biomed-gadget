@@ -578,14 +578,11 @@ NativeRecord AssayWorkspace::publish_studies(
 }
 Json AssayWorkspace::materialize_record(const NativeRecord &request, const fs::path &destination,
                                         std::shared_ptr<CpuResources> resources) const {
-    if (supports_native_materialization(request.at("recipe"))) {
-        const auto workspace = materialize_workspace(request, destination, std::move(resources));
-        auto result = render_record_view(workspace->native_publication().at("manifest"));
-        result.set("manifest_sha256", Json::string(workspace->digest()));
-        result.set("capabilities", bioinformatics_capabilities());
-        return result;
-    }
-    return materialize(render_record_view(request), destination, std::move(resources));
+    const auto workspace = materialize_workspace(request, destination, std::move(resources));
+    auto result = render_record_view(workspace->native_publication().at("manifest"));
+    result.set("manifest_sha256", Json::string(workspace->digest()));
+    result.set("capabilities", bioinformatics_capabilities());
+    return result;
 }
 bool AssayWorkspace::supports_native_materialization(std::string_view operation) {
     return operation == "controlled_coverage" || operation == "spatial_relations" ||

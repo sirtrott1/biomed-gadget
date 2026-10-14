@@ -207,6 +207,18 @@ def main():
         counts = []
         for fmt in ('sam','bam','cram'):
             evidence = query('evidence-'+fmt,'alignment_evidence',resource='alignments.'+fmt,filter=policy)
+            publication = root/('evidence-'+fmt+'.rfcxs')
+            native = subprocess.run([str(binary), 'assay-query', '--workspace', str(workspace),
+                                     '--request', str(root/('evidence-'+fmt+'-request.json')),
+                                     '--out-record', str(publication)], capture_output=True, text=True)
+            check(native.returncode == 0 and not native.stdout, 'alignment evidence is admitted at the native publication boundary')
+            check(run('record-view', '--input', publication, '--member', 'result')['result'] == evidence,
+                  'native alignment publication preserves every original segment and support value')
+            rewritten = root/('evidence-'+fmt+'-roundtrip.rfcxs')
+            native = subprocess.run([str(binary), 'native-record', '--input', str(publication),
+                                     '--out', str(rewritten)], capture_output=True, text=True)
+            check(native.returncode == 0 and publication.read_bytes() == rewritten.read_bytes(),
+                  'native alignment complete source/request/result archive roundtrips exactly')
             check(len(evidence['selected_record_indices']) == 9 and len(evidence['excluded_record_indices']) == 2,'alignment filters')
             check([(j['intron_start'],j['intron_end'],j['alignment_record_count']) for j in evidence['junctions']] == [(2,7,'1')],'splice skips')
             check(evidence['records'][5]['aligned_blocks'] == [[0,2],[5,7]],'deletion excludes sequenced coverage')

@@ -118,6 +118,23 @@ Native reader and field computation memory remain separate from those Python
 allocations. This API neither creates a bulk encoded-field index nor raises the
 RCDB record size limit.
 
+The native biomedical query contract runs the existing gluing, field transfer
+and allocation producers through exact RCQL workspace and request versions.
+It selects every retained tensor and its final-row window, compares the complete
+original prefix and all tensor values, carriers and support in C++, and checks
+foreign owners, future cutoffs, changed latest versions and store reopening:
+
+```sh
+python -I tests/rcdb_biomedical_queries.py \
+  /path/to/gadget /path/to/gadget_native_field_query \
+  /path/to/gadget_rcdb_field_request /path/to/gadget_native_field_tests \
+  /path/to/gadget_native_biomedical_fields_tests /new/test/directory
+```
+
+Run this optional contract with the matching installed RCDB and RCQL packages.
+Its independent generated inputs qualify native transport and typed execution;
+complete biological inputs and socket upload admission have separate scopes.
+
 An installed Agent can retrieve a publication that its local operator has already
 admitted to the store. Use the existing record interface and select the literal
 record ID and version:

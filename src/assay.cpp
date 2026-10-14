@@ -2841,6 +2841,7 @@ bool AssayWorkspace::supports_native_publication(std::string_view operation) noe
     return supports_native_materialization(operation) || operation == "interval_coverage" ||
            operation == "annotation_features" || operation == "sequence_motifs" ||
            operation == "read_protocol_evidence" || operation == "read_quality" ||
+           operation == "alignment_evidence" ||
            operation == "query_batch" || operation == "inspect" ||
            operation == "native_query" || operation == "relational_persistence" ||
            operation == "indexed_sequence_alignment" ||
@@ -2851,6 +2852,8 @@ bool AssayWorkspace::supports_native_publication(std::string_view operation) noe
 }
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
+    require(request.has("operation") && supports_native_publication(request.at("operation").text()),
+            "unsupported native assay publication operation");
     if (request.has("operation") && request.at("operation").text() == "query_batch") {
         if (!resources) resources = CpuResources::local();
         return query_batch_record(*this, request, resources);
@@ -3173,8 +3176,7 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
             if (name == "result") value = std::move(fields);
         return retain_operation(native_publication(), request, std::move(retained));
     }
-    return retain_operation(native_publication(),request,
-        import_record_view(execute(query,std::move(resources))));
+    throw std::invalid_argument("native assay publication dispatch mismatch");
 }
 Json AssayWorkspace::run(const Json &request,const fs::path &destination,
     std::shared_ptr<CpuResources> resources) const {
