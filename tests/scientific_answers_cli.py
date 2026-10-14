@@ -239,5 +239,59 @@ p,c=prepare(many)
 check(c['scientific_admission']['native']['cells']==600)
 check(admit(p,c,['support-A'])['scientific_admission']['native']['assignment']==[1]*600)
 check(not list(root.glob('.gadget-pipeline-*')))
-(root/'verification.json').write_text(json.dumps(dict(status='PASS',checks=checks,subset_selections=15,native_partitions=2,staged_steps=9,large_requirements=600),indent=2)+'\n')
+# Typed coverage references every complete consensus family, including no-family
+# evidence. Reuse the independent original-read oracle and its own fixtures.
+from read_consensus_cli import qualify as qualify_consensus
+consensus_root = root/'consensus-answers'
+consensus_oracle_checks = qualify_consensus(binary, consensus_root)
+expected_families = [2,4,2,2,4,0,3]
+for index, expected_count in enumerate(expected_families):
+    case = consensus_root/str(index)
+    physical = json.loads((case/'request.json').read_text())
+    expected_result = json.loads((case/'result.json').read_text())
+    consensus_workspace = case/'workspace/workspace.rfcxs'
+    consensus_question = 'Retain all joint consensus families under the declared complete-read unit edits'
+    consensus_intent = dict(schema='gadget.pipeline.intent.v1',profile='sequence',
+        recipes=[dict(id='consensus',purpose='Every source-supported minimizing joint family',
+            goal=dict(method='read_edit_consensus',parameters={k:v for k,v in physical.items() if k not in {'schema','operation'}})),
+            dict(id='quality',purpose='Independent original quality evidence',goal=dict(method='quality',parameters=dict(resource='reads')))],
+        answer_contract=dict(schema='gadget.pipeline.answer.contract.v1',question=consensus_question,
+            requirements=[dict(id='complete-families',observable='read_edit_consensus',bindings=['consensus'])]))
+    p,c = prepare(consensus_intent, workspace=consensus_workspace)
+    check(c['scientific_admission']['status']=='satisfied')
+    missing = admit(p,c,['quality'],prompt=consensus_question,workspace=consensus_workspace)
+    check(missing['status']=='incompatible' and missing['scientific_admission']['status']=='unsatisfied')
+    result = admit(p,c,['consensus'],out='typed-consensus-'+str(index),prompt=consensus_question,workspace=consensus_workspace)
+    check(result['status']=='admitted' and result['scientific_admission']['native']['assignment']==[1])
+    directory = root/('typed-consensus-'+str(index))
+    receipt, leaves = verify_receipts(directory,result)
+    check(len(receipt['answers'])==1 and len(leaves)==1)
+    requirement_id, certificate = leaves[0]
+    check(requirement_id=='complete-families' and certificate['query']==physical)
+    check(receipt['answers'][0]['artifacts'][0]['binding']=='consensus' and
+          receipt['answers'][0]['artifacts'][0]['step']=='consensus')
+    complete = certificate['result']
+    check(complete==expected_result and int(complete['family_count'])==expected_count)
+    check(complete['complete'] and complete['objective']=='minimum_length_then_total_unit_edits')
+    if not expected_count:
+        check(complete['status']=='no_admissible_consensus' and complete['families']==[] and
+              all(complete[name] is None for name in ['minimum_length','minimum_edits','minimum_cost']))
+    source_archive = directory/receipt['answers'][0]['artifacts'][0]['results'][0]['path']
+    source_hash = hashlib.sha256(source_archive.read_bytes()).hexdigest()
+    check(source_hash==receipt['answers'][0]['artifacts'][0]['results'][0]['sha256'].removeprefix('sha256:'))
+    if len(sys.argv)>3:
+        native_consumer=subprocess.run([sys.argv[3], '--consensus-artifact', str(source_archive)],
+            text=True,capture_output=True,timeout=180)
+        check(native_consumer.returncode==0)
+        native_evidence=json.loads(native_consumer.stdout)
+        check(native_evidence['status']=='PASS' and native_evidence['native_checks']>0)
+    # The whole producer remains addressable when all former intake locations move.
+    (case/'workspace').rename(case/'moved-workspace')
+    (case/'reads.fastq').rename(case/'moved-reads.fastq')
+    detached = root/('detached-consensus-'+str(index))
+    shutil.copytree(directory,detached)
+    _, detached_leaves = verify_receipts(detached,result)
+    check(detached_leaves==leaves)
+
+(root/'verification.json').write_text(json.dumps(dict(status='PASS',checks=checks,subset_selections=15,native_partitions=2,staged_steps=9,large_requirements=600,consensus_oracle_checks=consensus_oracle_checks,consensus_families=expected_families),indent=2)+'\n')
 print(json.dumps(dict(status='PASS',checks=checks)))

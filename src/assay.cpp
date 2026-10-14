@@ -2846,8 +2846,8 @@ bool AssayWorkspace::supports_native_publication(std::string_view operation) noe
            operation == "indexed_sequence_alignment" ||
            operation == "reference_sequence_matches" || operation == "sequence_splice_discovery" ||
            operation == "read_overlap_reconstruction" || operation == "read_edit_consensus" ||
-           operation == "relational_gluing" ||
-           operation == "field_transfer" || operation == "allocation_bounds";
+           operation == "relational_gluing" || operation == "field_transfer" ||
+           operation == "allocation_bounds";
 }
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {

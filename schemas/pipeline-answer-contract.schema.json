@@ -49,6 +49,7 @@
               "splice_chains",
               "kmer_structure",
               "read_cover_reconstructions",
+              "read_edit_consensus",
               "constrained_allocations",
               "chain_structure",
               "realized_path_comparison",

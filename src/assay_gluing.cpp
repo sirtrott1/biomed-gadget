@@ -503,14 +503,23 @@ Json allocation_bounds_fields_view(const NativeRecord &record) {
         const auto &upper = retained_tensor(record, sample.at("upper")).tensor;
         auto rows = Json::array();
         for (std::size_t t = 0; t < targets.size(); ++t) {
-            const auto coordinate = coordinates.state(t).value().get_num();
-            require(mpz_fits_ulong_p(coordinate.get_mpz_t()), "allocation target coordinate addressability");
-            const auto lo = lower.state(coordinate.get_ui()).value(), hi = upper.state(coordinate.get_ui()).value();
+            const auto value = coordinates.state(t);
+            require(value && value->get_den() == 1 && *value >= 0,
+                    "allocation target coordinate must be a supported nonnegative integer");
+            const auto coordinate = value->get_num();
+            require(mpz_fits_ulong_p(coordinate.get_mpz_t()) &&
+                        coordinate <= numeric::Integer(std::to_string(addressable)),
+                    "allocation target coordinate addressability");
+            const auto index = static_cast<std::size_t>(coordinate.get_ui());
+            require(index < lower.domain().logical_size() && index < upper.domain().logical_size(),
+                    "allocation target coordinate outside bound domain");
+            const auto lo = lower.state(index), hi = upper.state(index);
+            require(lo && hi, "allocation target coordinate outside retained bound support");
             auto row = Json::object();
             row.set("id", render_record_view(targets.at(t).at("id")));
-            row.set("lower", Json::string(lo.get_str())); row.set("upper", Json::string(hi.get_str()));
-            if (contrast) row.set("direction", Json::string(lo > 0 ? "positive_for_every_allocation" :
-                hi < 0 ? "negative_for_every_allocation" : lo == 0 && hi == 0 ? "zero_for_every_allocation" : "unresolved"));
+            row.set("lower", Json::string(lo->get_str())); row.set("upper", Json::string(hi->get_str()));
+            if (contrast) row.set("direction", Json::string(*lo > 0 ? "positive_for_every_allocation" :
+                *hi < 0 ? "negative_for_every_allocation" : *lo == 0 && *hi == 0 ? "zero_for_every_allocation" : "unresolved"));
             else row.set("identifiable", Json::boolean(lo == hi));
             rows.push(row);
         }
