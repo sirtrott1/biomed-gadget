@@ -72,6 +72,7 @@ def main(binary, consumer, parent):
     queries["empty_stages"]=empty
     queries["batch"]=dict(schema="gadget.assays.query.v1",operation="query_batch",concurrent_jobs=2,
                           queries=[dict(id=name,query=queries[name]) for name in ["coverage","inspect","persistence"]])
+    queries["partition_run"] = dict(queries["partition_order"], concurrent_jobs=2)
     control=save("queries.json",queries)
     process=subprocess.run([str(consumer),str(workspace),str(control),str(root/"native")],text=True,capture_output=True)
     assert process.returncode==0, (process.stdout,process.stderr)

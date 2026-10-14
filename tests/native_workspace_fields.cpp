@@ -193,6 +193,36 @@ void native_query(const AssayWorkspace &workspace, const NativeRecord &request,
             check(p == request.at("partitions").at(i).integer(), "selected original partition order changed");
     }
 }
+void native_run(const AssayWorkspace &workspace, const NativeRecord &request,
+                const NativeRecord &publication, const fs::path &out) {
+    const auto fields = publication.at("result");
+    check(fields.at("schema").text() == "gadget.scientific.fields.v1", "batch run imported numerical metadata");
+    same_source(workspace.native_publication(), fields);
+    const auto results = fields.at("view").at("results");
+    const auto view = render_record_view(fields);
+    check(view.at("schema").text() == "gadget.assays.run.v1" &&
+              Json::parse(read_text(out / "results.json")).dump() == view.dump(), "run native and compatibility receipts differ");
+    check(NativeRecord::read(out / "results.rfcxs").encode() == publication.encode(), "run root archive roundtrip differs");
+    for (std::size_t i = 0; i < results.size(); ++i) {
+        const auto receipt = results.at(i);
+        const auto p = receipt.at("partition").integer().get_ui();
+        check(p == request.at("partitions").at(i).integer(), "run reordered selected partitions");
+        const auto path = out / receipt.at("native_path").text();
+        check(receipt.at("bytes").integer() == fs::file_size(path) &&
+                  receipt.at("sha256").text() == "sha256:" + sha256_file(path), "run file hash or exact bytes differs");
+        const auto child = NativeRecord::read(path);
+        check(child.at("result").at("schema").text() == "gadget.scientific.result.fields.v1", "run child lost actual native mathematics");
+        check(NativeRecord::decode(child.at("request_publication").bytes()).encode() == request.owning_publication().encode(), "run recreated the original worker request");
+        same_source(workspace.study(request.at("assay").text(), p)->native_publication(), child.at("result").at("fields"));
+        check(child.at("request").at("operation").text() == request.at("query").at("operation").text(), "run selected the wrong original request child");
+        (void)replay_scientific_record(child);
+        if (receipt.has("source_index")) {
+            const auto index = NativeRecord::decode(receipt.at("source_index").at("publication").bytes());
+            check(index.at("catalog_sections").at("cells").kind() == NativeRecordKind::Integer, "run catalog was a numeric JSON import");
+        }
+    }
+}
+
 } // namespace
 int main(int argc, char **argv) {
     try {
@@ -204,12 +234,15 @@ int main(int argc, char **argv) {
         for (const auto &name : queries.names()) {
             std::cerr << "checking " << name << "\n";
             const auto request = queries.at(name);
-            const auto answer = workspace.execute_record(request);
+            const bool is_run = name == "partition_run";
+            const auto run_out = out / (name + "-files");
+            const auto answer = is_run ? workspace.run_record(request, run_out) : workspace.execute_record(request);
             const auto operation = request.at("operation").text();
             check(AssayWorkspace::supports_native_publication(operation), "native dispatcher predicate excludes actual producer");
             check(NativeRecord::decode(answer.at("request_publication").bytes()).encode() == queries.encode(),
                   "whole original request publication was recreated");
-            if (operation == "native_query") native_query(workspace, request, answer);
+            if (is_run) native_run(workspace, request, answer, run_out);
+            else if (operation == "native_query") native_query(workspace, request, answer);
             else if (operation == "relational_persistence") persistence(workspace, request, answer);
             else if (operation == "inspect") same_source(workspace.native_publication(), answer);
             else if (operation == "query_batch") {

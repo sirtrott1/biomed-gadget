@@ -3,10 +3,14 @@
 #include <rfc/algebra/materialize.hpp>
 #include <rfc/core/builder.hpp>
 #include <rfc/numeric/sparse_vector.hpp>
+#include <rfc/machine/checked_size.hpp>
 #include <stdexcept>
 
 namespace gadget {
 namespace {
+std::size_t dense_bytes(std::size_t rows, std::size_t columns) {
+    return rfc::machine::checked_size_mul(rfc::machine::checked_size_mul(rows, columns), sizeof(double));
+}
 Vector coefficients(const rfc::numeric::SparseRationalVector &value) {
     Vector out;
     out.reserve(value.nonzeros());
@@ -42,8 +46,9 @@ double norm(const Vector &values) {
         throw std::runtime_error("norm exceeds binary64 output range");
     return std::sqrt(squared);
 }
-Execution::Execution(const Workspace &source, std::string c, std::string r)
-    : source_digest_(source.source_digest), context(std::move(c)), realization(std::move(r)) {
+Execution::Execution(const Workspace &source, std::string c, std::string r,
+                     std::shared_ptr<CpuResources> resources)
+    : source_digest_(source.source_digest), resources_(resources ? std::move(resources) : CpuResources::local()), context(std::move(c)), realization(std::move(r)) {
     if (!source.contexts.contains(context))
         throw std::invalid_argument("unknown context: " + context);
     if (realization != "support" && realization != "rp")
@@ -107,28 +112,30 @@ rfc::approximation::DenseMatrix cross_relation_gram(const Execution &left, const
             "cross Gram requires the same retained source and declared identity carrier");
     if (a.codomain_size() != b.codomain_size())
         throw std::invalid_argument("cross Gram carrier shape mismatch");
-    if (a.domain_size() > 2048 || b.domain_size() > 2048)
-        throw std::invalid_argument("cross Gram relation budget exceeded");
+    (void)left.resources_->readmit();
+    auto reservation = left.resources_->coordinator().reserve(1, dense_bytes(a.domain_size(), b.domain_size()));
     // Executions are built from the same declared ambient identities; no
     // dimension-only identification is used by the calling biomedical recipe.
     rfc::approximation::DenseMatrix result(a.domain_size(), b.domain_size());
     for (std::size_t j = 0; j < b.domain_size(); ++j) {
         auto column = b.apply(rfc::numeric::SparseRationalVector::basis(b.domain_size(), j));
         auto pulled = a.transpose_apply(column);
-        for (const auto &e : pulled.entries())
-            result(e.index, j) = e.value.get_d();
+        for (const auto &e : pulled.entries()) {
+            const auto value = e.value.get_d();
+            if (!std::isfinite(value)) throw std::invalid_argument("cross Gram binary64 range exceeded");
+            result(e.index, j) = value;
+        }
     }
     return result;
 }
 void Execution::prepare_gram() {
+    (void)resources_->readmit();
     if (gram_)
         return;
     auto B = boundary();
     auto n = B.domain_size();
-    if (n > 2048)
-        throw std::invalid_argument("relation-space numerical Green budget exceeded (2048); use a "
-                                    "canonical scalable solver backend");
-    gram_.emplace(n, n);
+    auto reservation = resources_->coordinator().reserve(1, dense_bytes(n, n));
+    rfc::approximation::DenseMatrix prepared(n, n);
     for (std::size_t i = 0; i < n; ++i) {
         auto column = B.apply(rfc::numeric::SparseRationalVector::basis(n, i));
         auto gram_column = B.transpose_apply(column);
@@ -136,12 +143,15 @@ void Execution::prepare_gram() {
             auto value = e.value.get_d();
             if (!std::isfinite(value))
                 throw std::invalid_argument("relation Gram binary64 range exceeded");
-            (*gram_)(e.index, i) = value;
+            prepared(e.index, i) = value;
         }
     }
+    resources_->coordinator().resize(reservation, 0, dense_bytes(n, n));
+    gram_reservation_.emplace(std::move(reservation));
+    gram_.emplace(std::move(prepared));
 }
 Vector Execution::green(const Vector &source, const Rational &lambda, double tolerance,
-                        Json &diagnostic) {
+                        Json &diagnostic, std::optional<GreenWitnesses> *retained) {
     if (lambda <= 0)
         throw std::invalid_argument("Green lambda must be positive");
     if (!std::isfinite(tolerance) || tolerance <= 0 || tolerance > 1e-3)
@@ -153,15 +163,25 @@ Vector Execution::green(const Vector &source, const Rational &lambda, double tol
         throw std::invalid_argument("lambda exceeds numerical recipe range");
     prepare_gram();
     auto B = boundary();
-    auto metric_matrix = metrics_[1].materialize();
-    auto system =
-        rfc::approximation::DenseMatrix::from_exact(metric_matrix).add(gram_->scale(parameter));
+    const auto matrix_bytes = dense_bytes(B.domain_size(), B.domain_size());
+    const auto vector_bytes = rfc::machine::checked_size_mul(B.domain_size(), sizeof(double));
+    const auto peak_bytes = rfc::machine::checked_size_add(rfc::machine::checked_size_mul(matrix_bytes, 2),
+        rfc::machine::checked_size_mul(vector_bytes, 3));
+    auto reservation = resources_->coordinator().reserve(1, peak_bytes);
+    auto system = rfc::approximation::DenseMatrix::from_exact(metrics_[1].materialize());
+    for (std::size_t i = 0; i < B.domain_size(); ++i)
+        for (std::size_t j = 0; j < B.domain_size(); ++j) {
+            // Preserve the separate binary64 multiply and add of scale().add().
+            volatile double scaled = (*gram_)(i, j) * parameter;
+            system(i, j) += scaled;
+            if (!std::isfinite(system(i, j))) throw std::invalid_argument("Green system binary64 range exceeded");
+        }
     auto pulled = B.transpose_apply(source);
-    auto solved = system.solve(approximate_values(pulled));
+    auto solved = binary64_values(system.solve(approximate_values(pulled)));
     // All exact carrier actions and vector algebra remain canonical. The only
     // approximation occurs inside RexGraph's declared binary64 linear solve.
     auto value =
-        rfc::numeric::sub(source, rfc::numeric::scale(lambda, B.apply(binary64_values(solved))));
+        rfc::numeric::sub(source, rfc::numeric::scale(lambda, B.apply(solved)));
     auto residual = rfc::numeric::sub(
         rfc::numeric::add(value, rfc::numeric::scale(lambda, hodge().apply(value))), source);
     double absolute = norm(residual), relative = absolute / std::max(1.0, norm(source));
@@ -177,9 +197,21 @@ Vector Execution::green(const Vector &source, const Rational &lambda, double tol
         "metric",
         Json::string("M0=identity; M1=exact boundary quadrance; zero-column convention=1"));
     diagnostic.set("lambda", exact_number(lambda));
+    auto allocation = Json::object();
+    allocation.set("retained_gram_bytes", Json::string(std::to_string(matrix_bytes)));
+    allocation.set("solve_peak_bytes", Json::string(std::to_string(peak_bytes)));
+    allocation.set("retained_system_bytes", Json::string(std::to_string(retained ? matrix_bytes : 0)));
+    allocation.set("scope", Json::string("Cooperating caller and dense double matrices/vectors; exact source, rational vectors, GMP limbs and returned cross Gram buffers are outside this charge"));
+    diagnostic.set("allocation", allocation);
     if (relative > tolerance)
         throw std::runtime_error("numerical Green residual exceeds requested tolerance: " +
                                  std::to_string(relative));
+    if (retained) {
+        resources_->coordinator().resize(reservation, 0, matrix_bytes);
+        retained->emplace(GreenWitnesses{resources_,
+            std::make_unique<rfc::runtime::CpuResourceCoordinator::Reservation>(std::move(reservation)),
+            std::move(pulled), std::move(solved), std::move(residual), std::move(system), absolute, relative, tolerance});
+    }
     return value;
 }
 Vector union_field(const Workspace &source, const std::string &channel) {

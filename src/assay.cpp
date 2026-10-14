@@ -3241,16 +3241,6 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
     } else
         for (std::size_t i = 0; i < packets.size(); ++i)
             selected.push_back(i);
-    auto leaf = Json::parse(request.dump());
-    if (leaf.has("concurrent_jobs")) {
-        auto stripped = Json::object();
-        json_object_object_foreach(leaf.raw(), name, value) {
-            (void)value;
-            if (std::string(name) != "concurrent_jobs")
-                stripped.set(name, leaf.at(name));
-        }
-        leaf = stripped;
-    }
     // Use the identical query admission/partition policy as execute().
     const auto op = request.at("query").at("operation").text();
     require(packets.size() == 1 || op == "paired_field_contrasts" || op == "field_summary" ||
@@ -3261,6 +3251,8 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
         session.validate(request.at("query"));
     }
     const auto q = request.at("query");
+    const auto native_query = retained_request.at("query");
+    using V = scientific_detail::ResultValue;
     const auto workers =
         q.has("workers")
             ? count(q.at("workers"), resources->coordinator().capacity(), "native query workers")
@@ -3277,8 +3269,9 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
         {requested_concurrency, selected.size(), resources->coordinator().capacity() / workers});
     fs::create_directories(fs::absolute(destination).parent_path());
     require(fs::create_directory(destination), "assay results creation conflict");
-    auto entries = Json::array();
+    auto entries = V::array();
     try {
+        scientific_detail::ResultFields collection(native_publication());
         // Joined jobs write their own certificates and retain only receipts.
         // The actual assigned concurrency determines each wave's size.
         for (std::size_t begin = 0; begin < selected.size();) {
@@ -3291,14 +3284,13 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
                 const auto p = selected[i];
                 const rfc::runtime::WorkKey key{i + 1, 1};
                 keys.push_back(key);
-                jobs.push_back(rfc::runtime::WorkJob::make<RetainedRecord>(
-                    key, {workers, buffer, sizeof(RetainedRecord)}, {},
-                    [this, p, id, q, resources, destination](const auto &, auto &assigned,
+                jobs.push_back(rfc::runtime::WorkJob::make<V>(
+                    key, {workers, buffer, sizeof(V)}, {},
+                    [this, p, id, native_query, resources, destination](const auto &, auto &assigned,
                                                              std::stop_token stop) {
                         if (stop.stop_requested())
                             throw rfc::runtime::ExecutionCancelled{};
                         ScientificSession session(study(id, p), resources->assigned(assigned));
-                        const auto native_query=admit_record_view(q);
                         const auto native_answer=session.execute_record(native_query);
                         native_answer.write(destination/("partition-"+std::to_string(p)+".rfcxs"));
                         const auto answer=render_record_view(native_answer.at("result"));
@@ -3306,13 +3298,16 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
                         const auto path = "partition-" + std::to_string(p) + ".json";
                         write_text(destination / path, bytes);
                         const auto native_path="partition-"+std::to_string(p)+".rfcxs";
-                        auto receipt = file_record(native_path, read_text(destination/native_path));
-                        receipt.set("view_path",Json::string(path));
-                        receipt.set("partition", cardinality(p));
-                        receipt.set("source_digest", answer.at("source_digest"));
-                        receipt.set("certificate_sha256", answer.at("certificate_sha256"));
-                        receipt.set("native_path",Json::string(native_path));
-                        return RetainedRecord(receipt);
+                        auto receipt = V::object();
+                        receipt.set("path", V::string(native_path));
+                        receipt.set("sha256", V::string("sha256:" + sha256_file(destination / native_path)));
+                        receipt.set("bytes", V::count(fs::file_size(destination / native_path)));
+                        receipt.set("view_path", V::string(path));
+                        receipt.set("partition", V::count(p));
+                        receipt.set("source_digest", V::string(answer.at("source_digest").text()));
+                        receipt.set("certificate_sha256", V::string(answer.at("certificate_sha256").text()));
+                        receipt.set("native_path", V::string(native_path));
+                        return receipt;
                     }));
             }
             rfc::runtime::WorkGraphLimits limits;
@@ -3320,43 +3315,50 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
             limits.edges = 0;
             limits.depth = 1;
             limits.in_flight = concurrency;
-            limits.retained_result_bytes = rfc::machine::checked_size_mul(jobs.size(),sizeof(RetainedRecord));
+            limits.retained_result_bytes = rfc::machine::checked_size_mul(jobs.size(),sizeof(V));
             const rfc::runtime::WorkGraph graph(std::move(jobs), limits);
             auto work = graph.submit(resources->coordinator());
             work.wait();
             for (std::size_t j = 0; j < keys.size(); ++j) {
                 const auto completion = work.completion(keys[j]);
-                const auto answer = completion.result<RetainedRecord>();
+                const auto answer = completion.result<V>();
                 const auto p = selected[begin + j];
-                auto item = Json::parse(answer->dump());
+                auto item = *answer;
                 const auto receipt = completion.receipt();
-                item.set("workers", cardinality(receipt.demand.workers));
-                item.set("execution_ns", Json::string(std::to_string(receipt.execution_ns)));
-                item.set("queue_ns", Json::string(std::to_string(receipt.queue_ns)));
+                item.set("workers", V::count(receipt.demand.workers));
+                item.set("execution_ns", V::string(std::to_string(receipt.execution_ns)));
+                item.set("queue_ns", V::string(std::to_string(receipt.queue_ns)));
                 if (packets.at(p).has("carrier_ids"))
-                    item.set("carrier_ids", packets.at(p).at("carrier_ids"));
+                    item.set("carrier_ids", V(packets.at(p).at("carrier_ids").native().unbound_value()));
                 else
-                    item.set("source_index", study(id, p)->source_index());
+                    item.set("source_index", collection.publication(study(id, p)->source_index_record()));
                 entries.push(item);
             }
             begin = end;
         }
-        auto result = Json::object();
-        result.set("schema", Json::string("gadget.assays.run.v1"));
-        result.set("source_digest", Json::string(digest()));
-        result.set("query", request);
+        auto result = V::object();
+        result.set("schema", V::string("gadget.assays.run.v1"));
+        result.set("source_digest", V::string(digest()));
+        result.set("query", V(request));
         result.set("results", entries);
-        result.set("concurrent_jobs", cardinality(concurrency));
+        result.set("concurrent_jobs", V::count(concurrency));
         result.set(
             "retention",
-            Json::string(
+            V::string(
                 "certificate files written by joined native jobs; artifact receipts retained"));
-        result.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
-        result.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-        result = seal(result, "certificate_sha256");
-        auto publication=retain_operation(native_publication(),retained_request,import_record_view(result));
+        result.set("gadget_sha256", V::string(GADGET_SOURCE_SHA256));
+        result.set("rexgraph_sha256", V::string(GADGET_REXGRAPH_SHA256));
+        auto owner = collection.finish(std::move(result));
+        auto sealed = owner.unbound_value();
+        for (auto &[name, value] : std::get<NativeRecordValue::Object>(sealed.data).members)
+            if (name == "view")
+                std::get<NativeRecordValue::Object>(value.data).members.emplace_back(
+                    "certificate_sha256", NativeRecordValue(std::string("sha256:") +
+                        sha256(render_record_view(owner).dump())));
+        owner = owner.derive(std::move(sealed));
+        auto publication = retain_operation(owner, retained_request, owner.unbound_value());
         publication.write(destination / "results.rfcxs");
-        write_text(destination / "results.json", result.dump() + "\n");
+        write_text(destination / "results.json", render_record_view(publication.at("result")).dump() + "\n");
         return publication;
     } catch (...) {
         fs::remove_all(destination);
@@ -3365,7 +3367,7 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
 }
 Json bioinformatics_capabilities() {
     auto result = Json::parse(
-        R"({"schema":"gadget.bioinformatics.capabilities.v1","matrix_formats":["dense_tsv","matrix_market"],"physical_formats":["bed","gtf","fasta","fastq"],"workspace_methods":["native_query","interval_coverage"],"allocation_method":"allocation_bounds","existing_native_methods":["paired_field_contrasts","controlled_pairings","trajectory_structure","structure_transition","local_sections","green_response","tensor_window","field_summary","boundary","adjoint","hodge","typed_moment"],"unavailable_services":["streaming_multigigabase_gapped_alignment","gapped_splice_alignment","error_correcting_consensus_assembly","unbounded_integer_optimization","population_significance_without_a_declared_null_model","automatic_cell_type_or_causal_inference","integral_or_zigzag_persistence"],"limits":{}})");
+        R"({"schema":"gadget.bioinformatics.capabilities.v1","matrix_formats":["dense_tsv","matrix_market"],"physical_formats":["bed","gtf","fasta","fastq"],"workspace_methods":["native_query","interval_coverage"],"allocation_method":"allocation_bounds","existing_native_methods":["paired_field_contrasts","controlled_pairings","trajectory_structure","structure_transition","local_sections","green_response","tensor_window","field_summary","boundary","adjoint","hodge","typed_moment"],"unavailable_services":["streaming_multigigabase_gapped_alignment","quality_scored_splice_alignment","error_correcting_consensus_assembly","unbounded_integer_optimization","population_significance_without_a_declared_null_model","automatic_cell_type_or_causal_inference","integral_or_zigzag_persistence"],"limits":{}})");
 #if GADGET_HAS_HDF5
     auto formats = result.at("matrix_formats");
     formats.push(Json::string("h5ad"));
@@ -3430,7 +3432,7 @@ Json bioinformatics_capabilities() {
     result.set(
         "sequence_profiles",
         Json::parse(
-            R"({"indexed_sequence_alignment":"Complete unit-edit substring search for literal ACGT reads, with an injective DNA seed index and native exact routes","sequence_splice_discovery":"Complete exact exon chains with sequence-derived junctions, declared motif/length/junction constraints and complete source-sized output","read_overlap_reconstruction":"Every minimum suffix-prefix cover of all declared source reads, with native categorical section gluing and all alternative spellings"})"));
+            R"({"indexed_sequence_alignment":"Complete unit-edit substring search for literal ACGT reads, with an injective DNA seed index and one or every minimum ordered native edit history","sequence_splice_discovery":"Complete literal or declared unit-edit exon histories with sequence-derived junctions, motif/length/junction constraints and every minimum ordered history per placement","read_overlap_reconstruction":"Every minimum suffix-prefix cover of all declared source reads, with native categorical section gluing and all alternative spellings"})"));
     result.set(
         "composite_sequence_execution",
         Json::parse(
