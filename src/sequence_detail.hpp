@@ -434,6 +434,8 @@ inline AssayFieldsSource collection_source(const std::string &schema, const Json
     N::Object declaration;
     N::Array couplings;
     couplings.elements.reserve(placements.size());
+    const auto &matches = std::get<N::Array>(std::find_if(view.members.begin(), view.members.end(),
+        [](const auto &item) { return item.first == "matches"; })->second.data);
     for (std::size_t i = 0; i < placements.size(); ++i) {
         const auto &p = placements[i];
         N::Object coupling;
@@ -451,6 +453,20 @@ inline AssayFieldsSource collection_source(const std::string &schema, const Json
         member(coupling, "child_publication", children.elements.at(p.child));
         member(coupling, "child_context", integer(p.child));
         member(coupling, "operation_index", integer(p.operation));
+        const auto &match = std::get<N::Object>(matches.elements.at(i).data);
+        const auto family = std::find_if(match.members.begin(), match.members.end(),
+            [](const auto &item) { return item.first == "minimum_edit_histories"; });
+        if (family != match.members.end()) {
+            N::Array operations;
+            for (const auto &history : std::get<N::Array>(family->second.data).elements) {
+                const auto &members = std::get<N::Object>(history.data).members;
+                element(operations, std::find_if(members.begin(), members.end(),
+                    [](const auto &item) { return item.first == "route_index"; })->second);
+            }
+            member(coupling, "minimum_history_operations", std::move(operations));
+            member(coupling, "minimum_history_evidence", std::find_if(match.members.begin(), match.members.end(),
+                [](const auto &item) { return item.first == "minimum_history_evidence"; })->second);
+        }
         element(couplings, N(N::Owned{0, rfc::storage::StableCellKey{{1}, i + 1}, {},
             std::make_shared<const N>(std::move(coupling))}));
     }
@@ -479,6 +495,16 @@ inline Json routed_collection_view(const NativeRecord &record) {
             auto match = result.at("matches").at(i);
             json_object_object_del(match.raw(), "route_index");
             match.set("route", retained_route_view(child.at("routes").at(route)));
+            if (matches.at(i).has("minimum_edit_histories")) {
+                const auto histories = matches.at(i).at("minimum_edit_histories");
+                for (std::size_t h = 0; h < histories.size(); ++h) {
+                    auto history = match.at("minimum_edit_histories").at(h);
+                    const auto index = histories.at(h).at("route_index").integer().get_ui();
+                    json_object_object_del(history.raw(), "route_index");
+                    history.set("route", retained_route_view(child.at("routes").at(index)));
+                }
+                json_object_object_del(match.raw(), "minimum_history_evidence");
+            }
         }
     }
     result.set("carriers", carriers);

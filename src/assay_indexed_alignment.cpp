@@ -1,4 +1,4 @@
-#include "sequence_detail.hpp"
+#include "sequence_route_witnesses.hpp"
 
 namespace gadget::assay_detail {
 AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, const Json &request) {
@@ -6,13 +6,18 @@ AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, 
     members(request,
             {"schema", "operation", "query_resource", "reference_resource", "strands",
              "maximum_edits", "scoring", "evidence"},
-            {"execution"});
+            {"execution", "edit_histories"});
     require(text(request.at("scoring")) == "unit_edit_cost",
             "indexed search requires unit edit costs");
     (void)text(request.at("evidence"), 16384);
     const auto errors = count(request.at("maximum_edits"), std::numeric_limits<std::size_t>::max(),
                               "indexed edit budget");
     const auto orientations = strands(request);
+    const auto history_mode = request.has("edit_histories") ? text(request.at("edit_histories"))
+                                                          : std::string("one_minimum");
+    require(history_mode == "one_minimum" || history_mode == "all_minimum",
+            "indexed edit history declaration");
+    const bool all_histories = history_mode == "all_minimum";
     const auto &query_image = images.at(text(request.at("query_resource")));
     const SequenceSource queries(query_image);
     const auto &image = images.at(text(request.at("reference_resource")));
@@ -41,6 +46,8 @@ AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, 
                                      RawByteSource(2, std::as_bytes(std::span(image.bytes)))};
     std::vector<std::size_t> query_matches(queries.size());
     std::size_t candidate_count = 0, vertex_count = 0, relation_count = 0, native_calls = 0;
+    std::size_t witness_calls = 0;
+    rfc::numeric::Integer history_count{0};
     std::size_t scans = 0, seed_hits = 0, blocks = 0, partitions = 0, peak_block = 0;
     std::size_t peak_queries = 0, peak_query_bases = 0, peak_window = 0;
     std::set<std::size_t> seed_lengths;
@@ -161,6 +168,11 @@ AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, 
                 const auto source = routes.freeze();
                 const auto graph = rfc::view::project_pairwise_directed(source, routes.costs());
                 const auto origin = coordinates.at({0, 0});
+                for (const auto &step : routes.steps) {
+                    const auto from = positions.at(step.from), to = positions.at(step.to);
+                    require(to.first >= from.first && to.second >= from.second && to != from,
+                            "indexed edit declarations must strictly advance source prefixes");
+                }
                 auto native = route_source(source, routes);
                 SourceGradeFields fields(native.endpoint);
                 N::Array accepted, native_routes;
@@ -174,11 +186,17 @@ AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, 
                         continue;
                     auto m = N::Object{};
                     std::string aligned_query, aligned_reference;
-                    for (auto e : route.relations) {
-                        const auto [i, j] = positions[routes.steps[e].from];
-                        aligned_query += operations[e] == 'D' ? '-' : q.bases[i];
-                        aligned_reference += operations[e] == 'I' ? '-' : reference[j];
-                    }
+                    const auto spell = [&](const std::vector<std::uint32_t> &ordered) {
+                        std::pair<std::string, std::string> result;
+                        result.first.reserve(ordered.size()); result.second.reserve(ordered.size());
+                        for (const auto e : ordered) {
+                            const auto [i, j] = positions.at(routes.steps.at(e).from);
+                            result.first += operations.at(e) == 'D' ? '-' : q.bases.at(i);
+                            result.second += operations.at(e) == 'I' ? '-' : reference.at(j);
+                        }
+                        return result;
+                    };
+                    std::tie(aligned_query, aligned_reference) = spell(route.relations);
                     member(m, "query_id", N(queries.id(q.read)));
                     member(m, "query_record_index", integer(q.read));
                     member(m, "reference_id", N(refs.id(r)));
@@ -190,8 +208,79 @@ AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, 
                     member(m, "aligned_reference", N(aligned_reference));
                     member(m, "query_evidence", import_record_view(queries.evidence(q.read)));
                     member(m, "reference_evidence", import_record_view(refs.evidence(r)));
-                    member(m, "route_index", integer(native_routes.elements.size()));
+                    const auto chosen_index = native_routes.elements.size();
+                    member(m, "route_index", integer(chosen_index));
                     element(native_routes, retain_route(fields, source, routes, route.relations, origin, target, route.distance));
+                    if (all_histories) {
+                        const CompleteRouteWitnesses witnesses(graph, graph.object_index(origin + 1),
+                            graph.object_index(target + 1), true, route);
+                        witnesses.verify(rfc::field::boundary_matrix(source, {1}), routes.costs(), origin, target);
+                        witness_calls = rfc::machine::checked_size_add(witness_calls,
+                            rfc::machine::checked_size_add(witnesses.histories.size() - 1,
+                                                          witnesses.unreachable_suffix_vertices.size()));
+                        N::Array witness_indices;
+                        witness_indices.elements.reserve(witnesses.histories.size());
+                        for (std::size_t w = 0; w < witnesses.histories.size(); ++w) {
+                            const auto &history = witnesses.histories[w];
+                            const auto index = w == 0 ? chosen_index : native_routes.elements.size();
+                            if (w != 0) element(native_routes, retain_route(fields, source, routes,
+                                history.route.relations, history.from, history.to, history.route.distance));
+                            element(witness_indices, integer(index));
+                        }
+                        N::Object evidence;
+                        member(evidence, "prefix", fields.field("minimum_history.prefix", 0, witnesses.prefix));
+                        std::vector<std::size_t> viable;
+                        viable.reserve(witnesses.suffix.size());
+                        for (std::size_t v = 0; v < witnesses.suffix.size(); ++v)
+                            if (witnesses.suffix_reachable[v]) viable.push_back(v);
+                        member(evidence, "suffix", fields.column("minimum_history.suffix", 0, witnesses.suffix.size(),
+                            [&](auto v) { return witnesses.suffix[v]; },
+                            rfc::numeric::StructuralSupport::sparse(witnesses.suffix.size(), viable)));
+                        member(evidence, "witness_routes", std::move(witness_indices));
+                        const auto tight = [&](std::size_t e) {
+                            const auto &step = routes.steps.at(e);
+                            return witnesses.suffix_reachable[step.to] &&
+                                witnesses.prefix[step.from] + step.cost + witnesses.suffix[step.to] == route.distance;
+                        };
+                        member(evidence, "optimal_support", fields.column("minimum_history.optimal", 1,
+                            routes.steps.size(), [&](auto e) { return Rational(tight(e) ? 1 : 0); }));
+                        N::Array family;
+                        rfc::numeric::Integer count{0};
+                        std::vector<std::uint32_t> ordered;
+                        struct Frame { std::uint32_t vertex; std::size_t next; };
+                        std::vector<Frame> stack{{static_cast<std::uint32_t>(origin), 0}};
+                        const auto path_width = rfc::machine::checked_size_add(q.bases.size(), width);
+                        ordered.reserve(path_width);
+                        stack.reserve(rfc::machine::checked_size_add(path_width, 1));
+                        while (!stack.empty()) {
+                            auto &frame = stack.back();
+                            const auto &outgoing = graph.outgoing(frame.vertex);
+                            if (frame.vertex == target) {
+                                const auto index = ordered == route.relations ? chosen_index : native_routes.elements.size();
+                                if (index != chosen_index) element(native_routes, retain_route(fields, source, routes,
+                                    ordered, origin, target, route.distance));
+                                auto [aq, ar] = spell(ordered);
+                                N::Object history;
+                                member(history, "route_index", integer(index));
+                                member(history, "aligned_query", std::move(aq));
+                                member(history, "aligned_reference", std::move(ar));
+                                element(family, std::move(history)); ++count;
+                                stack.pop_back(); if (!stack.empty()) ordered.pop_back();
+                            } else if (frame.next == outgoing.size()) {
+                                stack.pop_back(); if (!stack.empty()) ordered.pop_back();
+                            } else {
+                                const auto &edge = graph.edge(outgoing[frame.next++]);
+                                if (!tight(edge.source_relation)) continue;
+                                ordered.push_back(edge.source_relation);
+                                stack.push_back({edge.target_object, 0});
+                            }
+                        }
+                        require(count > 0, "native minimum edit history family is empty");
+                        history_count += count;
+                        member(m, "minimum_edit_history_count", std::move(count));
+                        member(m, "minimum_edit_histories", std::move(family));
+                        member(m, "minimum_history_evidence", std::move(evidence));
+                    }
                     element(accepted, m);
                     query_matches[q.read] =
                         rfc::machine::checked_size_add(query_matches[q.read], 1);
@@ -224,7 +313,10 @@ AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, 
                     const auto end = std::get<rfc::numeric::Integer>(
                         std::find_if(m.members.begin(), m.members.end(),
                             [](const auto &entry) { return entry.first == "end"; })->second.data).get_ui();
-                    placements.push_back({q.read, r, {}, carrier_index, i, {{start, end}}});
+                    const auto operation = std::get<rfc::numeric::Integer>(
+                        std::find_if(m.members.begin(), m.members.end(),
+                            [](const auto &entry) { return entry.first == "route_index"; })->second.data).get_ui();
+                    placements.push_back({q.read, r, {}, carrier_index, operation, {{start, end}}});
                     member(m, "carrier", integer(carrier_index));
                     element(matches, m);
                 }
@@ -260,6 +352,10 @@ AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, 
     member(work, "route_vertices", integer(vertex_count));
     member(work, "route_relations", integer(relation_count));
     member(work, "native_route_calls", integer(native_calls));
+    if (all_histories) {
+        member(work, "native_witness_route_calls", integer(witness_calls));
+        member(work, "minimum_edit_histories", std::move(history_count));
+    }
     member(out, "matches", matches);
     member(out, "queries", summaries);
     member(out, "work", work);
@@ -273,11 +369,13 @@ AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, 
                 "seed locates the start within e bases of its query offset. Every path of cost at "
                 "most e has |query_prefix-reference_prefix|<=e; omitted vertices cannot belong to "
                 "an admitted path. Every nonempty endpoint length from m-e to m+e is tested."));
+    if (all_histories) member(out, "edit_histories", std::string("all_minimum"));
     member(out,
         "search_universe",
-        N("All nonempty contiguous reference substrings on the specified strands, with "
+        N(std::string("All nonempty contiguous reference substrings on the specified strands, with "
                      "a full literal ACGT query and unit-cost substitution, insertion and deletion "
-                     "budget. One exact minimizing edit history is retained per placement."));
+                     "budget. ") + (all_histories ? "Every exact minimizing ordered edit history is retained per placement."
+                                                  : "One exact minimizing edit history is retained per placement.")));
     return collection_source("gadget.sequence.indexed.fields.v1", request, query_image, image, queries, refs,
                              placements, std::move(out), std::move(children), std::move(contexts), std::move(sources));
 }

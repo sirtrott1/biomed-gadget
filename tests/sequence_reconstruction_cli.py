@@ -141,6 +141,62 @@ def main():
         for summary in answer['queries']:
             check(summary['matches'] == sum(m[0] == summary['query_id'] for m in expected), 'unmatched and matched source identities')
 
+    def minimum_histories(a, b):
+        distance = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+        for i in range(len(a) + 1):
+            distance[i][0] = i
+        for j in range(len(b) + 1):
+            distance[0][j] = j
+        for i, x in enumerate(a, 1):
+            for j, y in enumerate(b, 1):
+                distance[i][j] = min(distance[i-1][j] + 1, distance[i][j-1] + 1,
+                                     distance[i-1][j-1] + (x != y))
+        histories = []
+        pending = [(len(a), len(b), ())]
+        while pending:
+            i, j, reversed_steps = pending.pop()
+            if i == j == 0:
+                histories.append(tuple(reversed(reversed_steps)))
+            if i and distance[i-1][j] + 1 == distance[i][j]:
+                pending.append((i-1, j, reversed_steps + ((i-1, j, i, j),)))
+            if j and distance[i][j-1] + 1 == distance[i][j]:
+                pending.append((i, j-1, reversed_steps + ((i, j-1, i, j),)))
+            if i and j and distance[i-1][j-1] + (a[i-1] != b[j-1]) == distance[i][j]:
+                pending.append((i-1, j-1, reversed_steps + ((i-1, j-1, i, j),)))
+        return histories
+
+    family_cases = {}
+    for errors in range(3):
+        req = dict(schema='gadget.assays.query.v1', **dict(indexed, maximum_edits=errors,
+                                                       edit_histories='all_minimum'))
+        answer = run('assay-query', '--workspace', workspace, '--request',
+                     save('minimum-families-' + str(errors) + '-request.json', req))
+        save('minimum-families-' + str(errors) + '-result.json', answer)
+        family_cases[str(errors)] = answer
+        total = 0
+        for m in answer['result']['matches']:
+            q = queries[m['query_id']] if m['strand'] == '+' else reverse(queries[m['query_id']])
+            r = reference[m['reference_id']][m['start']:m['end']]
+            expected = minimum_histories(q, r)
+            carrier = answer['result']['carriers'][m['carrier']]
+            positions = carrier['prefix_coordinates']
+            observed = []
+            for history in m['minimum_edit_histories']:
+                route = history['route']
+                observed.append(tuple(tuple(positions[carrier['steps'][e][0]] +
+                                            positions[carrier['steps'][e][1]])
+                                      for e in route['ordered_relations']))
+                verify_route(route, carrier, int(m['minimum_edits']), positions.index([0, 0]),
+                             positions.index([len(q), len(r)]))
+                check(history['aligned_query'].replace('-', '') == q and
+                      history['aligned_reference'].replace('-', '') == r,
+                      'minimum history preserves complete oriented source words')
+            check(sorted(observed) == sorted(expected) and len(observed) == int(m['minimum_edit_history_count']),
+                  'independent complete ordered minimum history family')
+            total += len(observed)
+        check(total == int(answer['result']['work']['minimum_edit_histories']), 'exact total minimum family count')
+    save('minimum-history-families.json', family_cases)
+
     splice = dict(operation='sequence_splice_discovery', query_resource='splice-queries.fa', reference_resource='splice-reference.fa',
                   strands=['+', '-'], minimum_exon_bases=3, minimum_intron_bases=4, maximum_intron_bases=10,
                   maximum_junctions=2, motifs=['GT-AG'], evidence='Discover all exact exon chains from reference sequence')
