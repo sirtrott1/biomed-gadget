@@ -132,6 +132,9 @@ Json indexed_alignment_fields_view(const NativeRecord &record);
 Json reference_match_fields_view(const NativeRecord &record);
 Json splice_search_fields_view(const NativeRecord &record);
 Json read_reconstruction_fields_view(const NativeRecord &record);
+AssayFieldsSource read_consensus_fields_source(const ResourceImages &images, const Json &request);
+Json read_consensus_fields_view(const NativeRecord &record);
+Json read_consensus(const ResourceImages &images, const Json &request);
 Json query_batch(const AssayWorkspace &workspace, const Json &request,
                  const std::shared_ptr<CpuResources> &resources);
 NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRecord &request,

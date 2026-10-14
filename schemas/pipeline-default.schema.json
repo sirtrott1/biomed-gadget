@@ -4441,6 +4441,79 @@
               "parameters"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "read_edit_consensus"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "resource": {
+                    "$ref": "assays-query.schema.json#/oneOf/29/properties/resource"
+                  },
+                  "strands": {
+                    "$ref": "assays-query.schema.json#/oneOf/29/properties/strands"
+                  },
+                  "maximum_edits": {
+                    "$ref": "assays-query.schema.json#/oneOf/29/properties/maximum_edits"
+                  },
+                  "minimum_paired_bases": {
+                    "$ref": "assays-query.schema.json#/oneOf/29/properties/minimum_paired_bases"
+                  },
+                  "objective": {
+                    "$ref": "assays-query.schema.json#/oneOf/29/properties/objective"
+                  },
+                  "ambiguity": {
+                    "$ref": "assays-query.schema.json#/oneOf/29/properties/ambiguity"
+                  },
+                  "evidence": {
+                    "$ref": "assays-query.schema.json#/oneOf/29/properties/evidence"
+                  }
+                },
+                "required": [
+                  "resource",
+                  "strands",
+                  "maximum_edits",
+                  "minimum_paired_bases",
+                  "objective",
+                  "ambiguity",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
           }
         ]
       }
