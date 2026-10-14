@@ -1748,6 +1748,12 @@
                   },
                   "motifs": {
                     "$ref": "assays-query.schema.json#/oneOf/20/properties/motifs"
+                  },
+                  "maximum_edits": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/maximum_edits"
+                  },
+                  "scoring": {
+                    "$ref": "assays-query.schema.json#/oneOf/20/properties/scoring"
                   }
                 },
                 "required": [
@@ -1761,7 +1767,11 @@
                   "maximum_junctions",
                   "motifs"
                 ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "dependentRequired": {
+                  "maximum_edits": ["scoring"],
+                  "scoring": ["maximum_edits"]
+                }
               },
               "workers": {
                 "type": "integer",

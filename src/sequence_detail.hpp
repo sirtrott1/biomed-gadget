@@ -436,6 +436,8 @@ inline AssayFieldsSource collection_source(const std::string &schema, const Json
     couplings.elements.reserve(placements.size());
     const auto &matches = std::get<N::Array>(std::find_if(view.members.begin(), view.members.end(),
         [](const auto &item) { return item.first == "matches"; })->second.data);
+    const bool edited_splice = text(request.at("operation")) == "sequence_splice_discovery" &&
+                               request.has("maximum_edits");
     for (std::size_t i = 0; i < placements.size(); ++i) {
         const auto &p = placements[i];
         N::Object coupling;
@@ -450,6 +452,21 @@ inline AssayFieldsSource collection_source(const std::string &schema, const Json
             element(blocks, std::move(block));
         }
         member(coupling, "reference_blocks", std::move(blocks));
+        if (edited_splice) {
+            N::Array introns;
+            for (std::size_t b = 1; b < p.blocks.size(); ++b) {
+                const auto begin = p.blocks[b - 1].second, end = p.blocks[b].first;
+                require(begin <= end, "splice original intron span order");
+                N::Object intron;
+                member(intron, "begin", integer(begin)); member(intron, "end", integer(end));
+                member(intron, "bytes", original_bases(reference_source, 2, p.reference, begin, end - begin));
+                element(introns, std::move(intron));
+            }
+            member(coupling, "reference_introns", std::move(introns));
+            const auto &match = std::get<N::Object>(matches.elements.at(i).data);
+            member(coupling, "minimum_history_group", std::find_if(match.members.begin(), match.members.end(),
+                [](const auto &item) { return item.first == "minimum_history_group"; })->second);
+        }
         member(coupling, "child_publication", children.elements.at(p.child));
         member(coupling, "child_context", integer(p.child));
         member(coupling, "operation_index", integer(p.operation));
@@ -464,9 +481,10 @@ inline AssayFieldsSource collection_source(const std::string &schema, const Json
                     [](const auto &item) { return item.first == "route_index"; })->second);
             }
             member(coupling, "minimum_history_operations", std::move(operations));
-            member(coupling, "minimum_history_evidence", std::find_if(match.members.begin(), match.members.end(),
-                [](const auto &item) { return item.first == "minimum_history_evidence"; })->second);
         }
+        const auto history_evidence = std::find_if(match.members.begin(), match.members.end(),
+            [](const auto &item) { return item.first == "minimum_history_evidence"; });
+        if (history_evidence != match.members.end()) member(coupling, "minimum_history_evidence", history_evidence->second);
         element(couplings, N(N::Owned{0, rfc::storage::StableCellKey{{1}, i + 1}, {},
             std::make_shared<const N>(std::move(coupling))}));
     }
@@ -503,11 +521,14 @@ inline Json routed_collection_view(const NativeRecord &record) {
                     json_object_object_del(history.raw(), "route_index");
                     history.set("route", retained_route_view(child.at("routes").at(index)));
                 }
-                json_object_object_del(match.raw(), "minimum_history_evidence");
             }
+            json_object_object_del(match.raw(), "minimum_history_evidence");
         }
     }
     result.set("carriers", carriers);
+    if (result.has("minimum_history_groups"))
+        for (std::size_t g = 0; g < result.at("minimum_history_groups").size(); ++g)
+            json_object_object_del(result.at("minimum_history_groups").at(g).raw(), "minimum_history_evidence");
     return result;
 }
 } // namespace gadget::assay_detail::sequence

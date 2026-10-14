@@ -1,11 +1,352 @@
-#include "sequence_detail.hpp"
+#include "sequence_route_witnesses.hpp"
+#include <array>
+#include <numeric>
 
 namespace gadget::assay_detail {
+namespace {
+struct EditedSpliceState {
+    std::size_t query, reference, edits, junctions, query_span, reference_span;
+    auto operator<=>(const EditedSpliceState &) const = default;
+};
+struct EditedSpliceStep {
+    std::size_t from, to;
+    char operation;
+    std::string motif;
+};
+AssayFieldsSource edited_splice_fields_source(
+    const Json &request, const ResourceImage &query_image, const ResourceImage &reference_image,
+    const SequenceSource &query_source, const SequenceSource &reference_source,
+    const std::vector<SequenceRecord> &queries, const std::vector<SequenceRecord> &refs,
+    std::size_t overhang, std::size_t min_gap, std::size_t max_gap,
+    std::size_t max_junctions, const std::set<std::string> &motifs) {
+    using namespace sequence;
+    require(text(request.at("scoring")) == "unit_edit_cost", "edited splice requires unit edit costs");
+    const auto errors = count(request.at("maximum_edits"), std::numeric_limits<std::size_t>::max(),
+                              "splice edit budget representation");
+    const auto orientations = strands(request);
+    for (const auto &query : queries) {
+        require(query.bases.size() >= overhang, "splice query length");
+        for (const auto base : query.bases)
+            require(dna(base) >= 0, "splice query requires literal ACGT");
+    }
+    N::Array matches, children, summaries, contexts, groups;
+    std::vector<PlacementSource> placements;
+    std::vector<RawByteSource> sources{RawByteSource(1, std::as_bytes(std::span(query_image.bytes))),
+        RawByteSource(2, std::as_bytes(std::span(reference_image.bytes)))};
+    std::vector<rfc::numeric::Integer> counts(queries.size(), rfc::numeric::Integer{0});
+    rfc::numeric::Integer starts{0}, vertices{0}, relations{0}, histories{0}, native_calls{0}, witness_calls{0};
+    for (std::size_t r = 0; r < refs.size(); ++r) {
+        const auto &reference = refs[r].bases;
+        std::array<std::vector<std::size_t>, 16> acceptors;
+        for (std::size_t a = 2; a <= reference.size(); ++a)
+            if (dna(reference[a - 2]) >= 0 && dna(reference[a - 1]) >= 0)
+                acceptors.at(token(reference.substr(a - 2, 2))).push_back(a);
+        for (const auto &strand : orientations) {
+            struct Motif { std::string donor, name; std::size_t acceptor; };
+            std::vector<Motif> boundaries;
+            for (const auto &motif : motifs) {
+                const auto donor = strand == "+" ? motif.substr(0, 2) : reverse_complement(motif.substr(3));
+                const auto acceptor = strand == "+" ? motif.substr(3) : reverse_complement(motif.substr(0, 2));
+                boundaries.push_back({donor, motif, token(acceptor)});
+            }
+            for (std::size_t q = 0; q < queries.size(); ++q) {
+                const auto query = strand == "+" ? queries[q].bases : reverse_complement(queries[q].bases);
+                // Each exon consumes at least overhang query bases. This bound
+                // removes only junction counts with no possible complete query.
+                const auto junctions = std::min(max_junctions, query.size() / overhang - 1);
+                for (std::size_t start = 0; start < reference.size(); ++start) {
+                    ++starts;
+                    const auto remaining = reference.size() - start;
+                    if (remaining < overhang) continue;
+                    auto width = std::min(query.size(), remaining);
+                    width += std::min(errors, remaining - width);
+                    if (junctions != 0) {
+                        const auto capacity = remaining - width;
+                        width += max_gap > capacity / junctions ? capacity :
+                            rfc::machine::checked_size_mul(max_gap, junctions);
+                    }
+                    const auto end = start + width;
+                    std::vector<EditedSpliceState> states{{0, start, 0, 0, 0, 0}};
+                    std::map<EditedSpliceState, std::size_t> coordinates{{states.front(), 0}};
+                    std::vector<EditedSpliceStep> steps;
+                    std::map<std::pair<std::size_t, std::size_t>, std::vector<std::size_t>> endpoints;
+                    const auto add = [&](std::size_t from, EditedSpliceState state, char op,
+                                         std::string motif = {}) {
+                        const auto [it, inserted] = coordinates.emplace(state, states.size());
+                        if (inserted) {
+                            require(states.size() < std::numeric_limits<std::uint32_t>::max(),
+                                    "edited splice native vertex coordinate representation");
+                            states.push_back(state);
+                        }
+                        require(steps.size() < std::numeric_limits<std::uint32_t>::max(),
+                                "edited splice native relation coordinate representation");
+                        steps.push_back({from, it->second, op, std::move(motif)});
+                    };
+                    for (std::size_t v = 0; v < states.size(); ++v) {
+                        const auto state = states[v];
+                        if (state.query == query.size() && state.query_span == overhang &&
+                            state.reference_span == overhang)
+                            endpoints[{state.reference, state.junctions}].push_back(v);
+                        if (state.query < query.size() && state.edits < errors) {
+                            auto next = state; ++next.query; ++next.edits;
+                            next.query_span += next.query_span < overhang;
+                            add(v, next, 'I');
+                        }
+                        if (state.reference < end && state.edits < errors) {
+                            auto next = state; ++next.reference; ++next.edits;
+                            next.reference_span += next.reference_span < overhang;
+                            add(v, next, 'D');
+                        }
+                        if (state.query < query.size() && state.reference < end) {
+                            const bool equal = query[state.query] == reference[state.reference];
+                            if (equal || state.edits < errors) {
+                                auto next = state; ++next.query; ++next.reference;
+                                next.edits += !equal;
+                                next.query_span += next.query_span < overhang;
+                                next.reference_span += next.reference_span < overhang;
+                                add(v, next, equal ? '=' : 'X');
+                            }
+                        }
+                        if (state.query_span != overhang || state.reference_span != overhang ||
+                            state.junctions == junctions || query.size() - state.query < overhang ||
+                            end - state.reference < min_gap)
+                            continue;
+                        const auto lo = state.reference + min_gap;
+                        const auto hi = state.reference + std::min(max_gap, end - state.reference);
+                        for (const auto &motif : boundaries) {
+                            if (reference.compare(state.reference, 2, motif.donor) != 0) continue;
+                            const auto &offsets = acceptors.at(motif.acceptor);
+                            for (auto it = std::lower_bound(offsets.begin(), offsets.end(), lo);
+                                 it != offsets.end() && *it <= hi; ++it) {
+                                if (end - *it < overhang) continue;
+                                auto next = state; next.reference = *it; ++next.junctions;
+                                next.query_span = 0; next.reference_span = 0;
+                                add(v, next, 'N', motif.name);
+                            }
+                        }
+                    }
+                    if (endpoints.empty()) continue;
+                    const auto biological_vertices = states.size();
+                    const auto vertex_count = rfc::machine::checked_size_add(states.size(), endpoints.size());
+                    Routes routes(vertex_count, "sequence.edited_splice.step");
+                    for (const auto &step : steps) {
+                        const auto &from = states.at(step.from), &to = states.at(step.to);
+                        require(to.query >= from.query && to.reference >= from.reference &&
+                                    (to.query > from.query || to.reference > from.reference),
+                                "edited splice biological declarations must strictly advance prefixes");
+                        routes.add(step.from, step.to,
+                            Rational(step.operation == 'I' || step.operation == 'D' || step.operation == 'X' ? 1 : 0));
+                    }
+                    std::vector<std::size_t> terminals;
+                    for (const auto &[key, admitted] : endpoints) {
+                        (void)key;
+                        const auto sink = biological_vertices + terminals.size();
+                        terminals.push_back(sink);
+                        for (const auto v : admitted) {
+                            routes.add(v, sink, Rational{0});
+                            steps.push_back({v, sink, 'T', {}});
+                        }
+                    }
+                    const auto source = routes.freeze();
+                    const auto graph = rfc::view::project_pairwise_directed(source, routes.costs());
+                    vertices += rfc::numeric::Integer(std::to_string(vertex_count));
+                    relations += rfc::numeric::Integer(std::to_string(routes.steps.size()));
+                    auto native = route_source(source, routes);
+                    SourceGradeFields fields(native.endpoint);
+                    N::Array native_routes, operations, terminal_values;
+                    for (const auto &step : steps) element(operations, std::string(1, step.operation));
+                    for (const auto terminal : terminals) element(terminal_values, integer(terminal));
+                    N::Object carrier;
+                    member(carrier, "source_vertex", integer(0));
+                    member(carrier, "operations", std::move(operations));
+                    member(carrier, "terminal_vertices", std::move(terminal_values));
+                    member(carrier, "reference_record_index", integer(r));
+                    member(carrier, "reference_start", integer(start));
+                    member(carrier, "query_record_index", integer(q));
+                    member(carrier, "strand", strand);
+                    const auto child_index = children.elements.size();
+                    std::size_t endpoint_index = 0;
+                    for (const auto &[key, admitted] : endpoints) {
+                        (void)admitted;
+                        const auto sink = terminals.at(endpoint_index++);
+                        const auto route = rfc::path::dijkstra_exact(graph, graph.object_index(1),
+                                                                    graph.object_index(sink + 1));
+                        ++native_calls;
+                        require(route.reachable && route.distance <= Rational(std::to_string(errors)),
+                                "declared edited splice endpoint must have an admitted native route");
+                        const CompleteRouteWitnesses witnesses(graph, graph.object_index(1),
+                            graph.object_index(sink + 1), true, route);
+                        witnesses.verify(rfc::field::boundary_matrix(source, {1}), routes.costs(), 0, sink);
+                        witness_calls += rfc::numeric::Integer(std::to_string(witnesses.histories.size() - 1));
+                        witness_calls += rfc::numeric::Integer(std::to_string(witnesses.unreachable_suffix_vertices.size()));
+                        const auto primary = native_routes.elements.size();
+                        N::Array witness_indices;
+                        for (const auto &history : witnesses.histories) {
+                            element(witness_indices, integer(native_routes.elements.size()));
+                            element(native_routes, retain_route(fields, source, routes, history.route.relations,
+                                history.from, history.to, history.route.distance));
+                        }
+                        N::Object evidence;
+                        member(evidence, "prefix", fields.field("minimum_history.prefix", 0, witnesses.prefix));
+                        std::vector<std::size_t> viable;
+                        for (std::size_t v = 0; v < witnesses.suffix.size(); ++v)
+                            if (witnesses.suffix_reachable[v]) viable.push_back(v);
+                        member(evidence, "suffix", fields.column("minimum_history.suffix", 0, vertex_count,
+                            [&](auto v) { return witnesses.suffix[v]; },
+                            rfc::numeric::StructuralSupport::sparse(vertex_count, viable)));
+                        member(evidence, "witness_routes", std::move(witness_indices));
+                        const auto tight = [&](std::size_t e) {
+                            const auto &step = routes.steps.at(e);
+                            return witnesses.suffix_reachable[step.to] &&
+                                witnesses.prefix[step.from] + step.cost + witnesses.suffix[step.to] == route.distance;
+                        };
+                        member(evidence, "optimal_support", fields.column("minimum_history.optimal", 1,
+                            routes.steps.size(), [&](auto e) { return Rational(tight(e) ? 1 : 0); }));
+                        const auto group_index = groups.elements.size();
+                        rfc::numeric::Integer family_count{0};
+                        std::vector<std::uint32_t> ordered;
+                        struct Frame { std::uint32_t vertex; std::size_t next; };
+                        std::vector<Frame> stack{{0, 0}};
+                        const auto path_width = rfc::machine::checked_size_add(query.size(), width);
+                        ordered.reserve(rfc::machine::checked_size_add(path_width, 1));
+                        stack.reserve(rfc::machine::checked_size_add(path_width, 2));
+                        const auto emit = [&]() {
+                            N::Object match;
+                            N::Array blocks, junction_values;
+                            PlacementSource placement{q, r, {}, child_index,
+                                ordered == route.relations ? primary : native_routes.elements.size(), {}};
+                            if (placement.operation != primary) element(native_routes, retain_route(fields,
+                                source, routes, ordered, 0, sink, route.distance));
+                            auto query_begin = std::size_t{0}, reference_begin = start;
+                            std::string aligned_query, aligned_reference, reconstructed_query;
+                            const auto block = [&](std::size_t qe, std::size_t re) {
+                                require(qe - query_begin >= overhang && re - reference_begin >= overhang &&
+                                    aligned_query.size() == aligned_reference.size(), "edited splice exon span witness");
+                                N::Object value;
+                                member(value, "query_begin", integer(query_begin)); member(value, "query_end", integer(qe));
+                                member(value, "start", integer(reference_begin)); member(value, "end", integer(re));
+                                member(value, "aligned_query", aligned_query); member(value, "aligned_reference", aligned_reference);
+                                element(blocks, std::move(value)); placement.blocks.emplace_back(reference_begin, re);
+                                reconstructed_query += query.substr(query_begin, qe - query_begin);
+                                aligned_query.clear(); aligned_reference.clear();
+                            };
+                            rfc::numeric::Integer observed_edits{0};
+                            for (const auto e : ordered) {
+                                const auto &step = steps.at(e);
+                                const auto &from = states.at(step.from);
+                                if (step.operation == 'T') { block(from.query, from.reference); continue; }
+                                const auto &to = states.at(step.to);
+                                if (step.operation == 'N') {
+                                    block(from.query, from.reference);
+                                    N::Object junction;
+                                    member(junction, "donor", integer(from.reference));
+                                    member(junction, "acceptor", integer(to.reference));
+                                    member(junction, "motif", step.motif);
+                                    member(junction, "origin", "reference_sequence_and_declared_edit_history");
+                                    element(junction_values, std::move(junction));
+                                    query_begin = to.query; reference_begin = to.reference;
+                                } else {
+                                    aligned_query += step.operation == 'D' ? '-' : query.at(from.query);
+                                    aligned_reference += step.operation == 'I' ? '-' : reference.at(from.reference);
+                                    observed_edits += step.operation != '=';
+                                }
+                            }
+                            require(reconstructed_query == query && Rational(observed_edits) == route.distance &&
+                                        junction_values.elements.size() == key.second,
+                                    "edited splice complete query, edit count and junction witnesses");
+                            member(match, "query_id", queries[q].id); member(match, "query_record_index", integer(q));
+                            member(match, "reference_id", refs[r].id); member(match, "reference_record_index", integer(r));
+                            member(match, "strand", strand); member(match, "start", integer(start));
+                            member(match, "end", integer(key.first)); member(match, "minimum_edits", route.distance);
+                            member(match, "blocks", std::move(blocks)); member(match, "junctions", std::move(junction_values));
+                            member(match, "query_evidence", import_record_view(queries[q].evidence));
+                            member(match, "reference_evidence", import_record_view(refs[r].evidence));
+                            member(match, "carrier", integer(child_index)); member(match, "route_index", integer(placement.operation));
+                            member(match, "minimum_history_group", integer(group_index));
+                            member(match, "history_index", family_count);
+                            member(match, "query_reconstruction_verified", true);
+                            element(matches, std::move(match)); placements.push_back(std::move(placement));
+                            ++family_count; ++histories; ++counts[q];
+                        };
+                        while (!stack.empty()) {
+                            auto &frame = stack.back();
+                            const auto &outgoing = graph.outgoing(frame.vertex);
+                            if (frame.vertex == sink) {
+                                emit(); stack.pop_back(); if (!stack.empty()) ordered.pop_back();
+                            } else if (frame.next == outgoing.size()) {
+                                stack.pop_back(); if (!stack.empty()) ordered.pop_back();
+                            } else {
+                                const auto &edge = graph.edge(outgoing[frame.next++]);
+                                if (!tight(edge.source_relation)) continue;
+                                ordered.push_back(edge.source_relation); stack.push_back({edge.target_object, 0});
+                            }
+                        }
+                        require(family_count > 0, "edited splice minimum history family is empty");
+                        N::Object group;
+                        member(group, "query_record_index", integer(q)); member(group, "reference_record_index", integer(r));
+                        member(group, "strand", strand); member(group, "start", integer(start));
+                        member(group, "end", integer(key.first)); member(group, "junctions", integer(key.second));
+                        member(group, "minimum_edits", route.distance); member(group, "histories", std::move(family_count));
+                        member(group, "carrier", integer(child_index)); member(group, "sink_vertex", integer(sink));
+                        member(group, "minimum_history_evidence", std::move(evidence)); element(groups, std::move(group));
+                    }
+                    auto &declaration = std::get<N::Object>(native.declaration.data);
+                    member(declaration, "view", std::move(carrier)); member(declaration, "routes", std::move(native_routes));
+                    std::vector<std::size_t> coordinate_support(biological_vertices);
+                    std::iota(coordinate_support.begin(), coordinate_support.end(), 0);
+                    const auto support = rfc::numeric::StructuralSupport::sparse(vertex_count, coordinate_support);
+                    const auto coordinate = [&](std::string name, auto select) {
+                        member(declaration, name, fields.column("splice." + name, 0, vertex_count,
+                            [&](auto v) { return Rational(std::to_string(select(states.at(v)))); }, support));
+                    };
+                    coordinate("query_prefix", [](const auto &s) { return s.query; });
+                    coordinate("reference_prefix", [](const auto &s) { return s.reference; });
+                    coordinate("edit_count", [](const auto &s) { return s.edits; });
+                    coordinate("junction_count", [](const auto &s) { return s.junctions; });
+                    coordinate("query_exon_span_capped", [](const auto &s) { return s.query_span; });
+                    coordinate("reference_exon_span_capped", [](const auto &s) { return s.reference_span; });
+                    member(declaration, "exon_span_cap", integer(overhang));
+                    member(declaration, "operation_codes", fields.column("splice.operation", 1, steps.size(),
+                        [&](auto e) { return Rational(steps[e].operation == '=' ? 0 : steps[e].operation == 'X' ? 1 :
+                            steps[e].operation == 'I' ? 2 : steps[e].operation == 'D' ? 3 : steps[e].operation == 'N' ? 4 : 5); }));
+                    N::Array annotations;
+                    for (std::size_t e = 0; e < steps.size(); ++e) if (steps[e].operation == 'N') {
+                        N::Object annotation; member(annotation, "motif", steps[e].motif);
+                        element(annotations, N(N::Owned{0, rfc::storage::StableCellKey{{1}, 1000000 + e}, {},
+                            std::make_shared<const N>(std::move(annotation))}));
+                    }
+                    member(declaration, "junction_annotations", std::move(annotations));
+                    const auto child = source_record(std::move(native));
+                    element(contexts, child_context(child)); element(children, archive_child(child, sources));
+                }
+            }
+        }
+    }
+    for (std::size_t q = 0; q < queries.size(); ++q) {
+        N::Object summary; member(summary, "query_id", queries[q].id);
+        member(summary, "query_record_index", integer(q)); member(summary, "matches", counts[q]);
+        element(summaries, std::move(summary));
+    }
+    N::Object work, out;
+    member(work, "reference_starts", std::move(starts)); member(work, "vertices", std::move(vertices));
+    member(work, "relations", std::move(relations)); member(work, "native_route_calls", std::move(native_calls));
+    member(work, "native_witness_route_calls", std::move(witness_calls)); member(work, "minimum_edit_histories", std::move(histories));
+    member(out, "matches", std::move(matches)); member(out, "queries", std::move(summaries));
+    member(out, "minimum_history_groups", std::move(groups)); member(out, "work", std::move(work));
+    member(out, "complete", true); member(out, "coordinate_convention", "zero_based_half_open_reference_orientation");
+    member(out, "search_universe", "Every minimum unit-edit ordered history per original query, strand, reference start/end and exact junction count, with declared edit/intron/junction bounds and minimum consumed query and reference span per exon. Introns have zero edit cost and transcript-oriented declared sequence motifs.");
+    member(out, "completeness_argument", "Every source start is considered. Reachable biological prefix states retain accrued edits, junctions and both exon spans. Every admitted match, substitution, insertion, deletion and motif jump is a native source relation. Exon spans are capped only after meeting their declared minimum. Every history strictly advances query/reference prefixes before one terminal exit. Canonical minimum route certificates select all tight histories per endpoint/junction count; iterative enumeration retains each ordered history without deduplication or truncation.");
+    return collection_source("gadget.sequence.splice.fields.v1", request, query_image, reference_image,
+        query_source, reference_source, placements, std::move(out), std::move(children), std::move(contexts), std::move(sources));
+}
+} // namespace
 AssayFieldsSource splice_search_fields_source(const ResourceImages &images, const Json &request) {
     using namespace sequence;
     members(request, {"schema", "operation", "query_resource", "reference_resource", "strands",
                       "minimum_exon_bases", "minimum_intron_bases", "maximum_intron_bases",
-                      "maximum_junctions", "motifs", "evidence"});
+                      "maximum_junctions", "motifs", "evidence"}, {"maximum_edits", "scoring"});
+    require(request.has("maximum_edits") == request.has("scoring"),
+            "edited splice requires both maximum_edits and scoring");
     (void)text(request.at("evidence"), source_byte_limit());
     const auto overhang =
         count(request.at("minimum_exon_bases"), std::numeric_limits<std::size_t>::max(),
@@ -38,6 +379,9 @@ AssayFieldsSource splice_search_fields_source(const ResourceImages &images, cons
     const auto refs = records(reference_source);
     reference_frame(reference_image, refs);
     require(!queries.empty(), "splice query count");
+    if (request.has("maximum_edits"))
+        return edited_splice_fields_source(request, query_image, reference_image, query_source,
+            reference_source, queries, refs, overhang, min_gap, max_gap, max_junctions, motifs);
     struct Query {
         std::size_t read;
         std::string strand, bases;
@@ -301,6 +645,7 @@ Json splice_search_fields_view(const NativeRecord &record) {
     auto result = sequence::routed_collection_view(record);
     for (std::size_t i = 0; i < result.at("matches").size(); ++i) {
         const auto match = result.at("matches").at(i);
+        if (!match.at("blocks").at(0).has("exon_identity")) continue;
         const auto exons = result.at("carriers").at(match.at("carrier").integer()).at("exons");
         for (std::size_t b = 0; b < match.at("blocks").size(); ++b) {
             const auto identity = match.at("blocks").at(b).at("exon_identity");
