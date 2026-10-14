@@ -144,7 +144,7 @@ const std::map<std::string, Observable> observables{
       "gluing"}},
     {"read_edit_consensus",
      {{"read_edit_consensus"},
-      "Every source-supported complete-read consensus family minimizing length then total unit "
+      "Every complete read consensus family supported by original source and minimizing length then total unit "
       "edits under declared strands, paired bases and budget, including alignment ambiguity and "
       "no admissible family"}},
     {"constrained_allocations",
@@ -359,7 +359,7 @@ NativeRecord answer_admission_record(const Json &intent, const Json &catalog, co
     const bool valid = constraints.globally_valid(mandatory);
     auto native = R::object(), charts = R::array(), assignment = R::array();
     native.set("owner", R::string("rfc::local::FiniteConstraintSystem<int64_t>"));
-    native.set("carrier", R::string("Separate grade-zero answer obligations; no biological incidence"));
+    native.set("carrier", R::string("Separate answer obligations at grade zero; no biological incidence"));
     native.set("cells", R::count(requests.size()));
     native.set("constraint_complete", R::boolean(constraints.cover_is_constraint_complete({full})));
     native.set("global_section_exists", R::boolean(valid));
