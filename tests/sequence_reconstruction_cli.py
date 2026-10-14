@@ -57,6 +57,13 @@ def main():
     splice_ref['unresolved-boundaries'] = 'AAAUTAGCCCGTANTTT'
     splice_queries = dict(two_junctions='AAACCCTTT', single='AAACCC', contiguous='CCCGTT', absent='ACACAC')
     resource('splice-reference.fa', splice_ref); resource('splice-queries.fa', splice_queries)
+    edited_refs = dict(plus='AAGTAGCC', minus=reverse('AAGTAGCC'), repeated='AAAGTAGCCC')
+    edited_queries = dict(exact='AACC', inserted='AATCC')
+    resource('edited-reference.fa', edited_refs); resource('edited-queries.fa', edited_queries)
+    resource('edited-multi-reference.fa', dict(two='AAGTAGCCGTAGTT'))
+    resource('edited-multi-query.fa', dict(two='AACATT'))
+    resource('edited-wide-reference.fa', dict(tie='CA'))
+    resource('edited-wide-query.fa', dict(tie='AC'))
     covers = {
         'unique': dict(a='AACG', b='CGTT', c='TTGC'),
         'ambiguous': dict(a='ATG', b='TGA', c='GAT'),
@@ -238,6 +245,105 @@ def main():
     check(any(m['strand'] == '-' and m['junctions'] for m in results['splice-2']['result']['matches']), 'negative transcript motif example exercised')
     check(all(m['reference_id'] != 'unresolved-boundaries' for m in results['splice-2']['result']['matches']), 'unresolved motif candidates preserve valid chains elsewhere')
 
+    def edited_splice_expectations(q, r, strand, req):
+        # Enumerate independent exon partitions and complete substring edit
+        # tables. This does not construct the native biological prefix graph.
+        candidates = {}
+        h, budget = req['minimum_exon_bases'], req['maximum_edits']
+        def extend(qb, previous, blocks, route, cost):
+            if qb == len(q):
+                key = (blocks[0][2], blocks[-1][3], len(blocks) - 1)
+                if key not in candidates or cost < candidates[key][0]:
+                    candidates[key] = (cost, [])
+                if cost == candidates[key][0]:
+                    candidates[key][1].append((tuple(blocks), route))
+                return
+            if len(blocks) > req['maximum_junctions']:
+                return
+            for qe in range(qb + h, len(q) + 1):
+                for rb in range(len(r)):
+                    jump = ()
+                    if previous is not None:
+                        gap = rb - previous
+                        if not req['minimum_intron_bases'] <= gap <= req['maximum_intron_bases']:
+                            continue
+                        motif = r[previous:previous+2] + '-' + r[rb-2:rb] if strand == '+' else reverse(r[rb-2:rb]) + '-' + reverse(r[previous:previous+2])
+                        if motif not in req['motifs']:
+                            continue
+                        jump = ((qb, previous, qb, rb, 'N'),)
+                    for re in range(rb + h, min(len(r), rb + qe - qb + budget - cost) + 1):
+                        local_cost = edit(q[qb:qe], r[rb:re])
+                        if local_cost + cost > budget:
+                            continue
+                        for local in minimum_histories(q[qb:qe], r[rb:re]):
+                            lifted = []
+                            for a, b, c, d in local:
+                                op = 'D' if a == c else 'I' if b == d else '=' if q[qb+a] == r[rb+b] else 'X'
+                                lifted.append((qb+a, rb+b, qb+c, rb+d, op))
+                            extend(qe, re, blocks + [(qb, qe, rb, re)], route + jump + tuple(lifted), cost + local_cost)
+        extend(0, None, [], (), 0)
+        return candidates
+
+    edited_cases = {}
+    cases = [(0, 1, 'edited-queries.fa', 'edited-reference.fa', edited_queries, edited_refs),
+             (1, 1, 'edited-queries.fa', 'edited-reference.fa', edited_queries, edited_refs),
+             (1, 2, 'edited-multi-query.fa', 'edited-multi-reference.fa', dict(two='AACATT'), dict(two='AAGTAGCCGTAGTT')),
+             (4, 65536, 'edited-wide-query.fa', 'edited-wide-reference.fa', dict(tie='AC'), dict(tie='CA'))]
+    exercised = set()
+    for case, (budget, maximum, query_resource, reference_resource, reads, references) in enumerate(cases):
+        req = dict(schema='gadget.assays.query.v1', **dict(splice, query_resource=query_resource,
+            reference_resource=reference_resource, minimum_exon_bases=2, maximum_junctions=maximum,
+            maximum_edits=budget, scoring='unit_edit_cost'))
+        answer = run('assay-query', '--workspace', workspace, '--request', save('edited-splice-' + str(case) + '-request.json', req))
+        save('edited-splice-' + str(case) + '-result.json', answer); result = answer['result']
+        edited_cases[str(case)] = answer
+        expected, observed = {}, {}
+        for qid, original in reads.items():
+            for strand in req['strands']:
+                q = original if strand == '+' else reverse(original)
+                for rid, r in references.items():
+                    for key, (cost, family) in edited_splice_expectations(q, r, strand, req).items():
+                        expected[(qid, rid, strand, *key)] = (cost, sorted(family))
+        for m in result['matches']:
+            q = reads[m['query_id']] if m['strand'] == '+' else reverse(reads[m['query_id']])
+            r = references[m['reference_id']]
+            blocks = tuple((b['query_begin'], b['query_end'], b['start'], b['end']) for b in m['blocks'])
+            c = result['carriers'][m['carrier']]
+            route, qp, rp, transitions = m['route'], 0, m['start'], []
+            for e in route['ordered_relations']:
+                op = c['operations'][e]
+                if op == 'T': continue
+                if op == 'N':
+                    junction = m['junctions'][sum(t[-1] == 'N' for t in transitions)]
+                    check(junction['donor'] == rp, 'intron begins at actual route prefix')
+                    nq, nr = qp, junction['acceptor']
+                else:
+                    nq, nr = qp + (op != 'D'), rp + (op != 'I')
+                transitions.append((qp, rp, nq, nr, op)); qp, rp = nq, nr
+                exercised.add(op)
+            check(qp == len(q) and rp == m['end'], 'edited splice preserves complete endpoint prefixes')
+            cost = int(m['minimum_edits'])
+            verify_route(route, c, cost, c['source_vertex'], result['minimum_history_groups'][m['minimum_history_group']]['sink_vertex'])
+            check(sum(op in 'XID' for *_, op in transitions) == cost, 'complete unit edit cost excludes introns')
+            for b in m['blocks']:
+                check(b['aligned_query'].replace('-', '') == q[b['query_begin']:b['query_end']] and
+                      b['aligned_reference'].replace('-', '') == r[b['start']:b['end']], 'each edited exon preserves both complete source words')
+            key = (m['query_id'], m['reference_id'], m['strand'], m['start'], m['end'], len(m['junctions']))
+            if key not in observed: observed[key] = (cost, [])
+            check(observed[key][0] == cost, 'one native minimum per declared endpoint and junction count')
+            observed[key][1].append((blocks, tuple(transitions)))
+        observed = {key: (cost, sorted(family)) for key, (cost, family) in observed.items()}
+        check(observed == expected, 'all independent edited exon partitions and ordered minimizing histories')
+        check(len(result['matches']) == int(result['work']['minimum_edit_histories']), 'exact edited splice total history count')
+        for i, group in enumerate(result['minimum_history_groups']):
+            members = [m for m in result['matches'] if m['minimum_history_group'] == i]
+            check(len(members) == int(group['histories']) and
+                  [int(m['history_index']) for m in members] == list(range(len(members))), 'complete group size and retained occurrence order')
+    check(set('=XIDN') <= exercised, 'match substitution insertion deletion and intron witnesses exercised')
+    check(any(m['strand'] == '-' and m['junctions'] for m in edited_cases['1']['result']['matches']), 'edited negative-strand transcript motifs')
+    check(any(len(m['junctions']) == 2 for m in edited_cases['2']['result']['matches']), 'edited two-junction witness')
+    save('edited-splice-families.json', edited_cases)
+
     for name, reads in covers.items():
         req = dict(operation='read_overlap_reconstruction', resource='cover-' + name + '.fa', minimum_overlap=2,
                    objective='minimum_suffix_prefix_read_cover', evidence='Complete source read covers')
@@ -291,6 +397,9 @@ def main():
         dict(indexed, query_resource='invalid-query.fa'), dict(indexed, extra=True),
         dict(splice, minimum_exon_bases=1), dict(splice, maximum_junctions=-1),
         dict(splice, motifs=['G?-AG']), dict(splice, minimum_intron_bases=11),
+        dict(splice, maximum_edits=1), dict(splice, scoring='unit_edit_cost'),
+        dict(splice, maximum_edits=-1, scoring='unit_edit_cost'),
+        dict(splice, maximum_edits=1, scoring='affine'),
         dict(operation='query_batch', concurrent_jobs=2, queries=[dict(id='nested', query=dict(schema='gadget.assays.query.v1', operation='query_batch'))]),
         dict(operation='query_batch', concurrent_jobs=0, queries=[dict(id='x', query=dict(schema='gadget.assays.query.v1', operation='inspect'))]),
         dict(operation='read_overlap_reconstruction', resource='too-many.fa', minimum_overlap=0,

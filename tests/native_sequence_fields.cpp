@@ -5,6 +5,7 @@
 #include <rfc/storage/file_io.hpp>
 #include <rfc/field/boundary.hpp>
 #include <iostream>
+#include <tuple>
 
 using namespace gadget;
 namespace {
@@ -50,6 +51,8 @@ int main(int argc, char **argv) {
     const std::string reads = ">q0\r\nAC\r\n>q1\nAAA\n", reference = ">r0\nAC\n>r1\nAC\n";
     auto resources = Json::array();
     const std::string comparisons = "@q0\r\nAC\r\n+\r\nII\r\n@q0\nGT\n+\nII\n";
+    const std::string edited_queries = "@same\r\nAACC\r\n+\r\nIIII\r\n@same\nAACC\n+\nIIII\n@inserted\nAATCC\n+\nIIIII\n";
+    const std::string edited_reference = ">r0\r\nAAGT\r\nAGCC\r\n>r1\nAAGTAGCC\n";
     for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}, {"ambiguous", ">a\nAN\n>b\nTA\n"}, {"quality", "@q0\nAC\n+\n!I\n"}, {"comparisons", comparisons}, {"history-query", "@same\nAAA\n+\nIII\n@same\nAAA\n+\nIII\n"}, {"history-reference", ">r0\nAAA\n>r1\nAAA\n"}, {"cover", ">a\nACA\n>b\nCAC\n>c\nACA\n"}, {"classes", "2\n1\nA\nB\n2 0 1 3\n"}}) {
         const auto filename = id + (id == "quality" ? ".fastq" : ".fa");
         write_text(root / filename, bytes);
@@ -57,6 +60,14 @@ int main(int argc, char **argv) {
         resource.set("id", Json::string(id)); resource.at("source").set("path", Json::string(filename));
         if (id == "quality" || id == "comparisons" || id == "history-query") resource.set("format", Json::string("fastq"));
         if (id == "classes") resource.set("format", Json::string("salmon_eq"));
+        resource.at("source").set("sha256", Json::string("sha256:" + sha256(bytes))); resources.push(resource);
+    }
+    for (const auto &[id, bytes, format] : std::vector<std::tuple<std::string, std::string, std::string>>{
+            {"edited-query", edited_queries, "fastq"}, {"edited-reference", edited_reference, "fasta"}}) {
+        const auto filename = id + ".source"; write_text(root / filename, bytes);
+        auto resource = Json::parse(R"({"id":"","format":"","source":{"path":"","sha256":""},"method":"Original edited splice fixture"})");
+        resource.set("id", Json::string(id)); resource.set("format", Json::string(format));
+        resource.at("source").set("path", Json::string(filename));
         resource.at("source").set("sha256", Json::string("sha256:" + sha256(bytes))); resources.push(resource);
     }
     auto spec = Json::parse(R"({"schema":"gadget.assays.import.v1","id":"sequences","design":{"question":"Preserve ordered source witnesses","population":"Authored fixture","selection":"All source records","limitations":["Verification fixture"]},"assays":[],"resources":[],"links":[]})");
@@ -350,6 +361,66 @@ int main(int argc, char **argv) {
     auto invalid_history = Json::parse(history_request.dump());
     invalid_history.set("edit_histories", Json::string("sampled"));
     refuse([&] { workspace->execute_record(admit_record_view(invalid_history), cpu); });
+    auto edited_request = Json::parse(searches[2].dump());
+    edited_request.set("query_resource", Json::string("edited-query"));
+    edited_request.set("reference_resource", Json::string("edited-reference"));
+    edited_request.set("maximum_edits", Json::integer(1));
+    edited_request.set("scoring", Json::string("unit_edit_cost"));
+    const auto edited_publication = workspace->execute_record(admit_record_view(edited_request), cpu);
+    const auto edited_fields = edited_publication.at("result").at("result");
+    check(source_bytes_equal(edited_fields.at("query_bytes"), edited_queries) &&
+              source_bytes_equal(edited_fields.at("reference_bytes"), edited_reference) &&
+              edited_fields.at("queries").size() == 3 && edited_fields.at("references").size() == 2 &&
+              edited_fields.at("queries").at(0).at("id").text() == edited_fields.at("queries").at(1).at("id").text(),
+          "edited splice changed original repeated records, line framing or quality bytes");
+    bool edited_intron = false, edited_missing = false, edited_error = false;
+    for (std::size_t c = 0; c < edited_fields.at("children").size(); ++c) {
+        const auto child = NativeRecord::decode(edited_fields.at("children").at(c).bytes());
+        verify_routes(child);
+        check(child.source_namespace() != edited_fields.source_namespace() &&
+                  field(child, child.at("operation_codes")).tensor.support().count() ==
+                      child.endpoint()->source.grade({1}).cell_count(),
+              "edited splice operation fields lost native ownership or supported zero");
+        const auto &prefix = field(child, child.at("query_prefix")).tensor;
+        check(prefix.support().count() + child.at("view").at("terminal_vertices").size() ==
+                  child.endpoint()->source.grade({0}).cell_count(),
+              "terminal observation falsely acquired a biological prefix coordinate");
+    }
+    rfc::numeric::Integer edited_count{0};
+    for (std::size_t g = 0; g < edited_fields.at("view").at("minimum_history_groups").size(); ++g)
+        edited_count += edited_fields.at("view").at("minimum_history_groups").at(g).at("histories").integer();
+    check(edited_count == edited_fields.at("view").at("work").at("minimum_edit_histories").integer() &&
+              edited_count == rfc::numeric::Integer(std::to_string(edited_fields.at("placements").size())),
+          "edited splice exact complete family counts changed");
+    for (std::size_t p = 0; p < edited_fields.at("placements").size(); ++p) {
+        const auto placement = edited_fields.at("placements").at(p), match = edited_fields.at("view").at("matches").at(p);
+        const auto child = NativeRecord::decode(placement.at("child_publication").bytes());
+        check(placement.at("operation_index").integer() == match.at("route_index").integer() &&
+                  placement.at("reference_introns").size() == match.at("junctions").size() &&
+                  placement.at("minimum_history_group").integer() == match.at("minimum_history_group").integer() &&
+                  !placement.has("minimum_history_evidence") && !match.has("minimum_history_evidence"),
+              "edited splice parent does not select its actual route or intron spans");
+        const auto group = edited_fields.at("view").at("minimum_history_groups")
+            .at(placement.at("minimum_history_group").integer().get_ui());
+        check(group.at("carrier").integer() == placement.at("child_context").integer(),
+              "edited splice certificate group refers to a different native child owner");
+        const auto evidence = group.at("minimum_history_evidence");
+        const auto &suffix = field(child, evidence.at("suffix")).tensor;
+        edited_missing |= suffix.support().count() < child.endpoint()->source.grade({0}).cell_count();
+        edited_error |= match.at("minimum_edits").rational() != 0;
+        for (std::size_t j = 0; j < placement.at("reference_introns").size(); ++j) {
+            const auto intron = placement.at("reference_introns").at(j);
+            std::string bytes;
+            for (std::size_t s = 0; s < intron.at("bytes").size(); ++s) bytes += intron.at("bytes").at(s).text();
+            check(bytes == "GTAG", "edited splice intron lost original multi-line byte spans"); edited_intron = true;
+        }
+    }
+    check(edited_intron && edited_missing && edited_error, "edited native splice witness controls were not exercised");
+    check(workspace->execute(edited_request, cpu).at("result").dump() == render_record_view(edited_fields).dump(),
+          "edited splice display recomputed or changed retained native mathematics");
+    edited_publication.write(root / "edited-splice.rfcxs");
+    check(NativeRecord::read(root / "edited-splice.rfcxs").encode() == edited_publication.encode(),
+          "edited splice complete archive I/O changed");
     for (std::size_t i = 0; i < searches.size(); ++i) {
         const auto publication = workspace->execute_record(admit_record_view(searches[i]), cpu);
         const auto result = publication.at("result").at("result");
@@ -412,6 +483,13 @@ int main(int argc, char **argv) {
     invalid.set("design", spec.at("design")); invalid.set("recipe", impossible);
     refuse([&] {workspace->materialize_workspace(admit_record_view(invalid), root / "invalid");});
     fs::rename(root / "input", root / "input-away"); workspace.reset();
+    NativeRecord::decode(edited_publication.at("result").at("workspace_publication").bytes())
+        .write(root / "edited-splice-workspace.rfcxs");
+    const AssayWorkspace edited_workspace(root / "edited-splice-workspace.rfcxs");
+    const auto edited_replay = edited_workspace.execute_record(
+        NativeRecord::decode(edited_publication.at("request_publication").bytes()), cpu);
+    check(render_record_view(edited_replay.at("result").at("result")).dump() == render_record_view(edited_fields).dump(),
+          "edited splice native replay depends on former intake paths");
     NativeRecord::decode(all_history_publication.at("result").at("workspace_publication").bytes())
         .write(root / "all-history-workspace.rfcxs");
     const AssayWorkspace history_workspace(root / "all-history-workspace.rfcxs");
