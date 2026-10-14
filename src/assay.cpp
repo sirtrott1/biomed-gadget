@@ -4,6 +4,7 @@
 #include "assay_quality_detail.hpp"
 #include "genomic_detail.hpp"
 #include "source_grade_fields.hpp"
+#include "scientific_result_fields.hpp"
 #include <algorithm>
 #include <gadget/resources.hpp>
 #include <limits>
@@ -1770,80 +1771,12 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
     if (operation == "aggregate_assay" || operation == "design_aggregation")
         return render_record_view(execute_aggregation(admit_record_view(request), resources, {}, false).at("result"));
     auto result = Json::object();
-    if (operation == "inspect") {
-        members(request, {"schema", "operation"});
-        result = catalog();
-    } else if (operation == "native_query") {
-        members(request, {"schema", "operation", "assay", "query"}, {"partitions"});
-        const auto id = text(request.at("assay"));
-        require(state_->assays.contains(id), "unknown assay");
-        const auto item = state_->assays.at(id);
-        const auto packets = item.at("partitions");
-        std::vector<std::size_t> selected;
-        if (request.has("partitions")) {
-            std::set<std::size_t> unique;
-            for (std::size_t i = 0; i < request.at("partitions").size(); ++i) {
-                const auto p =
-                    count(request.at("partitions").at(i), packets.size() - 1, "assay partition");
-                require(unique.insert(p).second, "duplicate assay partition");
-                selected.push_back(p);
-            }
-            require(!selected.empty(), "empty assay partition selection");
-        } else
-            for (std::size_t i = 0; i < packets.size(); ++i)
-                selected.push_back(i);
-        // Native subspace/topology/Green queries require an indivisible carrier.
-        const auto op = request.at("query").at("operation").text();
-        require(packets.size() == 1 || op == "paired_field_contrasts" || op == "field_summary" ||
-                    op == "coverage" || op == "tensor_window" || op == "inspect" ||
-                    op == "provenance",
-                "whole-carrier method cannot be applied independently to storage partitions");
-        auto answers = Json::array();
-        const bool reuse_novelty = op == "metric_relative_novelty" &&
-                                   (!request.at("query").has("preparation") ||
-                                    request.at("query").at("preparation").text() == "reuse");
-        const auto session_for = [&](std::size_t p) {
-            if (!reuse_novelty)
-                return std::make_shared<ScientificSession>(study(id, p), resources);
-            std::lock_guard lock(state_->novelty_mutex);
-            const auto key = std::tuple{id, p, resources.get()};
-            const auto found = state_->novelty_sessions.find(key);
-            if (found != state_->novelty_sessions.end())
-                return found->second;
-            auto session = std::make_shared<ScientificSession>(study(id, p), resources);
-            state_->novelty_sessions.emplace(key, session);
-            return session;
-        };
-        // Preflight every leaf before publishing any answer.
-        for (auto p : selected) {
-            session_for(p)->validate(request.at("query"));
-        }
-        for (auto p : selected) {
-            auto answer = Json::object();
-            answer.set("partition", cardinality(p));
-            if(packets.at(p).has("carrier_ids"))answer.set("carrier_ids",packets.at(p).at("carrier_ids"));
-            else answer.set("source_index",study(id,p)->source_index());
-            answer.set("certificate", session_for(p)->execute(request.at("query")));
-            answers.push(answer);
-        }
-        result.set("assay", request.at("assay"));
-        result.set("answers", answers);
-        result.set("carrier_axis", item.at("declaration").at("carrier"));
-        result.set(
-            "partition_semantics",
-            Json::string("Ordered disjoint carrier subsets with explicit identity witnesses; "
-                         "whole-carrier topological operations require one partition"));
-    } else if (operation == "constrained_allocations") {
+    if (operation == "inspect" || operation == "native_query" ||
+        operation == "relational_persistence")
+        return render_record_view(execute_record(admit_record_view(request), resources).at("result"));
+    if (operation == "constrained_allocations") {
         auto reservation = resources->reserve(1);
         result = constrained_allocations(request);
-    } else if (operation == "relational_persistence") {
-        const auto id = text(request.at("assay"));
-        require(state_->assays.contains(id), "unknown persistence assay");
-        require(state_->assays.at(id).at("partitions").size() == 1 &&
-                    count(request.at("partition"), 0, "persistence partition") == 0,
-                "persistence requires an indivisible source carrier");
-        auto reservation = resources->reserve(1);
-        result = relational_persistence(*study(id), request);
     } else if (operation == "spatial_relations") {
         require(state_->assays.contains(text(request.at("assay"))), "unknown spatial assay");
         auto reservation = resources->reserve(1);
@@ -1889,114 +1822,9 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
     } else if (operation == "relational_gluing") {
         result = relational_gluing(*this, request, resources);
     } else if (operation == "field_transfer") {
-        members(request, {"schema", "operation", "left", "right", "map", "metric"});
-        require(request.at("metric").text() == "identity", "field transfer metric profile");
-        const auto load = [&](const Json &record) {
-            members(record, {"assay", "partition", "field"});
-            const auto a = text(record.at("assay"));
-            require(state_->assays.contains(a), "field transfer assay");
-            const auto p =
-                count(record.at("partition"), state_->assays.at(a).at("partitions").size() - 1,
-                      "field transfer partition");
-            auto input = load_assay_field(study(a, p), record.at("field").text());
-            require(!input.values.empty(), "empty field transfer input");
-            require(std::all_of(input.supported.begin(), input.supported.end(),
-                                [](auto v) { return v; }),
-                    "field transfer requires complete support; no implicit missing extension");
-            return input;
-        };
-        const auto left = load(request.at("left")), right = load(request.at("right"));
-        const auto map = request.at("map");
-        members(map, {"domain_quantity", "domain_units", "codomain_quantity", "codomain_units",
-                      "method", "evidence", "entries"});
-        require(map.at("domain_quantity").text() == right.meaning.at("quantity").text() &&
-                    map.at("domain_units").text() == right.meaning.at("units").text() &&
-                    map.at("codomain_quantity").text() == left.meaning.at("quantity").text() &&
-                    map.at("codomain_units").text() == left.meaning.at("units").text(),
-                "field transfer domain/codomain meanings differ from measurements");
-        (void)text(map.at("method"));
-        (void)text(map.at("evidence"), 16384);
-        std::map<std::string, std::size_t> li, ri;
-        for (std::size_t i = 0; i < left.ids.size(); ++i)
-            li.emplace(left.ids.at(i).text(), i);
-        for (std::size_t i = 0; i < right.ids.size(); ++i)
-            ri.emplace(right.ids.at(i).text(), i);
-        rfc::numeric::ExactMatrix matrix(left.values.size(), right.values.size());
-        std::set<std::pair<std::size_t, std::size_t>> seen;
-        for (std::size_t i = 0; i < map.at("entries").size(); ++i) {
-            const auto e = map.at("entries").at(i);
-            members(e, {"left_id", "right_id", "coefficient"});
-            const auto l = text(e.at("left_id")), r = text(e.at("right_id"));
-            require(li.contains(l) && ri.contains(r) && seen.emplace(li.at(l), ri.at(r)).second,
-                    "field transfer coordinate identity or duplicate entry");
-            matrix.set(li.at(l), ri.at(r), exact_rational(text(e.at("coefficient"))));
-        }
-        auto reservation = resources->reserve(1);
-        const auto transported = matrix.apply(right.values),
-                   residual = rfc::numeric::sub(left.values, transported);
-        const auto vector_json = [](const Vector &v) {
-            auto out = Json::array();
-            for (const auto &q : v)
-                out.push(Json::string(q.get_str()));
-            return out;
-        };
-        result.set("left", vector_json(left.values));
-        result.set("right", vector_json(right.values));
-        result.set("transported_right", vector_json(transported));
-        result.set("residual", vector_json(residual));
-        result.set("left_ids", left.ids);
-        result.set("right_ids", right.ids);
-        result.set("left_carrier_grade", Json::integer(left.grade));
-        result.set("right_carrier_grade", Json::integer(right.grade));
-        const auto rank = matrix.rank();
-        result.set("map_rank", cardinality(rank));
-        result.set("map_kernel_dimension", cardinality(matrix.cols() - rank));
-        result.set("residual_quadrance",
-                   Json::string(rfc::numeric::dot(residual, residual).get_str()));
-        result.set("pairing", Json::string(rfc::numeric::dot(left.values, transported).get_str()));
-        result.set("left_source_digest", Json::string(left.owner->digest()));
-        result.set("right_source_digest", Json::string(right.owner->digest()));
-        result.set("left_meaning", left.meaning);
-        result.set("right_meaning", right.meaning);
-        result.set("map", map);
-        result.set(
-            "scope",
-            Json::string("Full field comparison under the declared measurement map and metric; the "
-                         "map's biological validity is supplied by its evidence"));
+        result = field_transfer(*this, request, resources);
     } else if (operation == "allocation_bounds") {
-        members(request,
-                {"schema", "operation", "resource", "targets", "candidate_search", "scale",
-                 "scale_provenance"},
-                {"kernel_certificate"});
-        const auto id = text(request.at("resource"));
-        require(state_->physical.contains(id), "unknown assignment resource");
-        const auto item = state_->physical.at(id);
-        require(item.at("declaration").at("format").text() == "salmon_eq",
-                "assignment resource must be unweighted Salmon equivalence classes");
-        const auto parsed = salmon_classes(state_->artifact( item.at("original")));
-        auto allocation = Json::object();
-        allocation.set("schema", Json::string("gadget.assay.allocations.v1"));
-        allocation.set("operation", Json::string("allocation_bounds"));
-        allocation.set("candidates", parsed.at("candidates"));
-        allocation.set("classes", parsed.at("classes"));
-        allocation.set("targets", request.at("targets"));
-        if (request.has("kernel_certificate"))
-            allocation.set("kernel_certificate", request.at("kernel_certificate"));
-        allocation.set("contrasts", Json::array());
-        allocation.set("class_partition", Json::string("disjoint_observations"));
-        allocation.set("units", Json::string("assigned_fragment_count"));
-        allocation.set("candidate_search", request.at("candidate_search"));
-        auto evidence = Json::array();
-        evidence.push(item.at("original").at("sha256"));
-        allocation.set("evidence", evidence);
-        auto samples = Json::array(), sample = Json::object();
-        sample.set("id", request.at("resource"));
-        sample.set("counts", parsed.at("counts"));
-        sample.set("scale", request.at("scale"));
-        sample.set("scale_provenance", request.at("scale_provenance"));
-        samples.push(sample);
-        allocation.set("samples", samples);
-        result = analyze_allocations(allocation, resources).at("result");
+        result = render_record_view(execute_record(admit_record_view(request), resources)).at("result").at("result");
     } else
         throw std::invalid_argument("unsupported assay workspace operation: " + operation);
     auto output = Json::object();
@@ -3013,9 +2841,13 @@ bool AssayWorkspace::supports_native_publication(std::string_view operation) noe
     return supports_native_materialization(operation) || operation == "interval_coverage" ||
            operation == "annotation_features" || operation == "sequence_motifs" ||
            operation == "read_protocol_evidence" || operation == "read_quality" ||
-           operation == "query_batch" || operation == "indexed_sequence_alignment" ||
+           operation == "query_batch" || operation == "inspect" ||
+           operation == "native_query" || operation == "relational_persistence" ||
+           operation == "indexed_sequence_alignment" ||
            operation == "reference_sequence_matches" || operation == "sequence_splice_discovery" ||
-           operation == "read_overlap_reconstruction" || operation == "read_edit_consensus";
+           operation == "read_overlap_reconstruction" || operation == "read_edit_consensus" ||
+           operation == "relational_gluing" || operation == "field_transfer" ||
+           operation == "allocation_bounds";
 }
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
@@ -3024,6 +2856,187 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
         return query_batch_record(*this, request, resources);
     }
     const auto query = render_record_view(request);
+    if (query.has("operation") && (query.at("operation").text() == "relational_gluing" ||
+                                   query.at("operation").text() == "field_transfer" ||
+                                   query.at("operation").text() == "allocation_bounds")) {
+        using N = NativeRecordValue;
+        require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
+        if (!resources) resources = CpuResources::local();
+        std::optional<AssayFieldsSource> retained;
+        const auto operation = query.at("operation").text();
+        if (operation == "relational_gluing") relational_gluing(*this, query, resources, &retained);
+        else if (operation == "field_transfer") field_transfer(*this, query, resources, &retained);
+        else {
+            members(query,
+                    {"schema", "operation", "resource", "targets", "candidate_search", "scale",
+                     "scale_provenance"},
+                    {"kernel_certificate"});
+            const auto id = text(query.at("resource"));
+            require(state_->physical.contains(id), "unknown assignment resource");
+            const auto item = state_->physical.at(id);
+            require(item.at("declaration").at("format").text() == "salmon_eq",
+                    "assignment resource must be unweighted Salmon equivalence classes");
+            const auto parsed = salmon_classes(state_->artifact( item.at("original")));
+            auto allocation = Json::object();
+            allocation.set("schema", Json::string("gadget.assay.allocations.v1"));
+            allocation.set("operation", Json::string("allocation_bounds"));
+            allocation.set("candidates", parsed.at("candidates"));
+            allocation.set("classes", parsed.at("classes"));
+            allocation.set("targets", query.at("targets"));
+            if (query.has("kernel_certificate"))
+                allocation.set("kernel_certificate", query.at("kernel_certificate"));
+            allocation.set("contrasts", Json::array());
+            allocation.set("class_partition", Json::string("disjoint_observations"));
+            allocation.set("units", Json::string("assigned_fragment_count"));
+            allocation.set("candidate_search", query.at("candidate_search"));
+            auto evidence = Json::array();
+            evidence.push(item.at("original").at("sha256"));
+            allocation.set("evidence", evidence);
+            auto samples = Json::array(), sample = Json::object();
+            sample.set("id", query.at("resource"));
+            sample.set("counts", parsed.at("counts"));
+            sample.set("scale", query.at("scale"));
+            sample.set("scale_provenance", query.at("scale_provenance"));
+            samples.push(sample);
+            allocation.set("samples", samples);
+            allocation_analysis(allocation, resources, &retained);
+        }
+        require(retained.has_value(), "native assay result fields missing");
+        auto fields = std::move(*retained);
+        std::uint64_t source_key = 1;
+        for (const auto &source : fields.sources) {
+            require(source.key() < std::numeric_limits<std::uint64_t>::max(),
+                    "raw source identity space exhausted");
+            source_key = std::max(source_key, source.key() + 1);
+        }
+        auto owner = native_publication().archive_source(source_key);
+        const auto bytes = owner.bytes().size();
+        fields.sources.push_back(std::move(owner));
+        N certificate(N::Object{{{"schema", N(std::string("gadget.assay.result.native.v1"))},
+            {"query", import_record_view(query)}, {"source_digest", N(digest())},
+            {"result", std::move(fields.declaration)},
+            {"workspace_publication", N(N::ByteSpan{source_key, 0, bytes, false})},
+            {"arithmetic", N(std::string("rational"))},
+            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+        return retain_operation(std::move(fields.endpoint), new_native_record_namespace(),
+            std::move(fields.sources), request, std::move(certificate));
+    }
+    if (query.has("operation") && (query.at("operation").text() == "inspect" ||
+                                   query.at("operation").text() == "native_query" ||
+                                   query.at("operation").text() == "relational_persistence")) {
+        using N = NativeRecordValue;
+        const auto operation = query.at("operation").text();
+        require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
+        if (!resources) {
+            if (operation == "native_query" &&
+                query.at("query").at("operation").text() == "metric_relative_novelty") {
+                std::lock_guard lock(state_->novelty_mutex);
+                if (!state_->novelty_default_cpu) state_->novelty_default_cpu = CpuResources::local();
+                resources = state_->novelty_default_cpu;
+            } else resources = CpuResources::local();
+        }
+        std::optional<NativeRecord> retained;
+        if (operation == "inspect") {
+            members(query, {"schema", "operation"});
+            auto value = state_->manifest.native().unbound_value();
+            auto &catalog = std::get<N::Object>(value.data).members;
+            catalog.emplace_back("capabilities", import_record_view(bioinformatics_capabilities()));
+            if (!state_->manifest.has("manifest_sha256"))
+                catalog.emplace_back("manifest_sha256", N(digest()));
+            retained.emplace(native_publication().derive(std::move(value)));
+        } else if (operation == "native_query") {
+            members(query, {"schema", "operation", "assay", "query"}, {"partitions"});
+            const auto id = text(query.at("assay"));
+            require(state_->assays.contains(id), "unknown assay");
+            const auto item = state_->assays.at(id);
+            const auto packets = item.at("partitions");
+            std::vector<std::size_t> selected;
+            if (query.has("partitions")) {
+                std::set<std::size_t> unique;
+                for (std::size_t i = 0; i < query.at("partitions").size(); ++i) {
+                    const auto p =
+                        count(query.at("partitions").at(i), packets.size() - 1, "assay partition");
+                    require(unique.insert(p).second, "duplicate assay partition");
+                    selected.push_back(p);
+                }
+                require(!selected.empty(), "empty assay partition selection");
+            } else
+                for (std::size_t i = 0; i < packets.size(); ++i)
+                    selected.push_back(i);
+            // Native subspace/topology/Green queries require an indivisible carrier.
+            const auto op = query.at("query").at("operation").text();
+            require(packets.size() == 1 || op == "paired_field_contrasts" || op == "field_summary" ||
+                        op == "coverage" || op == "tensor_window" || op == "inspect" ||
+                        op == "provenance",
+                    "whole-carrier method cannot be applied independently to storage partitions");
+            auto answers = scientific_detail::ResultValue::array();
+            scientific_detail::ResultFields collection(native_publication());
+            const bool reuse_novelty = op == "metric_relative_novelty" &&
+                                       (!query.at("query").has("preparation") ||
+                                        query.at("query").at("preparation").text() == "reuse");
+            const auto session_for = [&](std::size_t p) {
+                if (!reuse_novelty)
+                    return std::make_shared<ScientificSession>(study(id, p), resources);
+                std::lock_guard lock(state_->novelty_mutex);
+                const auto key = std::tuple{id, p, resources.get()};
+                const auto found = state_->novelty_sessions.find(key);
+                if (found != state_->novelty_sessions.end())
+                    return found->second;
+                auto session = std::make_shared<ScientificSession>(study(id, p), resources);
+                state_->novelty_sessions.emplace(key, session);
+                return session;
+            };
+            auto view = scientific_detail::ResultValue::object();
+            // Preflight every leaf before publishing any answer.
+            for (auto p : selected) {
+                session_for(p)->validate(query.at("query"));
+            }
+            for (auto p : selected) {
+                using V = scientific_detail::ResultValue;
+                auto answer = V::object();
+                answer.set("partition", V::count(p));
+                if (packets.at(p).has("carrier_ids"))
+                    answer.set("carrier_ids", V(packets.at(p).native().unbound_value()));
+                else
+                    answer.set("source_index", collection.publication(study(id, p)->source_index_record()));
+                const auto child = session_for(p)->execute_record(request.at("query"));
+                answer.set("certificate", scientific_detail::ResultFields::member(
+                    collection.publication(child), {"result"}));
+                answers.push(std::move(answer));
+            }
+            view.set("assay", scientific_detail::ResultValue::string(query.at("assay").text()));
+            view.set("answers", std::move(answers));
+            view.set("carrier_axis", scientific_detail::ResultValue(item.at("declaration").at("carrier").native().unbound_value()));
+            view.set(
+                "partition_semantics",
+                scientific_detail::ResultValue::string("Ordered disjoint carrier subsets with explicit identity witnesses; "
+                             "whole-carrier topological operations require one partition"));
+            retained.emplace(collection.finish(std::move(view)));
+        } else {
+            const auto id = text(query.at("assay"));
+            require(state_->assays.contains(id), "unknown persistence assay");
+            require(state_->assays.at(id).at("partitions").size() == 1 &&
+                        count(query.at("partition"), 0, "persistence partition") == 0,
+                    "persistence requires an indivisible source carrier");
+            auto reservation = resources->reserve(1);
+            retained.emplace(relational_persistence_record(*study(id), request));
+        }
+        std::uint64_t key = 1;
+        for (const auto &bytes : retained->raw_sources())
+            key = rfc::machine::checked_size_add(std::max(key - 1, bytes.key()), 1);
+        auto workspace = native_publication().archive_source(key);
+        N certificate(N::Object{{
+            {"schema", N(std::string("gadget.assay.result.native.v1"))},
+            {"query", import_record_view(query)}, {"source_digest", N(digest())},
+            {"result", retained->unbound_value()},
+            {"workspace_publication", N(N::ByteSpan{key, 0, workspace.bytes().size(), false})},
+            {"arithmetic", N(std::string("rational"))},
+            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+        auto owner = retained->derive(std::move(certificate), {std::move(workspace)});
+        return retain_operation(owner, request, owner.unbound_value());
+    }
     if (query.has("operation") && (query.at("operation").text() == "indexed_sequence_alignment" ||
                                    query.at("operation").text() == "reference_sequence_matches" ||
                                    query.at("operation").text() == "sequence_splice_discovery" ||
@@ -3194,16 +3207,6 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
     } else
         for (std::size_t i = 0; i < packets.size(); ++i)
             selected.push_back(i);
-    auto leaf = Json::parse(request.dump());
-    if (leaf.has("concurrent_jobs")) {
-        auto stripped = Json::object();
-        json_object_object_foreach(leaf.raw(), name, value) {
-            (void)value;
-            if (std::string(name) != "concurrent_jobs")
-                stripped.set(name, leaf.at(name));
-        }
-        leaf = stripped;
-    }
     // Use the identical query admission/partition policy as execute().
     const auto op = request.at("query").at("operation").text();
     require(packets.size() == 1 || op == "paired_field_contrasts" || op == "field_summary" ||
@@ -3214,6 +3217,8 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
         session.validate(request.at("query"));
     }
     const auto q = request.at("query");
+    const auto native_query = retained_request.at("query");
+    using V = scientific_detail::ResultValue;
     const auto workers =
         q.has("workers")
             ? count(q.at("workers"), resources->coordinator().capacity(), "native query workers")
@@ -3230,8 +3235,9 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
         {requested_concurrency, selected.size(), resources->coordinator().capacity() / workers});
     fs::create_directories(fs::absolute(destination).parent_path());
     require(fs::create_directory(destination), "assay results creation conflict");
-    auto entries = Json::array();
+    auto entries = V::array();
     try {
+        scientific_detail::ResultFields collection(native_publication());
         // Joined jobs write their own certificates and retain only receipts.
         // The actual assigned concurrency determines each wave's size.
         for (std::size_t begin = 0; begin < selected.size();) {
@@ -3244,14 +3250,13 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
                 const auto p = selected[i];
                 const rfc::runtime::WorkKey key{i + 1, 1};
                 keys.push_back(key);
-                jobs.push_back(rfc::runtime::WorkJob::make<RetainedRecord>(
-                    key, {workers, buffer, sizeof(RetainedRecord)}, {},
-                    [this, p, id, q, resources, destination](const auto &, auto &assigned,
+                jobs.push_back(rfc::runtime::WorkJob::make<V>(
+                    key, {workers, buffer, sizeof(V)}, {},
+                    [this, p, id, native_query, resources, destination](const auto &, auto &assigned,
                                                              std::stop_token stop) {
                         if (stop.stop_requested())
                             throw rfc::runtime::ExecutionCancelled{};
                         ScientificSession session(study(id, p), resources->assigned(assigned));
-                        const auto native_query=admit_record_view(q);
                         const auto native_answer=session.execute_record(native_query);
                         native_answer.write(destination/("partition-"+std::to_string(p)+".rfcxs"));
                         const auto answer=render_record_view(native_answer.at("result"));
@@ -3259,13 +3264,16 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
                         const auto path = "partition-" + std::to_string(p) + ".json";
                         write_text(destination / path, bytes);
                         const auto native_path="partition-"+std::to_string(p)+".rfcxs";
-                        auto receipt = file_record(native_path, read_text(destination/native_path));
-                        receipt.set("view_path",Json::string(path));
-                        receipt.set("partition", cardinality(p));
-                        receipt.set("source_digest", answer.at("source_digest"));
-                        receipt.set("certificate_sha256", answer.at("certificate_sha256"));
-                        receipt.set("native_path",Json::string(native_path));
-                        return RetainedRecord(receipt);
+                        auto receipt = V::object();
+                        receipt.set("path", V::string(native_path));
+                        receipt.set("sha256", V::string("sha256:" + sha256_file(destination / native_path)));
+                        receipt.set("bytes", V::count(fs::file_size(destination / native_path)));
+                        receipt.set("view_path", V::string(path));
+                        receipt.set("partition", V::count(p));
+                        receipt.set("source_digest", V::string(answer.at("source_digest").text()));
+                        receipt.set("certificate_sha256", V::string(answer.at("certificate_sha256").text()));
+                        receipt.set("native_path", V::string(native_path));
+                        return receipt;
                     }));
             }
             rfc::runtime::WorkGraphLimits limits;
@@ -3273,43 +3281,50 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
             limits.edges = 0;
             limits.depth = 1;
             limits.in_flight = concurrency;
-            limits.retained_result_bytes = rfc::machine::checked_size_mul(jobs.size(),sizeof(RetainedRecord));
+            limits.retained_result_bytes = rfc::machine::checked_size_mul(jobs.size(),sizeof(V));
             const rfc::runtime::WorkGraph graph(std::move(jobs), limits);
             auto work = graph.submit(resources->coordinator());
             work.wait();
             for (std::size_t j = 0; j < keys.size(); ++j) {
                 const auto completion = work.completion(keys[j]);
-                const auto answer = completion.result<RetainedRecord>();
+                const auto answer = completion.result<V>();
                 const auto p = selected[begin + j];
-                auto item = Json::parse(answer->dump());
+                auto item = *answer;
                 const auto receipt = completion.receipt();
-                item.set("workers", cardinality(receipt.demand.workers));
-                item.set("execution_ns", Json::string(std::to_string(receipt.execution_ns)));
-                item.set("queue_ns", Json::string(std::to_string(receipt.queue_ns)));
+                item.set("workers", V::count(receipt.demand.workers));
+                item.set("execution_ns", V::string(std::to_string(receipt.execution_ns)));
+                item.set("queue_ns", V::string(std::to_string(receipt.queue_ns)));
                 if (packets.at(p).has("carrier_ids"))
-                    item.set("carrier_ids", packets.at(p).at("carrier_ids"));
+                    item.set("carrier_ids", V(packets.at(p).at("carrier_ids").native().unbound_value()));
                 else
-                    item.set("source_index", study(id, p)->source_index());
+                    item.set("source_index", collection.publication(study(id, p)->source_index_record()));
                 entries.push(item);
             }
             begin = end;
         }
-        auto result = Json::object();
-        result.set("schema", Json::string("gadget.assays.run.v1"));
-        result.set("source_digest", Json::string(digest()));
-        result.set("query", request);
+        auto result = V::object();
+        result.set("schema", V::string("gadget.assays.run.v1"));
+        result.set("source_digest", V::string(digest()));
+        result.set("query", V(request));
         result.set("results", entries);
-        result.set("concurrent_jobs", cardinality(concurrency));
+        result.set("concurrent_jobs", V::count(concurrency));
         result.set(
             "retention",
-            Json::string(
+            V::string(
                 "certificate files written by joined native jobs; artifact receipts retained"));
-        result.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
-        result.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-        result = seal(result, "certificate_sha256");
-        auto publication=retain_operation(native_publication(),retained_request,import_record_view(result));
+        result.set("gadget_sha256", V::string(GADGET_SOURCE_SHA256));
+        result.set("rexgraph_sha256", V::string(GADGET_REXGRAPH_SHA256));
+        auto owner = collection.finish(std::move(result));
+        auto sealed = owner.unbound_value();
+        for (auto &[name, value] : std::get<NativeRecordValue::Object>(sealed.data).members)
+            if (name == "view")
+                std::get<NativeRecordValue::Object>(value.data).members.emplace_back(
+                    "certificate_sha256", NativeRecordValue(std::string("sha256:") +
+                        sha256(render_record_view(owner).dump())));
+        owner = owner.derive(std::move(sealed));
+        auto publication = retain_operation(owner, retained_request, owner.unbound_value());
         publication.write(destination / "results.rfcxs");
-        write_text(destination / "results.json", result.dump() + "\n");
+        write_text(destination / "results.json", render_record_view(publication.at("result")).dump() + "\n");
         return publication;
     } catch (...) {
         fs::remove_all(destination);
@@ -3318,7 +3333,7 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
 }
 Json bioinformatics_capabilities() {
     auto result = Json::parse(
-        R"({"schema":"gadget.bioinformatics.capabilities.v1","matrix_formats":["dense_tsv","matrix_market"],"physical_formats":["bed","gtf","fasta","fastq"],"workspace_methods":["native_query","interval_coverage"],"allocation_method":"allocation_bounds","existing_native_methods":["paired_field_contrasts","controlled_pairings","trajectory_structure","structure_transition","local_sections","green_response","tensor_window","field_summary","boundary","adjoint","hodge","typed_moment"],"unavailable_services":["streaming_multigigabase_gapped_alignment","gapped_splice_alignment","error_correcting_consensus_assembly","unbounded_integer_optimization","population_significance_without_a_declared_null_model","automatic_cell_type_or_causal_inference","integral_or_zigzag_persistence"],"limits":{}})");
+        R"({"schema":"gadget.bioinformatics.capabilities.v1","matrix_formats":["dense_tsv","matrix_market"],"physical_formats":["bed","gtf","fasta","fastq"],"workspace_methods":["native_query","interval_coverage"],"allocation_method":"allocation_bounds","existing_native_methods":["paired_field_contrasts","controlled_pairings","trajectory_structure","structure_transition","local_sections","green_response","tensor_window","field_summary","boundary","adjoint","hodge","typed_moment"],"unavailable_services":["streaming_multigigabase_gapped_alignment","quality_scored_splice_alignment","error_correcting_consensus_assembly","unbounded_integer_optimization","population_significance_without_a_declared_null_model","automatic_cell_type_or_causal_inference","integral_or_zigzag_persistence"],"limits":{}})");
 #if GADGET_HAS_HDF5
     auto formats = result.at("matrix_formats");
     formats.push(Json::string("h5ad"));
@@ -3383,7 +3398,7 @@ Json bioinformatics_capabilities() {
     result.set(
         "sequence_profiles",
         Json::parse(
-            R"({"indexed_sequence_alignment":"Complete unit-edit substring search for literal ACGT reads, with an injective DNA seed index and native exact routes","sequence_splice_discovery":"Complete exact exon chains with sequence-derived junctions, declared motif/length/junction constraints and complete source-sized output","read_overlap_reconstruction":"Every minimum suffix-prefix cover of all declared source reads, with native categorical section gluing and all alternative spellings"})"));
+            R"({"indexed_sequence_alignment":"Complete unit-edit substring search for literal ACGT reads, with an injective DNA seed index and one or every minimum ordered native edit history","sequence_splice_discovery":"Complete literal or declared unit-edit exon histories with sequence-derived junctions, motif/length/junction constraints and every minimum ordered history per placement","read_overlap_reconstruction":"Every minimum suffix-prefix cover of all declared source reads, with native categorical section gluing and all alternative spellings"})"));
     result.set(
         "composite_sequence_execution",
         Json::parse(

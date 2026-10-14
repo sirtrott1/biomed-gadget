@@ -1,3 +1,4 @@
+#include "scientific_result_fields.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -73,6 +74,105 @@ Rational restricted_pairing(const rfc::approximation::DenseMatrix &gram,
             selected(i, j) = gram(left.entries()[i].index, right.entries()[j].index);
     return rfc::numeric::dot(binary64_values(x), binary64_values(selected.apply(y)));
 }
+using Fields = scientific_detail::ResultFields;
+using V = scientific_detail::ResultValue;
+using N = NativeRecordValue;
+using Matrix = rfc::numeric::ExactMatrix;
+V approximate(double value) {
+    if (!std::isfinite(value)) throw std::runtime_error("analysis binary64 range exceeded");
+    return V(N(N::ExactNumber{Rational(value), true}));
+}
+Matrix exact_coefficients(const rfc::approximation::DenseMatrix &value) {
+    Matrix out(value.rows(), value.cols());
+    for (std::size_t i = 0; i < value.rows(); ++i)
+        for (std::size_t j = 0; j < value.cols(); ++j) {
+            if (!std::isfinite(value(i, j))) throw std::runtime_error("analysis matrix range exceeded");
+            if (value(i, j) != 0) out.set(i, j, Rational(value(i, j)));
+        }
+    return out;
+}
+Vector complete(const rfc::numeric::SparseRationalVector &value) {
+    Vector out(value.size(), Rational{0});
+    for (const auto &entry : value.entries()) out.at(entry.index) = entry.value;
+    return out;
+}
+struct AnalysisFields {
+    NativeRecord base;
+    Fields fields;
+    std::uint64_t genes, relations, channels;
+    V view{V::object()}, moments{V::array()}, solves{V::array()}, exact_checks{V::array()};
+    Matrix pulls, coefficients;
+    std::optional<V> system;
+    explicit AnalysisFields(const Execution &op, const NativeRecord &original)
+        : base(NativeRecord::create_from_endpoint(N(N::Object{{
+              {"schema", N(std::string("gadget.analysis.context.source.v1"))},
+              {"original_source_namespace", N(std::to_string(original.source_namespace()))},
+              {"original_source_cutoff", N(rfc::numeric::Integer(std::to_string(original.publication_history()->last_sequence())))},
+              {"original_bytes_context", N(std::string("complete parent analysis publication"))}}}),
+              new_native_record_namespace(), {}, rfc::storage::TemporalEndpoint(op.complex()))),
+          fields(base), genes(fields.source_grade(0)), relations(fields.source_grade(1)),
+          channels(fields.axis(3)), pulls(op.boundary().domain_size(), op.boundary().codomain_size()),
+          coefficients(pulls.rows(), pulls.cols()) {
+        view.set("context", V::string(op.context));
+        view.set("realization", V::string(op.realization));
+        view.set("source_digest", V::string(op.source_digest()));
+        view.set("source_base_namespace", V::string(std::to_string(base.source_namespace())));
+        view.set("source_base_cutoff", V::count(base.publication_history()->last_sequence()));
+        view.set("gene_carrier", V::count(genes));
+        view.set("relation_carrier", V::count(relations));
+        view.set("channel_carrier", V::count(channels));
+        auto labels = V::array();
+        for (char c : std::string("GET")) labels.push(V::string(std::string(1, c)));
+        view.set("channels", std::move(labels));
+        std::vector<std::size_t> ambient;
+        for (auto id : op.source_relations) ambient.push_back(id);
+        view.set("source_relations", fields.indices(ambient, relations));
+        ambient.clear();
+        for (std::size_t i = 0; i < pulls.cols(); ++i) ambient.push_back(i);
+        view.set("source_genes", fields.indices(ambient, genes));
+        view.set("boundary", fields.matrix(rfc::field::boundary_matrix(op.complex(), {1}), relations, genes));
+        view.set("gene_metric", fields.matrix(op.metrics()[0].materialize(), genes, genes));
+        view.set("relation_metric", fields.matrix(op.metrics()[1].materialize(), relations, relations));
+        view.set("arithmetic", V::string("rational actions with explicitly lifted binary64 Gram and solve coefficients"));
+        view.set("metric", V::string("M0=identity; M1=exact boundary quadrance; zero-column convention=1"));
+    }
+    V green(const Execution::GreenWitnesses &witness, const Vector &source, const Vector &response) {
+        auto result = V::object();
+        result.set("source", fields.vector(source, genes));
+        result.set("pulled", fields.vector(witness.pulled, relations));
+        result.set("solved", fields.vector(witness.solved, relations));
+        result.set("response", fields.vector(response, genes));
+        result.set("residual", fields.vector(witness.residual, genes));
+        if (!system) system = fields.matrix(exact_coefficients(witness.system), relations, relations);
+        result.set("system", *system);
+        auto diagnostic = V::object();
+        diagnostic.set("backend", V::string("rfc.approximation.DenseMatrix.solve / relation-space Green"));
+        diagnostic.set("exact", V::boolean(false));
+        diagnostic.set("relative_residual", approximate(witness.relative));
+        diagnostic.set("absolute_residual", approximate(witness.absolute));
+        diagnostic.set("tolerance", approximate(witness.tolerance));
+        diagnostic.set("relation_dimension", V::count(pulls.rows()));
+        diagnostic.set("metric", V::string("M0=identity; M1=exact boundary quadrance; zero-column convention=1"));
+        diagnostic.set("lambda", V(N(N::ExactNumber{Rational{1}, true})));
+        result.set("diagnostic", diagnostic);
+        solves.push(std::move(result));
+        return diagnostic;
+    }
+    void gene_column(std::size_t gene, const rfc::numeric::SparseRationalVector &pulled,
+                     const rfc::numeric::SparseRationalVector &coefficient) {
+        for (const auto &entry : pulled.entries()) pulls.set(entry.index, gene, entry.value);
+        for (const auto &entry : coefficient.entries()) coefficients.set(entry.index, gene, entry.value);
+    }
+    NativeRecord finish(Execution &op) {
+        view.set("relation_gram", fields.matrix(exact_coefficients(op.relation_gram()), relations, relations));
+        view.set("moments", std::move(moments));
+        view.set("green_solves", std::move(solves));
+        view.set("gene_pulls", fields.matrix(pulls, genes, relations));
+        view.set("gene_adjoint", fields.matrix(coefficients, genes, relations));
+        view.set("exact_checks", std::move(exact_checks));
+        return fields.finish(std::move(view));
+    }
+};
 void matrix_csv(const fs::path &path, const std::array<std::array<Rational, 3>, 3> &matrix,
                 bool normalized) {
     auto out = stream();
@@ -103,13 +203,25 @@ void analyze(const Workspace &w, const fs::path &requested) {
                                     destination.string());
     const auto started = std::chrono::steady_clock::now();
     fs::create_directories(destination / "tables");
+    const auto original = capture_workspace(w);
+    Fields native(original);
+    const auto genes = native.source_grade(0);
+    auto retained_results = V::object(), retained_contexts = V::array(), retained_cross = V::array(), retained_sweeps = V::array();
+    auto native_certificates = V::array();
     auto certificates = Json::array();
     write_text(destination / "manifests/source.json", w.manifest().dump() + "\n");
     auto metrics = Json::object();
+    auto native_performance = V::object();
+    const auto timing = [&](std::string name, double value) {
+        metrics.set(name, Json::number(value));
+        native_performance.set(std::move(name), approximate(value));
+    };
     for (const auto &realization : {"support", "rp"}) {
         std::cerr << "Preparing canonical " << realization << " contexts\n";
         Execution ad(w, "AD", realization), hd(w, "HD", realization);
+        AnalysisFields ad_fields(ad, original), hd_fields(hd, original);
         for (auto *op : {&ad, &hd}) {
+            auto &retained = op == &ad ? ad_fields : hd_fields;
             auto prefix = op->context == "AD" ? "alzheimers" : "huntingtons";
             std::string base = std::string(prefix) + "_" + realization;
             std::array<Vector, 3> fields, pulled, powers;
@@ -118,6 +230,13 @@ void analyze(const Workspace &w, const fs::path &requested) {
                 pulled[i] = op->boundary().transpose_apply(fields[i]);
                 powers[i] = op->metrics()[1].solve(pulled[i]);
             }
+            auto original_fields = V::array(), original_pulls = V::array();
+            for (std::size_t i = 0; i < 3; ++i) {
+                original_fields.push(retained.fields.vector(fields[i], retained.genes));
+                original_pulls.push(retained.fields.vector(pulled[i], retained.relations));
+            }
+            retained.view.set("source_fields", std::move(original_fields));
+            retained.view.set("pulled_fields", std::move(original_pulls));
             for (std::size_t power = 0; power <= 4; ++power) {
                 std::array<std::array<Rational, 3>, 3> matrix;
                 for (std::size_t i = 0; i < 3; ++i)
@@ -151,6 +270,35 @@ void analyze(const Workspace &w, const fs::path &requested) {
                 }
                 cert.set("values", rows);
                 certificates.push(cert);
+                auto native_cert = V::object();
+                native_cert.set("operation", V::string("typed_moment"));
+                native_cert.set("context", V::string(op->context));
+                native_cert.set("realization", V::string(realization));
+                native_cert.set("order", V::count(power));
+                native_cert.set("exact", V::boolean(power <= 1));
+                native_cert.set("backend", V::string(cert.at("backend").text()));
+                auto native_rows = V::array();
+                Matrix full(3, 3), cosine(3, 3);
+                for (std::size_t i = 0; i < 3; ++i) {
+                    auto row = V::array();
+                    for (std::size_t j = 0; j < 3; ++j) {
+                        row.push(native.scalar(matrix[i][j]));
+                        full.set(i, j, matrix[i][j]);
+                        const auto denominator = std::sqrt(matrix[i][i].get_d() * matrix[j][j].get_d());
+                        cosine.set(i, j, Rational(denominator > 0 ? matrix[i][j].get_d() / denominator : 0));
+                    }
+                    native_rows.push(std::move(row));
+                }
+                native_cert.set("values", std::move(native_rows));
+                native_certificates.push(std::move(native_cert));
+                auto moment = V::object(), coefficients = V::array();
+                moment.set("order", V::count(power));
+                moment.set("exact", V::boolean(power <= 1));
+                moment.set("matrix", retained.fields.matrix(full, retained.channels, retained.channels));
+                moment.set("cosine", retained.fields.matrix(cosine, retained.channels, retained.channels));
+                for (const auto &value : powers) coefficients.push(retained.fields.vector(value, retained.relations));
+                moment.set("relation_coefficients", std::move(coefficients));
+                retained.moments.push(std::move(moment));
                 if (power > 0 && power < 4)
                     for (auto &value : powers)
                         value = op->metrics()[1].solve(
@@ -160,7 +308,9 @@ void analyze(const Workspace &w, const fs::path &requested) {
             std::array<Vector, 3> responses;
             for (std::size_t i = 0; i < 3; ++i) {
                 Json diagnostic;
-                responses[i] = op->green(fields[i], Rational{1}, 1e-9, diagnostic);
+                std::optional<Execution::GreenWitnesses> witness;
+                responses[i] = op->green(fields[i], Rational{1}, 1e-9, diagnostic, &witness);
+                retained.green(*witness, fields[i], responses[i]);
                 diagnostic.set("channel", Json::string(std::string(1, "GET"[i])));
                 diagnostics.push(diagnostic);
             }
@@ -168,6 +318,10 @@ void analyze(const Workspace &w, const fs::path &requested) {
             for (std::size_t i = 0; i < 3; ++i)
                 for (std::size_t j = 0; j < 3; ++j)
                     gram[i][j] = rfc::numeric::dot(responses[i], responses[j]);
+            Matrix response_gram(3, 3);
+            for (std::size_t i = 0; i < 3; ++i)
+                for (std::size_t j = 0; j < 3; ++j) response_gram.set(i, j, gram[i][j]);
+            retained.view.set("response_gram", retained.fields.matrix(response_gram, retained.channels, retained.channels));
             matrix_csv(destination / "tables" / (base + "_green_response_gram.csv"), gram, false);
             write_text(destination / "manifests" / (base + "_green.json"),
                        diagnostics.dump() + "\n");
@@ -185,12 +339,17 @@ void analyze(const Workspace &w, const fs::path &requested) {
                             source[i] = 1;
                 }
                 Json da, dh, dr;
-                auto ga = ad.green(source, Rational{1}, 1e-9, da),
-                     gh = hd.green(source, Rational{1}, 1e-9, dh);
+                std::optional<Execution::GreenWitnesses> wa, wh, wr;
+                auto ga = ad.green(source, Rational{1}, 1e-9, da, &wa),
+                     gh = hd.green(source, Rational{1}, 1e-9, dh, &wh);
+                auto native_da = ad_fields.green(*wa, source, ga), native_dh = hd_fields.green(*wh, source, gh);
+                wa.reset(); wh.reset();
                 auto delta = rfc::numeric::sub(gh, ga);
                 auto action = rfc::numeric::sub(hd.hodge().apply(ga), ad.hodge().apply(ga));
-                auto predicted =
-                    rfc::numeric::scale(Rational{-1}, hd.green(action, Rational{1}, 1e-9, dr));
+                const auto response = hd.green(action, Rational{1}, 1e-9, dr, &wr);
+                auto native_dr = hd_fields.green(*wr, action, response);
+                wr.reset();
+                auto predicted = rfc::numeric::scale(Rational{-1}, response);
                 auto residual = rfc::numeric::sub(delta, predicted);
                 auto cert = Json::object();
                 cert.set("operation", Json::string("cross_context_green_identity"));
@@ -205,6 +364,25 @@ void analyze(const Workspace &w, const fs::path &requested) {
                 cert.at("solves").push(dh);
                 cert.at("solves").push(dr);
                 certificates.push(cert);
+                auto native_cert = V::object();
+                native_cert.set("operation", V::string("cross_context_green_identity"));
+                native_cert.set("source", V::string(source_name));
+                native_cert.set("relative_residual", approximate(norm(residual) / std::max(1e-30, norm(delta))));
+                native_cert.set("formula", V::string(cert.at("formula").text()));
+                auto native_solves = V::array();
+                native_solves.push(std::move(native_da)); native_solves.push(std::move(native_dh)); native_solves.push(std::move(native_dr));
+                native_cert.set("solves", std::move(native_solves));
+                native_certificates.push(std::move(native_cert));
+                auto cross = V::object();
+                cross.set("source_name", V::string(source_name));
+                cross.set("source", native.vector(source, genes));
+                cross.set("response_AD", native.vector(ga, genes));
+                cross.set("response_HD", native.vector(gh, genes));
+                cross.set("delta", native.vector(delta, genes));
+                cross.set("operator_difference_action", native.vector(action, genes));
+                cross.set("predicted", native.vector(predicted, genes));
+                cross.set("residual", native.vector(residual, genes));
+                retained_cross.push(std::move(cross));
                 std::vector<std::size_t> order(w.genes.size());
                 std::iota(order.begin(), order.end(), 0);
                 std::sort(order.begin(), order.end(), [&](auto a, auto b) {
@@ -233,6 +411,8 @@ void analyze(const Workspace &w, const fs::path &requested) {
         std::vector<std::pair<Rational, std::uint32_t>> ranking;
         ranking.reserve(w.genes.size());
         std::vector<double> first_ad(w.genes.size()), first_hd(w.genes.size());
+        std::array<Vector, 8> sweep;
+        for (auto &column : sweep) column.resize(w.genes.size());
         auto phase = std::chrono::steady_clock::now();
         for (std::uint32_t i = 0; i < w.genes.size(); ++i) {
             auto basis = rfc::numeric::SparseRationalVector::basis(w.genes.size(), i);
@@ -243,7 +423,10 @@ void analyze(const Workspace &w, const fs::path &requested) {
             auto qa = restricted_pairing(aa, ad_coeff, ad_coeff);
             auto qh = restricted_pairing(hh, hd_coeff, hd_coeff);
             auto cross = restricted_pairing(cross_gram, hd_coeff, ad_coeff);
+            ad_fields.gene_column(i, ad_pulled, ad_coeff);
+            hd_fields.gene_column(i, hd_pulled, hd_coeff);
             Rational squared = qa + qh - 2 * cross;
+            sweep[6][i] = squared;
             squared.canonicalize();
             if (squared < 0) {
                 if (std::abs(squared.get_d()) > 1e-10 * std::max(1.0, Rational(qa + qh).get_d()))
@@ -253,6 +436,8 @@ void analyze(const Workspace &w, const fs::path &requested) {
             }
             ranking.emplace_back(squared, i);
             auto ma = sparse_inner(ad_pulled, ad_coeff), mh = sparse_inner(hd_pulled, hd_coeff);
+            sweep[0][i] = ma; sweep[1][i] = qa; sweep[2][i] = mh; sweep[3][i] = qh;
+            sweep[4][i] = cross; sweep[5][i] = squared; sweep[7][i] = Rational(std::sqrt(squared.get_d()));
             first_ad[i] = ma.get_d();
             first_hd[i] = mh.get_d();
             out << csv_cell(w.genes[i]) << ',' << channels(w, "AD", i) << ','
@@ -269,10 +454,9 @@ void analyze(const Workspace &w, const fs::path &requested) {
         write_text(destination / "tables" /
                        (std::string("gene_role_differential_") + realization + ".csv"),
                    out.str());
-        metrics.set(
+        timing(
             std::string(realization) + "_sweep_seconds",
-            Json::number(
-                std::chrono::duration<double>(std::chrono::steady_clock::now() - phase).count()));
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - phase).count());
         const auto exact_checks_started = std::chrono::steady_clock::now();
         std::sort(ranking.begin(), ranking.end(), [&](const auto &a, const auto &b) {
             return a.first == b.first ? w.genes[a.second] < w.genes[b.second] : a.first > b.first;
@@ -304,6 +488,16 @@ void analyze(const Workspace &w, const fs::path &requested) {
             row.set("numerical_relative_error", Json::number(error));
             row.set("provenance", w.provenance(gene));
             top.push(row);
+            for (auto *op : {&ad, &hd}) {
+                auto &retained = op == &ad ? ad_fields : hd_fields;
+                auto exact = V::object();
+                exact.set("gene", V::count(gene));
+                exact.set("rank", V::count(rank + 1));
+                exact.set("hodge_action", retained.fields.vector(complete(op == &ad ? exact_ad : exact_hd), retained.genes));
+                exact.set("verified_squared_difference", retained.fields.scalar(verified));
+                exact.set("relative_error", approximate(error));
+                retained.exact_checks.push(std::move(exact));
+            }
             for (auto *op : {&ad, &hd}) {
                 auto coefficient =
                     op->boundary().adjoint(basis.view(), op->metrics()[0], op->metrics()[1]);
@@ -343,14 +537,38 @@ void analyze(const Workspace &w, const fs::path &requested) {
                    rank_csv.str());
         write_text(destination / "manifests" / (std::string("top_") + realization + ".json"),
                    top.dump() + "\n");
-        metrics.set(std::string(realization) + "_exact_checks_and_explanations_seconds",
-                    Json::number(std::chrono::duration<double>(std::chrono::steady_clock::now() -
+        timing(std::string(realization) + "_exact_checks_and_explanations_seconds",
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                                                exact_checks_started)
-                                     .count()));
-        metrics.set(
+                                     .count());
+        auto retained_sweep = V::object();
+        retained_sweep.set("realization", V::string(realization));
+        const std::array<std::string, 8> names{"mu1_AD", "mu2_AD", "mu1_HD", "mu2_HD", "cross_AD_HD", "delta_L_squared", "unclamped_delta_L_squared", "delta_L_norm"};
+        for (std::size_t c = 0; c < names.size(); ++c) retained_sweep.set(names[c], native.vector(sweep[c], genes));
+        const auto ad_owner = ad_fields.finish(ad), hd_owner = hd_fields.finish(hd);
+        retained_contexts.push(native.publication(ad_owner)); retained_contexts.push(native.publication(hd_owner));
+        auto binding = V::object();
+        binding.set("realization", V::string(realization));
+        binding.set("left_context", native.publication(hd_owner)); binding.set("right_context", native.publication(ad_owner));
+        const auto left = native.axis(cross_gram.rows()), right = native.axis(cross_gram.cols());
+        binding.set("left_relation_axis", V::count(left)); binding.set("right_relation_axis", V::count(right));
+        binding.set("left_namespace", V::string(std::to_string(hd_owner.source_namespace())));
+        binding.set("right_namespace", V::string(std::to_string(ad_owner.source_namespace())));
+        binding.set("left_cutoff", V::count(hd_owner.publication_history()->last_sequence()));
+        binding.set("right_cutoff", V::count(ad_owner.publication_history()->last_sequence()));
+        binding.set("left_context_relation_carrier", V::count(hd_fields.relations));
+        binding.set("right_context_relation_carrier", V::count(ad_fields.relations));
+        std::vector<std::size_t> left_coordinates, right_coordinates;
+        for (std::size_t i = 0; i < cross_gram.rows(); ++i) left_coordinates.push_back(i);
+        for (std::size_t i = 0; i < cross_gram.cols(); ++i) right_coordinates.push_back(i);
+        binding.set("left_coordinates", native.indices(left_coordinates, left));
+        binding.set("right_coordinates", native.indices(right_coordinates, right));
+        binding.set("cross_relation_gram", native.matrix(exact_coefficients(cross_gram), right, left));
+        native.bind(std::move(binding));
+        retained_sweeps.push(std::move(retained_sweep));
+        timing(
             std::string(realization) + "_differential_seconds",
-            Json::number(
-                std::chrono::duration<double>(std::chrono::steady_clock::now() - phase).count()));
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - phase).count());
     }
     auto summary = Json::object();
     summary.set("schema", Json::string("gadget.analysis.v1"));
@@ -369,10 +587,9 @@ void analyze(const Workspace &w, const fs::path &requested) {
                      "Green solve checks its canonical source residual <=1e-9"));
     summary.set("audit", w.audit);
     summary.set("certificates", certificates);
-    metrics.set(
+    timing(
         "analysis_seconds",
-        Json::number(
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()));
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
     summary.set("performance", metrics);
     summary.set("interpretation",
                 Json::string("Operator differences and GET-channel coupling describe this selected "
@@ -399,36 +616,49 @@ void analyze(const Workspace &w, const fs::path &requested) {
             paths.push_back(entry.path());
     std::sort(paths.begin(), paths.end());
     for (const auto &path : paths) {
-        auto bytes = read_text(path);
         auto item = Json::object();
         item.set("path", Json::string(path.lexically_relative(destination).generic_string()));
-        item.set("sha256", Json::string("sha256:" + sha256(bytes)));
-        item.set("bytes", Json::integer(bytes.size()));
+        item.set("sha256", Json::string("sha256:" + sha256_file(path)));
+        item.set("bytes", Json::integer(fs::file_size(path)));
         artifacts.push(item);
     }
-    // Preserve the complete admitted complex and source bytes with the exact
-    // certificates and original bytes of every generated compatibility export.
-    const auto publication=capture_workspace(w);
-    using N=NativeRecordValue;
-    std::set<std::uint64_t> used;
-    for(const auto &source:publication.raw_sources())used.insert(source.key());
-    std::uint64_t next=1;std::vector<RawByteSource> output_bytes;N::Array outputs;
+    auto native_summary = V::object();
+    native_summary.set("schema", V::string("gadget.analysis.v1"));
+    native_summary.set("source_digest", V::string(w.source_digest));
+    if (w.snapshot_origin.has("study_digest")) native_summary.set("snapshot", V(render_record_view(w.snapshot_origin.native())));
+    if (w.store_origin.has("root")) native_summary.set("store", V(render_record_view(w.store_origin.native())));
+    native_summary.set("rexgraph_headers_sha256", V::string(GADGET_REXGRAPH_SHA256));
+    native_summary.set("gadget_sources_sha256", V::string(GADGET_SOURCE_SHA256));
+    native_summary.set("numerical_contract", V::string(summary.at("numerical_contract").text()));
+    native_summary.set("audit", V(w.audit.native().unbound_value()));
+    native_summary.set("certificates", std::move(native_certificates));
+    native_summary.set("performance", std::move(native_performance));
+    native_summary.set("interpretation", V::string(summary.at("interpretation").text()));
+    retained_results.set("contexts", std::move(retained_contexts));
+    retained_results.set("cross_context", std::move(retained_cross));
+    retained_results.set("gene_sweeps", std::move(retained_sweeps));
+    retained_results.set("roundoff_relative_budget", approximate(1e-10));
+    retained_results.set("exact_check_selection", V::count(30));
+    native.bind(std::move(retained_results));
+    std::uint64_t next = native.next_source_key();
+    std::vector<RawByteSource> output_bytes;
+    N::Array outputs;
     for(const auto &path:paths) {
-        while(used.contains(next)) {
-            if(next==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("analysis byte identity space exhausted");
-            ++next;
-        }
-        const auto key=next;used.insert(key);
+        const auto key = next;
+        next = rfc::machine::checked_size_add(next, 1);
         auto bytes=rfc::storage::read_file_exact(path,source_byte_limit());const auto count=bytes.size();
         output_bytes.push_back(RawByteSource::own(key,std::move(bytes)));
         outputs.elements.emplace_back(N::Object{{{"path",N(path.lexically_relative(destination).generic_string())},
             {"bytes",N(N::ByteSpan{key,0,count,false})}}});
     }
-    publication.derive(N(N::Object{{{"schema",N(std::string("gadget.analysis.native.v1"))},
-        {"summary",import_record_view(summary)},{"outputs",N(std::move(outputs))}}}),std::move(output_bytes)).write(destination/"analysis.rfcxs");
-    const auto binary=read_text(destination/"analysis.rfcxs");auto binary_artifact=Json::object();
-    binary_artifact.set("path",Json::string("analysis.rfcxs"));binary_artifact.set("bytes",Json::integer(binary.size()));
-    binary_artifact.set("sha256",Json::string("sha256:"+sha256(binary)));artifacts.push(binary_artifact);
+    native.retain_sources(std::move(output_bytes));
+    const auto publication = native.finish_wrapped(std::move(native_summary), N::Object{{
+        {"schema", N(std::string("gadget.analysis.native.v1"))},
+        {"outputs", N(std::move(outputs))}}}, "summary");
+    publication.write(destination / "analysis.rfcxs");
+    auto binary_artifact=Json::object();
+    binary_artifact.set("path",Json::string("analysis.rfcxs"));binary_artifact.set("bytes",Json::integer(fs::file_size(destination/"analysis.rfcxs")));
+    binary_artifact.set("sha256",Json::string("sha256:"+sha256_file(destination/"analysis.rfcxs")));artifacts.push(binary_artifact);
     completion.set("artifacts", artifacts);
     write_text(destination / "manifests/artifacts.json", completion.dump() + "\n");
     if (fs::exists(requested))

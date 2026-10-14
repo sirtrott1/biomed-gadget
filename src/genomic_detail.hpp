@@ -144,4 +144,7 @@ Json constrained_allocations(const Json &request,
                              std::optional<AssayFieldsSource> *retained = nullptr);
 Json constraint_fields_view(const NativeRecord &record);
 Json relational_persistence(const ScientificStudy &study, const Json &request);
+NativeRecord relational_persistence_record(const ScientificStudy &study,
+                                           const NativeRecord &request);
+Json persistence_fields_view(const NativeRecord &record);
 } // namespace gadget::assay_detail

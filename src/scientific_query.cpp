@@ -36,7 +36,8 @@
 
 namespace gadget {
 bool has_native_scientific_publisher(std::string_view operation) noexcept {
-    return operation == "structure_transition" || operation == "paired_field_contrasts" || operation == "controlled_pairings" ||
+    return operation == "inspect" || operation == "coverage" || operation == "provenance" ||
+           operation == "trajectory_structure" || operation == "temporal_field_history" || operation == "structure_transition" || operation == "paired_field_contrasts" || operation == "controlled_pairings" ||
            operation == "linear_model_comparison" || operation == "finite_reference_calibration" ||
            operation == "hodge_frame_decomposition" || operation == "linear_response_observation" ||
            operation == "declared_response_transition" || operation == "metric_relative_novelty" ||
@@ -1645,7 +1646,11 @@ struct ScientificSession::State {
         require(supplied.empty(), "extension entity is outside the actual temporal carrier");
         return {std::move(x), grade};
     }
-    Json history_query(const Json &query, bool validate) {
+    Json history_query(const Json &query, bool validate, std::optional<NativeRecord> *native_result = nullptr,
+                       std::optional<rfc::runtime::ExecutionLease> requested_lease = {}) {
+        const auto lease=requested_lease ? *requested_lease : source_execution_lease("scientific-native-temporal-history");
+        lease.check_cancelled();
+        std::vector<std::unique_ptr<PreparedTemporalStudy>> leased_preparations;
         members(query, {"operation", "endpoints", "correspondences", "word", "lambda"},
                 {"lineages", "map_output"});
         source_array(query.at("endpoints"), "history endpoints");
@@ -1671,8 +1676,16 @@ struct ScientificSession::State {
             Json observations;
             auto [x, k] = owner_.temporal_input(name, id, e, observations);
             auto &p = owner_.context(name);
-            if (!validate)
-                (void)owner_.temporal(p);
+            PreparedTemporalStudy *prepared=nullptr;
+            if (!validate) {
+                if (requested_lease) {
+                    std::size_t dimension=0;for(const auto &coordinates:p.to_ambient)dimension=std::max(dimension,coordinates.size());
+                    const auto &policy=lease.policy().limits;
+                    leased_preparations.push_back(std::make_unique<PreparedTemporalStudy>(*p.study,
+                        rfc::numeric::ExactActionLimits{dimension,policy.sparse_entries,policy.scalar_work,policy.integer_bits},
+                        [lease] {lease.check_cancelled();}));prepared=leased_preparations.back().get();
+                } else prepared=&owner_.temporal(p);
+            }
             auto d = Json::parse(e.dump());
             d.set("publication_binding", owner_.temporal_binding(pub));
             d.set("time", owner_.source.contexts.at(name).declaration.at("time"));
@@ -1820,11 +1833,108 @@ struct ScientificSession::State {
             }
             readings.push_back({p.study.get(), rfc::core::Grade{k}, std::move(x), d,
                                 owner_.temporal_coordinates(p, k), std::move(diagonal), shared,
-                                p.temporal.get()});
+                                prepared});
             names.push_back(name);
             owners.push_back(&owner_);
         }
-        return research_detail::temporal_field_history(query, readings, maps, validate);
+        if (validate) return research_detail::temporal_field_history(query,readings,maps,true);
+        std::size_t slots=0,entries=0,bits=0;
+        for(const auto &reading:readings) {
+            slots=rfc::machine::checked_size_add(slots,reading.values.size());
+            for(const auto &value:reading.values) {entries+=value!=0;bits=rfc::machine::checked_size_add(bits,rfc::storage::native_execution_detail::integer_bits(value));}
+            for(const auto &[position,values]:reading.diagonal_fields) {
+                (void)position;slots=rfc::machine::checked_size_add(slots,values.size());
+                for(const auto &value:values) {entries+=value!=0;bits=rfc::machine::checked_size_add(bits,rfc::storage::native_execution_detail::integer_bits(value));}
+            }
+        }
+        rfc::runtime::admit_execution({readings.size(),slots,entries,query.at("word").size(),bits},lease.policy());
+        auto reservation=cpu().reserve(1);
+        const auto admit_matrix=[&](const rfc::numeric::ExactMatrix &m) {research_detail::admit_structure_matrix(m,lease);};
+        std::vector<SourceSnapshotPublication> snapshots;
+        for(std::size_t t=0;t<readings.size();++t) {
+            auto &context=owners[t]->context(names[t]);
+            snapshots.push_back(source_snapshot_publication(*context.study,owners[t]->owner->native_publication(),context.to_ambient,admit_matrix));
+        }
+        ResultFields fields(snapshots.back().publication);
+        research_detail::StructuralResultFields admission{fields,{},{},lease};
+        research_detail::TemporalResultFields binding{fields,{},{},{},lease};
+        auto endpoints=ResultValue::array();
+        for(std::size_t t=0;t<readings.size();++t) {
+            auto &endpoint_owner=*owners[t];auto &context=endpoint_owner.context(names[t]);const auto &reading=readings[t];
+            std::vector<std::uint64_t> axes;
+            for(const auto &coordinates:context.to_ambient)axes.push_back(fields.axis(coordinates.size()));
+            binding.axes.push_back(axes);
+            auto endpoint=ResultValue::object();endpoint.set("context_source",fields.publication(snapshots[t].publication));
+            endpoint.set("original_study_publication",fields.publication(endpoint_owner.owner->native_publication()));
+            auto grades=ResultValue::array();
+            for(std::size_t k=0;k<axes.size();++k) {
+                auto g=ResultValue::object();g.set("grade",ResultValue::count(k));g.set("coordinate_carrier",ResultValue::count(axes[k]));
+                g.set("context_source_carrier",ResultValue::count(snapshots[t].grade_axes[k]));
+                const auto &pin=endpoint_owner.source.grade_pins.at(k);
+                g.set("original_source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));g.set("original_source_cutoff",ResultValue::count(pin.sequence()));
+                std::vector<std::size_t> lift(context.to_ambient[k].begin(),context.to_ambient[k].end());g.set("original_coordinates",fields.indices(lift,axes[k]));grades.push(std::move(g));
+            }
+            endpoint.set("grades",std::move(grades));
+            const auto retain_input=[&](const std::string &id,const Vector &values,std::uint16_t k) {
+                const auto &source_field=endpoint_owner.tensor(id);const auto &pin=endpoint_owner.source.field_pins.at(source_field.key);
+                auto input=ResultValue::object();input.set("id",ResultValue::string(id));input.set("source_namespace",ResultValue::string(std::to_string(pin.source_namespace())));
+                input.set("source_cutoff",ResultValue::count(pin.sequence()));input.set("source_tensor",ResultValue::count(source_field.key));input.set("source_carrier",ResultValue::count(*source_field.output));
+                input.set("coordinate_carrier",ResultValue::count(axes[k]));const auto original_axis=fields.axis(source_field.tensor.domain().logical_size());input.set("original_coordinate_carrier",ResultValue::count(original_axis));
+                rfc::numeric::ExactMatrix lift(values.size(),source_field.tensor.domain().logical_size());
+                for(std::size_t i=0;i<values.size();++i)lift.set(i,context.to_ambient.at(k).at(i),Rational{1});
+                admission.admit(lift);admission.admit(values);input.set("realization",ResultFields::stage_matrix(lift,original_axis,axes[k]));
+                Vector reported_values;std::vector<std::size_t> reported_rows;
+                for(std::size_t i=0;i<values.size();++i) {
+                    const auto original=context.to_ambient.at(k).at(i);
+                    if(source_field.tensor.support().contains(original)) {reported_rows.push_back(i);reported_values.push_back(*source_field.tensor.state(original));}
+                }
+                admission.admit(reported_values);input.set("reported_values",ResultFields::stage_selected(reported_values,axes[k],values.size(),reported_rows));
+                input.set("execution_values",ResultFields::stage_vector(values,axes[k]));input.set("meaning",ResultValue(endpoint_owner.source.fields.at(id).declaration));return input;
+            };
+            const auto endpoint_query=query.at("endpoints").at(t);endpoint.set("input",retain_input(endpoint_query.at("field").text(),reading.values,reading.grade.value));
+            auto diagonal=ResultValue::array();auto current=reading.grade.value;
+            for(std::size_t position=0;position<query.at("word").size();++position) {
+                const auto factor=query.at("word").at(position);const auto kind=factor.at("kind").text();
+                if(kind=="diagonal_field") {auto input=retain_input(factor.at("fields").at(t).text(),reading.diagonal_fields.at(position),current);input.set("word_position",ResultValue::count(position));diagonal.push(std::move(input));}
+                else if(kind=="boundary")--current;else if(kind=="adjoint")++current;
+            }
+            endpoint.set("diagonal_inputs",std::move(diagonal));endpoints.push(endpoint);
+            auto declaration=ResultValue::object();
+            for(const auto &key:{"context","field","publication","extension"})if(endpoint_query.has(key))declaration.set(key,ResultValue(endpoint_query.at(key)));
+            for(const auto &key:{"publication_binding","time","source_grades","metrics","field_semantics","diagonal_field_semantics","lineage"})
+                if(reading.declaration.has(key))declaration.set(key,ResultValue(reading.declaration.at(key)));
+            auto observations=ResultValue::array();const auto &source_field=endpoint_owner.tensor(endpoint_query.at("field").text());
+            for(std::size_t i=0;i<reading.values.size();++i) {
+                const auto original=context.to_ambient.at(reading.grade.value).at(i);const auto reported=source_field.tensor.support().contains(original);
+                auto observation=ResultValue::object();observation.set("entity",ResultValue(reading.declaration.at("observations").at(i).at("entity")));
+                observation.set("ambient_coordinate",ResultValue::count(original));observation.set("reported",ResultValue::boolean(reported));
+                if(reported) {admission.admit(*source_field.tensor.state(original));auto value=fields.stage_scalar(*source_field.tensor.state(original));value.set("display",ResultValue::string("rational_object"));observation.set("observed_value",std::move(value));}
+                else observation.set("observed_value",ResultValue{});
+                admission.admit(reading.values[i]);auto value=fields.stage_scalar(reading.values[i]);value.set("display",ResultValue::string("rational_object"));observation.set("execution_value",std::move(value));observations.push(std::move(observation));
+            }
+            declaration.set("observations",std::move(observations));
+            auto occurrences=ResultValue::array();
+            for(std::size_t k=1;k<context.source->grade_count();++k) {
+                const rfc::core::Grade grade{static_cast<std::uint16_t>(k)};const auto &arena=context.source->grade(grade);
+                for(std::size_t i=0;i<arena.incidence_count();++i) {
+                    auto occurrence=ResultValue(endpoint_owner.source.occurrence_record({grade,arena.occurrence_identities[i]}));
+                    occurrence.set("parent_key",ResultValue::string(std::to_string(arena.relation_identities[arena.upper_index[i]].value)));
+                    occurrence.set("lower_key",ResultValue::string(std::to_string(stable_cell_key(*context.source,{rfc::core::Grade{static_cast<std::uint16_t>(k-1)},arena.lower_index[i]}).key)));
+                    const auto coefficient=context.source->incidence_coefficient(grade,i);admission.admit(coefficient);occurrence.set("coefficient",fields.stage_scalar(coefficient));
+                    occurrence.set("lattice_coefficient",ResultValue(NativeRecordValue(arena.lattice_coefficient[i])));
+                    const auto parent=arena.cell_scales[arena.upper_index[i]],lower=context.source->grade(rfc::core::Grade{static_cast<std::uint16_t>(k-1)}).cell_scales[arena.lower_index[i]];
+                    admission.admit(parent);admission.admit(lower);auto parent_value=fields.stage_scalar(parent),lower_value=fields.stage_scalar(lower);
+                    parent_value.set("display",ResultValue::string("rational_object"));lower_value.set("display",ResultValue::string("rational_object"));occurrence.set("parent_scale",std::move(parent_value));occurrence.set("lower_scale",std::move(lower_value));
+                    auto aspects=ResultValue::array();for(std::size_t a=0;a<context.source->signature().aspects().size();++a)aspects.push(ResultValue::boolean(arena.aspects.get(static_cast<rfc::composite::AspectId>(a),i)));
+                    occurrence.set("aspects",std::move(aspects));occurrence.set("evidence",ResultValue(reading.declaration.at("source_occurrences").at(occurrences.size()).at("evidence")));occurrences.push(std::move(occurrence));
+                }
+            }
+            declaration.set("source_occurrences",std::move(occurrences));binding.declarations.push_back(std::move(declaration));
+            binding.coordinates.push_back(ResultValue(reading.coordinates));
+        }
+        auto owner_binding=ResultValue::object();owner_binding.set("kind",ResultValue::string("actual_temporal_history_endpoints"));owner_binding.set("endpoints",std::move(endpoints));fields.bind(std::move(owner_binding));
+        const auto result=research_detail::temporal_history_fields(query,readings,maps,binding);lease.check_cancelled();const auto record=fields.finish(result);
+        if(native_result) {*native_result=record;return Json::object();}return result_fields_view(record);
     }
     Json censor_query(const Json &query, bool validate, std::optional<NativeRecord> *native = nullptr) {
         auto name = query.at("context").text();
@@ -2262,55 +2372,6 @@ struct ScientificSession::State {
                         "no declared upper grade for adjoint");
         }
     }
-    Json provenance(StableCellKey cell) const {
-        const auto endpoint = source.directory->pin_snapshot();
-        auto result = Json::object();
-        result.set("entity", source.cell_record(cell));
-        result.set("evidence", source.evidence(source.cell_record(cell).at("evidence")));
-        auto retained = Json::array();
-        for (std::size_t k = 1; k < endpoint->source.grade_count(); ++k) {
-            const auto grade = rfc::core::Grade{static_cast<std::uint16_t>(k)};
-            const auto &arena = endpoint->source.grade(grade);
-            for (std::size_t i = 0; i < arena.cell_count(); ++i) {
-                const auto upper =
-                    stable_cell_key(endpoint->source, {grade, static_cast<std::uint32_t>(i)});
-                const auto [begin, end] = arena.incidence_range(i);
-                for (std::size_t slot = begin; slot < end; ++slot) {
-                    const auto lower = stable_cell_key(
-                        endpoint->source, {rfc::core::Grade{static_cast<std::uint16_t>(k - 1)},
-                                           arena.lower_index[slot]});
-                    if (cell != upper && cell != lower)
-                        continue;
-                    auto item = Json::object();
-                    const auto occurrence =
-                        StableOccurrenceKey{grade, arena.occurrence_identities[slot]};
-                    item.set("key", Json::string(std::to_string(occurrence.key.value)));
-                    item.set("grade", cardinality(k));
-                    item.set("upper", source.cell_record(upper).at("id"));
-                    item.set("lower", source.cell_record(lower).at("id"));
-                    item.set("coefficient",
-                             rational(endpoint->source.incidence_coefficient(grade, slot)));
-                    item.set("magnitude",
-                             rational(abs(endpoint->source.incidence_coefficient(grade, slot))));
-                    auto aspects = Json::object();
-                    for (std::size_t a = 0; a < endpoint->source.signature().aspects().size(); ++a)
-                        aspects.set(endpoint->source.signature()
-                                        .aspects()
-                                        .at(static_cast<rfc::composite::AspectId>(a))
-                                        .name,
-                                    Json::boolean(arena.aspects.get(
-                                        static_cast<rfc::composite::AspectId>(a), slot)));
-                    item.set("aspects", aspects);
-                    item.set("evidence",
-                             source.evidence(source.occurrence_record(occurrence).at("evidence")));
-                    retained.push(item);
-                    require(retained.size() <= coordinate_limit, "provenance occurrence budget");
-                }
-            }
-        }
-        result.set("occurrences", retained);
-        return result;
-    }
     Json coordinates(const PreparedContext &prepared, std::uint16_t grade,
                      const Vector &values) const {
         check_values(values);
@@ -2469,37 +2530,122 @@ struct ScientificSession::State {
                        source.contexts.at(query.at("other_context").text()).declaration);
         return result;
     }
-    Json coverage(const std::string &field) const {
-        const auto publication = source.directory->pin_snapshot();
-        const auto &t = tensor(field);
-        auto coverage = Json::object();
-        coverage.set("coordinates", cardinality(t.tensor.domain().logical_size()));
-        coverage.set("reported", cardinality(t.tensor.support().count()));
-        coverage.set("missing",
-                     cardinality(t.tensor.domain().logical_size() - t.tensor.support().count()));
-        coverage.set("native_tensor", Json::string(std::to_string(t.key)));
-        coverage.set("native_carrier", Json::string(std::to_string(*t.output)));
-        auto axes = Json::array();
-        for (const auto extent : t.tensor.domain().extents())
-            axes.push(cardinality(extent));
-        coverage.set("extents", axes);
-        const auto carriers = temporal_endpoint_detail::carriers(*publication);
-        const auto &carrier = *carriers.at(*t.output);
-        auto observations = Json::array();
-        for (std::size_t i = 0; i < t.tensor.domain().logical_size(); ++i) {
-            auto row = Json::object();
-            row.set("coordinate", cardinality(i));
-            if (carrier.kind == TemporalCarrierKind::SourceGrade) {
-                const auto cell = source.coordinate(carrier.grade.value,i);
-                row.set("entity", source.cell_record(cell).at("id"));
+    NativeRecord source_fields(const Json &query,
+                              std::optional<rfc::runtime::ExecutionLease> supplied_lease = {}) const {
+        using R = ResultValue;
+        auto lease = supplied_lease.value_or(source_execution_lease("scientific-native-source"));
+        lease.check_cancelled();
+        rfc::runtime::admit_execution({1, 0, 0, 0, 0}, lease.policy());
+        ResultFields fields(owner->native_publication());
+        const auto endpoint = source.directory->pin_snapshot();
+        auto binding = R::object();
+        binding.set("kind", R::string("original_source"));
+        binding.set("source_namespace", R::string(std::to_string(source.grade_pins.at(0).source_namespace())));
+        binding.set("cutoff", R::count(endpoint->sequence));
+        const auto operation = query.at("operation").text();
+        binding.set("operation", R::string(operation));
+        auto view = R::object();
+        if (operation == "inspect") {
+            auto records = rfc::machine::checked_size_add(source.fields.size(), endpoint->carriers.size());
+            records = rfc::machine::checked_size_add(records, source.cells.size());
+            records = rfc::machine::checked_size_add(records, source.documents.size());
+            records = rfc::machine::checked_size_add(records, source.operators.size());
+            records = rfc::machine::checked_size_add(records, source.contexts.size());
+            rfc::runtime::admit_execution({rfc::machine::checked_size_add(records, 1), 0, 0, records, 0}, lease.policy());
+            auto sources = owner->native_publication().raw_sources();
+            auto value = source.catalog_value(sources);
+            fields.retain_sources(std::move(sources));
+            view = R(std::move(value));
+        } else if (operation == "coverage") {
+            const auto id = query.at("field").text();
+            const auto &t = tensor(id);
+            const auto pin = source.field_pins.at(t.key);
+            binding.set("source_namespace", R::string(std::to_string(pin.source_namespace())));
+            binding.set("cutoff", R::count(pin.sequence()));
+            binding.set("tensor", R::count(t.key));
+            binding.set("carrier", R::count(*t.output));
+            binding.set("field", R::string(id));
+            binding.set("input", fields.stored(t.key, "vector"));
+            const auto size = t.tensor.domain().logical_size();
+            rfc::runtime::admit_execution({rfc::machine::checked_size_add(size, 1), 0, 0, size, 0}, lease.policy());
+            view.set("coordinates", R::count(size));
+            view.set("reported", R::count(t.tensor.support().count()));
+            view.set("missing", R::count(size - t.tensor.support().count()));
+            view.set("native_tensor", R::string(std::to_string(t.key)));
+            view.set("native_carrier", R::string(std::to_string(*t.output)));
+            auto extents = R::array();
+            for (const auto extent : t.tensor.domain().extents()) extents.push(R::count(extent));
+            view.set("extents", std::move(extents));
+            const auto carriers = temporal_endpoint_detail::carriers(*endpoint);
+            const auto &carrier = *carriers.at(*t.output);
+            auto observations = R::array();
+            for (std::size_t i = 0; i < size; ++i) {
+                lease.check_cancelled();
+                auto row = R::object();
+                row.set("coordinate", R::count(i));
+                if (carrier.kind == TemporalCarrierKind::SourceGrade)
+                    row.set("entity", R::string(source.coordinate_id(carrier.grade.value, i)));
+                row.set("reported", R::boolean(t.tensor.support().contains(i)));
+                auto value = fields.stored(t.key, "rational_object");
+                value.set("index", R::count(i));
+                row.set("value", std::move(value));
+                observations.push(std::move(row));
             }
-            const bool present = t.tensor.support().contains(i);
-            row.set("reported", Json::boolean(present));
-            row.set("value", present ? rational(*t.tensor.state(i)) : Json{});
-            observations.push(row);
+            view.set("observations", std::move(observations));
+        } else {
+            const auto cell = source.resolve_cell(query.at("entity").text());
+            const auto entity = source.cell_record(cell);
+            view.set("entity", R(entity));
+            view.set("evidence", R(source.evidence(entity.at("evidence"))));
+            binding.set("cell_grade", R::count(cell.grade.value));
+            binding.set("cell_key", R::count(cell.key));
+            auto occurrences = R::array(), identities = R::array();
+            std::size_t selected{}, scanned{};
+            for (std::size_t k = 1; k < endpoint->source.grade_count(); ++k) {
+                const rfc::core::Grade grade{static_cast<std::uint16_t>(k)};
+                const auto &arena = endpoint->source.grade(grade);
+                for (std::size_t slot = 0; slot < arena.incidence_count(); ++slot) {
+                    lease.check_cancelled();
+                    scanned = rfc::machine::checked_size_add(scanned, 1);
+                    rfc::runtime::admit_execution({1, 0, 0, scanned, 0}, lease.policy());
+                    const auto upper = stable_cell_key(endpoint->source, {grade, arena.upper_index[slot]});
+                    const auto lower = stable_cell_key(endpoint->source,
+                        {{static_cast<std::uint16_t>(k - 1)}, arena.lower_index[slot]});
+                    if (cell != upper && cell != lower) continue;
+                    selected = rfc::machine::checked_size_add(selected, 1);
+                    const auto values = rfc::machine::checked_size_mul(selected, 2);
+                    rfc::runtime::admit_execution({rfc::machine::checked_size_add(selected, 1), values, values, scanned, 0}, lease.policy());
+                    const StableOccurrenceKey key{grade, arena.occurrence_identities[slot]};
+                    auto item = R::object(), identity = R::object();
+                    item.set("key", R::string(std::to_string(key.key.value)));
+                    item.set("grade", R::count(k));
+                    item.set("upper", R::string(source.coordinate_id(k, arena.upper_index[slot])));
+                    item.set("lower", R::string(source.coordinate_id(k - 1, arena.lower_index[slot])));
+                    auto coefficient = fields.scalar(endpoint->source.incidence_coefficient(grade, slot));
+                    coefficient.set("display", R::string("rational_object"));
+                    item.set("coefficient", std::move(coefficient));
+                    auto magnitude = fields.scalar(abs(endpoint->source.incidence_coefficient(grade, slot)));
+                    magnitude.set("display", R::string("rational_object"));
+                    item.set("magnitude", std::move(magnitude));
+                    auto aspects = R::object();
+                    for (std::size_t a = 0; a < endpoint->source.signature().aspects().size(); ++a)
+                        aspects.set(endpoint->source.signature().aspects().at(
+                            static_cast<rfc::composite::AspectId>(a)).name,
+                            R::boolean(arena.aspects.get(static_cast<rfc::composite::AspectId>(a), slot)));
+                    item.set("aspects", std::move(aspects));
+                    item.set("evidence", R(source.evidence(source.occurrence_record(key).at("evidence"))));
+                    identity.set("grade", R::count(k)); identity.set("key", R::count(key.key.value));
+                    identity.set("slot", R::count(slot)); identity.set("upper", R::count(upper.key));
+                    identity.set("lower", R::count(lower.key));
+                    identities.push(std::move(identity)); occurrences.push(std::move(item));
+                }
+            }
+            binding.set("occurrences", std::move(identities));
+            view.set("occurrences", std::move(occurrences));
         }
-        coverage.set("observations", observations);
-        return coverage;
+        fields.bind(std::move(binding));
+        lease.check_cancelled();
+        return fields.finish(std::move(view));
     }
     Vector chain_operand(const Json &query) {
         members(query, {"operation", "context", "grade", "coefficient_domain"}, {"field", "values"});
@@ -2965,9 +3111,13 @@ struct ScientificSession::State {
     NativeRecord record(const NativeRecord &query, const Json &admitted) {
         using N = NativeRecordValue;
         const auto operation = admitted.at("operation").text();
-        if (!has_native_scientific_publisher(operation))
-            return retain_operation(owner->native_publication(), query, import_record_view(run(admitted)));
+        require(has_native_scientific_publisher(operation), "scientific operation has no native publisher");
         const auto fields = [&] {
+            if (operation == "inspect" || operation == "coverage" || operation == "provenance")
+                return source_fields(admitted);
+            if (operation == "trajectory_structure") return research_detail::trajectory_fields(*owner,admitted,resources,
+                source_execution_lease("scientific-native-trajectory"));
+            if (operation == "temporal_field_history") {std::optional<NativeRecord> fields;(void)history_query(admitted,false,&fields);return *fields;}
             if (operation == "structure_transition") return structure_transition_fields(admitted);
             if (operation == "chain_certificate" || operation == "realized_path_comparison") return structural_fields(admitted);
             if (operation == "green_response") return green_response_fields(admitted);
@@ -3046,6 +3196,7 @@ struct ScientificSession::State {
             operation != "adjoint" && operation != "hodge" && operation != "green_action" &&
             operation != "native_boundary" && operation != "support_mask" &&
             operation != "paired_field_contrasts" && operation != "controlled_pairings" &&
+            operation != "trajectory_structure" &&
             operation != "linear_model_comparison" && operation != "finite_reference_calibration" &&
             operation != "relational_field_ensemble" &&
             operation != "structural_reference_calibration" &&
@@ -3114,7 +3265,7 @@ struct ScientificSession::State {
             return seal(result, "certificate_sha256");
         }
         if (operation == "temporal_field_history") {
-            result.set("result", history_query(query, false));
+            result.set("result", history_query(query, false,nullptr,native_lease));
             return seal(result, "certificate_sha256");
         }
         if (operation == "censored_endpoint_bounds") {
@@ -3137,12 +3288,15 @@ struct ScientificSession::State {
             result.set("result", ensemble_query(query, false));
             return seal(result, "certificate_sha256");
         }
-        if (is_research_operation(operation) && operation != "paired_field_contrasts" &&
+        if (is_research_operation(operation) && operation != "trajectory_structure" && operation != "paired_field_contrasts" &&
             operation != "controlled_pairings") {
             result.set("result", execute_research_query(*owner, query, false, resources));
             return seal(result, "certificate_sha256");
         }
-        if (operation == "structure_transition") {
+        if (operation == "trajectory_structure") {
+            result.set("result",result_fields_view(research_detail::trajectory_fields(*owner,query,resources,
+                native_lease.value_or(source_execution_lease("scientific-native-trajectory")))));
+        } else if (operation == "structure_transition") {
             result.set("result",result_fields_view(structure_transition_fields(query,native_lease)));
         } else if (operation == "paired_field_contrasts" || operation == "controlled_pairings") {
             result.set("result", result_fields_view(research_detail::comparison_fields(*owner, query, resources,
@@ -3155,12 +3309,8 @@ struct ScientificSession::State {
             result.set("result",result_fields_view(window_fields(query, native_lease)));
         } else if (operation == "green_response") {
             result.set("result", result_fields_view(green_response_fields(query, native_lease)));
-        } else if (operation == "inspect")
-            result.set("result", source.catalog());
-        else if (operation == "provenance")
-            result.set("result", provenance(source.resolve_cell(query.at("entity").text())));
-        else if (operation == "coverage") {
-            result.set("result", coverage(query.at("field").text()));
+        } else if (operation == "inspect" || operation == "provenance" || operation == "coverage") {
+            result.set("result", result_fields_view(source_fields(query, native_lease)));
         } else if (operation == "support_mask") {
             const auto native = support_fields(query);
             result.set("result",result_fields_view(native));
@@ -3200,6 +3350,26 @@ Json ScientificSession::execute(const Json &query) {
     std::lock_guard lock(state_->mutex);
     state_->admit(admitted);
     return state_->run(admitted);
+}
+Json ScientificSession::execute_source(const Json &query, rfc::runtime::ExecutionLease lease) {
+    lease.check_cancelled();
+    const auto admitted = Json::parse(query.dump());
+    const auto operation = admitted.at("operation").text();
+    require(operation == "inspect" || operation == "provenance" || operation == "coverage",
+            "source lease requires an original source operation");
+    std::lock_guard lock(state_->mutex);
+    state_->admit(admitted);
+    return state_->run(admitted, std::move(lease));
+}
+Json ScientificSession::execute_temporal_history(const Json &query,rfc::runtime::ExecutionLease lease) {
+    lease.check_cancelled();const auto admitted=Json::parse(query.dump());
+    require(admitted.at("operation").text()=="temporal_field_history","temporal lease requires a declared history");
+    std::lock_guard lock(state_->mutex);state_->admit(admitted);return state_->run(admitted,std::move(lease));
+}
+Json ScientificSession::execute_trajectory(const Json &query,rfc::runtime::ExecutionLease lease) {
+    lease.check_cancelled();const auto admitted=Json::parse(query.dump());
+    require(admitted.at("operation").text()=="trajectory_structure","trajectory lease requires declared observed changes");
+    std::lock_guard lock(state_->mutex);state_->admit(admitted);return state_->run(admitted,std::move(lease));
 }
 Json ScientificSession::execute_structure_transition(const Json &query, rfc::runtime::ExecutionLease lease) {
     lease.check_cancelled();auto admitted=Json::parse(query.dump());
@@ -3479,7 +3649,36 @@ Json ScientificSession::read_source(const Json &request) const {
     auto worker = state_->cpu().reserve(1);
     return state_->owner->read_source(request);
 }
+NativeRecord ScientificSession::apply_proposal_record(const NativeRecord &proposal) {
+    using N = NativeRecordValue;
+    const auto admitted = render_record_view(proposal);
+    const auto rejected = [&](const char *status, const std::exception &error) {
+        N value(N::Object{{{"schema", N(std::string("gadget.agent.response.v1"))},
+            {"proposal", import_record_view(admitted)}, {"status", N(std::string(status))},
+            {"error", N(std::string(error.what()))}}});
+        return retain_operation(state_->owner->native_publication(), proposal, std::move(value));
+    };
+    try {
+        require(admitted.at("schema").text() == "gadget.scientific.agent.proposal.v1",
+                "unsupported agent proposal schema");
+        const auto action = admitted.at("action").text();
+        require(action == "query" || action == "plan", "native proposal requires query or plan");
+        members(admitted, {"schema", "action", action});
+        const auto execution = action == "query" ? execute_record(proposal.at(action))
+                                                   : execute_plan_record(proposal.at(action));
+        return scientific_detail::retain_scientific_proposal(execution, proposal);
+    } catch (const rfc::runtime::CpuResourceBusy &error) {
+        return rejected("busy", error);
+    } catch (const rfc::runtime::ExecutionLimitExceeded &error) {
+        return rejected("rejected", error);
+    } catch (const std::invalid_argument &error) {
+        return rejected("rejected", error);
+    }
+}
 Json apply_scientific_proposal(ScientificSession &session, const Json &proposal) {
+    if (proposal.has("action") && json_object_is_type(proposal.at("action").raw(), json_type_string) &&
+        (proposal.at("action").text() == "query" || proposal.at("action").text() == "plan"))
+        return render_record_view(session.apply_proposal_record(admit_record_view(proposal)).at("result"));
     auto result = Json::object();
     result.set("schema", Json::string("gadget.agent.response.v1"));
     result.set("proposal", Json::parse(proposal.dump()));
@@ -3495,15 +3694,12 @@ Json apply_scientific_proposal(ScientificSession &session, const Json &proposal)
             members(proposal, {"schema", "action", "read"});
             result.set("certificate", session.read_source(proposal.at("read")));
             result.set("status", Json::string("retrieved"));
-        } else if (action == "query" || action == "plan" || action == "annotate") {
-            const std::string member = action == "annotate" ? "annotations" : action;
+        } else if (action == "annotate") {
+            const std::string member = "annotations";
             members(proposal, {"schema", "action", member});
             result.set("certificate",
-                       action == "query"
-                           ? session.execute(proposal.at(member))
-                           : (action == "plan" ? session.execute_plan(proposal.at(member))
-                                               : session.propose_annotations(proposal.at(member))));
-            result.set("status", Json::string(action == "annotate" ? "prospective" : "executed"));
+                       session.propose_annotations(proposal.at(member)));
+            result.set("status", Json::string("prospective"));
         } else
             throw std::invalid_argument("unsupported scientific model action");
     } catch (const rfc::runtime::CpuResourceBusy &error) {

@@ -19,5 +19,11 @@ Json assay_sections(const AssayWorkspace &workspace, const Json &request,
                     std::optional<AssayFieldsSource> *retained = nullptr);
 Json section_fields_view(const NativeRecord &record);
 Json relational_gluing(const AssayWorkspace &workspace, const Json &request,
-                       std::shared_ptr<CpuResources> resources);
+                       std::shared_ptr<CpuResources> resources,
+                       std::optional<AssayFieldsSource> *retained = nullptr);
+Json field_transfer(const AssayWorkspace &workspace, const Json &request,
+                    std::shared_ptr<CpuResources> resources,
+                    std::optional<AssayFieldsSource> *retained = nullptr);
+Json gluing_fields_view(const NativeRecord &record);
+Json transfer_fields_view(const NativeRecord &record);
 } // namespace gadget::assay_detail

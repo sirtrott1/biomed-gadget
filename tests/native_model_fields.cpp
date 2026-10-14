@@ -1011,15 +1011,34 @@ void verify_workflow(const std::shared_ptr<const ScientificStudy> &study,
     check(NativeRecord::decode(reopened.at("result").at("result").at(0).at("publication").bytes()).encode() ==
               first.encode(), "workflow reopening changed complete native fields");
     write_text(output / "workflow-display.json", workflow_record_view(reopened).dump());
+    auto coverage = Json::object();
+    coverage.set("operation", Json::string("coverage"));
+    coverage.set("field", Json::string("all.A"));
+    declaration.at("entry").at("steps").at(1).set("query", coverage);
+    const auto source_workflow = execute_workflow_record(study, admit_record_view(declaration));
+    const auto source_result = NativeRecord::decode(
+        source_workflow.at("result").at("result").at(1).at("publication").bytes());
+    const auto source_fields = source_result.at("result").at("fields");
+    check(source_fields.at("schema").text() == "gadget.scientific.fields.v1" &&
+              source_fields.at("bindings").at(0).at("operation").text() == "coverage",
+          "strict workflow lost native coverage binding");
+    const auto pin = study->field_accession("all.A");
+    const auto tensor_key = source_fields.at("bindings").at(0).at("tensor").integer();
+    const auto field = std::find_if(source_fields.endpoint()->tensors.begin(),
+        source_fields.endpoint()->tensors.end(), [&](const auto &item) { return item.key == tensor_key; });
+    check(field != source_fields.endpoint()->tensors.end() &&
+              rfc::storage::temporal_endpoint_detail::tensor_equal(*field, *pin.tensor_declaration()),
+          "strict workflow changed original coverage tensor or support");
+    verify_replay(source_result, replay_scientific_record(source_result));
     auto unsupported = Json::object();
-    unsupported.set("operation", Json::string("coverage"));
+    unsupported.set("operation", Json::string("unknown"));
     declaration.at("entry").at("steps").at(1).set("query", unsupported);
     bool refused = false;
     try { (void)execute_workflow_record(study, admit_record_view(declaration)); }
     catch (const std::invalid_argument &error) {
         refused = std::string(error.what()).find("native result publisher") != std::string::npos;
     }
-    check(refused, "unconverted publisher passed strict admission");
+    check(refused, "unknown publisher passed strict admission");
 }
 }
 int main(int argc, char **argv) try {
@@ -1037,8 +1056,9 @@ int main(int argc, char **argv) try {
     const auto original = study->native_publication();
     ScientificSession session(study);
     const auto queries = admit_record_view(Json::parse(read_text(queries_path)));
-    check(!has_native_scientific_publisher("coverage") && !has_native_scientific_publisher("unknown"),
-          "unconverted producer reported native availability");
+    check(has_native_scientific_publisher("inspect") && has_native_scientific_publisher("coverage") &&
+              has_native_scientific_publisher("provenance") && !has_native_scientific_publisher("unknown"),
+          "source producer availability differs from native publication support");
     std::vector<NativeRecord> results;
     for (const auto &name : queries.names()) {
         const auto query = queries.at(name);

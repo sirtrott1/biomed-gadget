@@ -45,6 +45,12 @@ class ResultValue {
 };
 
 class ResultFields {
+    static rfc::storage::TemporalEndpoint preparation_endpoint(const NativeRecord &source) {
+        const auto original = source.endpoint();
+        rfc::storage::TemporalEndpoint endpoint(original->source, original->sequence);
+        endpoint.carriers = original->carriers;
+        return endpoint;
+    }
     NativeRecord source_;
     rfc::storage::TemporalEndpoint endpoint_;
     std::size_t original_fields_, original_carriers_;
@@ -65,9 +71,14 @@ class ResultFields {
     }
   public:
     explicit ResultFields(NativeRecord source)
-        : source_(std::move(source)), endpoint_(*source_.endpoint()),
-          original_fields_(endpoint_.tensors.size()), original_carriers_(endpoint_.carriers.size()),
-          fields_(endpoint_), scalar_(fields_.explicit_carrier(1)) {}
+        : source_(std::move(source)), endpoint_(preparation_endpoint(source_)),
+          original_fields_(0), original_carriers_(endpoint_.carriers.size()),
+          fields_(endpoint_), scalar_(fields_.explicit_carrier(1)) {
+        // Existing declarations and numerical fields stay with their immutable
+        // source owner. Preparation only allocates the new result fields.
+        for (const auto &tensor : source_.endpoint()->tensors)
+            fields_.next_key = std::max(fields_.next_key, rfc::machine::checked_size_add(tensor.key, 1));
+    }
     std::uint64_t axis(std::size_t size) {return fields_.explicit_carrier(size);}
     std::uint64_t stalk(rfc::storage::StableCellKey cell, std::size_t size) {
         if (!rfc::storage::StableSourceIndex(endpoint_.source).cell(cell))
@@ -80,6 +91,14 @@ class ResultFields {
         return key;
     }
     std::uint64_t source_grade(std::size_t grade, std::optional<std::uint64_t> preferred = {});
+    std::uint64_t next_source_key() const {
+        std::uint64_t key = 1;
+        for (const auto &bytes : source_.raw_sources())
+            key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+        for (const auto &bytes : publications_)
+            key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+        return key;
+    }
     ResultValue publication(const NativeRecord &owner) {
         if (!owner.is_root() || !owner.publication_history())
             throw std::invalid_argument("scientific archive requires its actual root publication");
@@ -87,11 +106,7 @@ class ResultFields {
             owner.publication_history()->last_sequence()};
         const auto previous = archived_.find(identity);
         if (previous != archived_.end()) return previous->second.reference;
-        std::uint64_t key = 1;
-        for (const auto &bytes : source_.raw_sources())
-            key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
-        for (const auto &bytes : publications_)
-            key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+        const auto key = next_source_key();
         auto bytes = owner.archive_source(key);
         auto out = ResultValue::object();
         out.set("schema", ResultValue::string("gadget.scientific.publication.view.v1"));
@@ -122,8 +137,10 @@ class ResultFields {
         return value;
     }
     ResultValue stored(std::uint64_t key, std::string display) {
-        if (std::none_of(endpoint_.tensors.begin(), endpoint_.tensors.end(),
-                         [&](const auto &tensor) {return tensor.key == key;}))
+        const auto original = source_.endpoint();
+        const auto matches = [&](const auto &tensor) {return tensor.key == key;};
+        if (std::none_of(original->tensors.begin(), original->tensors.end(), matches) &&
+            std::none_of(endpoint_.tensors.begin(), endpoint_.tensors.end(), matches))
             throw std::invalid_argument("scientific source tensor absent");
         return reference(NativeRecordValue(rfc::numeric::Integer(std::to_string(key))),
                          std::move(display));
@@ -243,7 +260,29 @@ class ResultFields {
                          "vector", coordinates);
     }
     void bind(ResultValue binding) {bindings_.push(std::move(binding));}
+    void retain_sources(std::vector<RawByteSource> sources) {
+        const auto original = source_.raw_sources();
+        for (auto &bytes : sources) {
+            const auto found = std::find_if(original.begin(), original.end(),
+                [&](const auto &item) { return item.key() == bytes.key(); });
+            if (found != original.end()) {
+                if (!found->shares_owner(bytes)) throw std::invalid_argument("scientific source byte identity collision");
+                continue;
+            }
+            const auto retained = std::find_if(publications_.begin(), publications_.end(),
+                [&](const auto &item) { return item.key() == bytes.key(); });
+            if (retained != publications_.end()) {
+                if (!retained->shares_owner(bytes)) throw std::invalid_argument("scientific retained byte identity collision");
+            } else {
+                publications_.push_back(std::move(bytes));
+            }
+        }
+    }
     NativeRecord finish(ResultValue view) {
+        return finish_wrapped(std::move(view), {}, {});
+    }
+    NativeRecord finish_wrapped(ResultValue view, NativeRecordValue::Object wrapper,
+                                std::string member) {
         view = ResultValue(consume_staged(std::move(view).release()));
         bindings_ = ResultValue(consume_staged(std::move(bindings_).release()));
         auto root = ResultValue::object();
@@ -261,8 +300,18 @@ class ResultFields {
         std::vector<rfc::storage::TemporalCarrier> carriers;
         for (auto i = original_carriers_; i < endpoint_.carriers.size(); ++i)
             carriers.push_back(std::move(endpoint_.carriers[i]));
+        auto value = std::move(root).release();
+        if (!member.empty()) {
+            wrapper.members.emplace_back(std::move(member), std::move(value));
+            value = NativeRecordValue(std::move(wrapper));
+        } else if (!wrapper.members.empty()) {
+            throw std::invalid_argument("scientific field wrapper requires its selected member");
+        }
+        // Complete immutable archives now own the child publications. Their
+        // decoded preparation caches end before the final publication allocates.
+        archived_.clear();
         return NativeRecord::publish_fields(source_, new_native_record_namespace(), std::move(fields),
-            std::move(root).release(), std::move(publications_), std::move(carriers));
+            std::move(value), std::move(publications_), std::move(carriers));
     }
   private:
     NativeRecordValue consume_staged(NativeRecordValue value);
@@ -288,4 +337,5 @@ Json result_tensor_view(const NativeRecord &record);
 Json result_fields_view(const NativeRecord &record);
 NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeRecord &plan,
     const std::string &source_digest, const std::vector<std::pair<std::string, NativeRecord>> &steps);
+NativeRecord retain_scientific_proposal(const NativeRecord &execution, const NativeRecord &proposal);
 } // namespace gadget::scientific_detail

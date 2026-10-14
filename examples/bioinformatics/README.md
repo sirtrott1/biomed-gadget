@@ -297,3 +297,13 @@ a checked harmonic complement, Dirac and Green actions, weighted spread and
 sector coupling serve the same pipeline for a declared scientific question. Its authored primary
 relations and real paired-expression fields retain all original coordinates
 and declarations.
+
+`trajectory_structure` retains the actual observed joint change vocabulary,
+ordered exchange occurrences, interval/repeated/shared subcomplexes and native
+row assignments. Its complete fields, integral presentations, Hodge sectors,
+Green changes, metrics and maps remain bound to their original source owners.
+Endpoint values retain reported support separately from complete jointly observed
+trajectory channels. Stage comparisons do not provide a general persistence
+classification. Explicit `ScientificSession::execute_trajectory` leases govern
+canonical guarded actions and retained output requirements; source sizes and
+native representation bounds determine admissible dimensions.

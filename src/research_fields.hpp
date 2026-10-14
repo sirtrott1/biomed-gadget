@@ -60,7 +60,8 @@ struct Inputs {
         }
         require(fields.size() == requested.size(), "unknown research field");
         const auto n = endpoint->source.grade(grade).cell_count();
-        require(n > 0 && (!finite_topology_profile || n <= 4096), "research population budget");
+        (void)finite_topology_profile;
+        require(n > 0, "research population must be nonempty");
         for (std::size_t i = 0; i < n; ++i)
             entities.push_back(study.cell_identifier(grade, i));
         for (const auto &[id, t] : fields) {

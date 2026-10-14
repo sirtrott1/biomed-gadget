@@ -82,6 +82,9 @@ assert len(index['results']) == 1 and index['dispatcher'] == 'rfc::runtime::Work
 for item in index['results']:
     p = root/'default-run'/item['result']
     assert item['result_sha256'] == 'sha256:'+hashlib.sha256(p.read_bytes()).hexdigest()
+    retained = run('record-view', '--input', p, '--member', 'result')
+    assert retained['schema'] == 'gadget.assays.run.v1'
+    assert run('record-view', '--input', p, '--member', 'request') == plan['steps'][0]['request']
 
 aggregation = request('aggregate_assay', assay='counts',
     feature_groups=[dict(id='total', members=[dict(id=g, coefficient='1') for g in ['g1','g2','g3']])],
@@ -97,6 +100,12 @@ custom = dict(schema='gadget.pipeline.design.v1', profile='custom', question='Su
 index = run('pipeline', '--workspace', manifest, '--request', save('custom.json', custom), '--out', root/'custom-run')
 assert [r['id'] for r in index['results']] == ['sum','after','original']
 assert index['results'][1]['source_digest'] == index['results'][0]['derived_digest']
+workflow_native = run('record-view', '--input', root/'custom-run/after/result.rfcxs', '--member', 'result')
+assert workflow_native['schema'] == 'gadget.workflow.native.receipt.v1'
+assert workflow_native['native_execution'] is True and workflow_native['status'] == 'complete'
+workflow_request = run('record-view', '--input', root/'custom-run/after/result.rfcxs', '--member', 'request')
+assert workflow_request == json.loads((root/'custom-run/after/request.json').read_text())
+assert workflow_request['entry'] == workflow['entry']
 agg = json.loads((root/'custom-run'/'sum'/'workspace'/'lineage.json').read_text()) if (root/'custom-run'/'sum'/'workspace'/'lineage.json').exists() else None
 assert (root/'custom-run'/'sum'/'workspace'/'workspace.rfcxs').exists()
 native = json.loads((root/'custom-run'/'original'/'results'/'partition-0.json').read_text())

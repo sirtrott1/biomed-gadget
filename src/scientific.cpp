@@ -834,78 +834,150 @@ Json ScientificStudy::State::history_metadata() const {
     binding.set("retained_segments", cardinality(history->segment_count()));
     return binding;
 }
-Json ScientificStudy::State::catalog() const {
-    auto result = Json::object();
-    result.set("schema", Json::string("gadget.scientific.catalog.v1"));
-    result.set("study_id", declaration.at("id"));
-    result.set("source_digest", Json::string(digest));
+NativeRecordValue ScientificStudy::State::catalog_value(std::vector<RawByteSource> &sources) const {
+    using N = NativeRecordValue;
+    const auto count_value = [](std::size_t value) { return N(rfc::numeric::Integer(std::to_string(value))); };
+    const auto text_value = [](std::string value) { return N(std::move(value)); };
+    const auto put = [](N &value, std::string name, N member) {
+        auto &members = std::get<N::Object>(value.data).members;
+        for (auto &[key, current] : members)
+            if (key == name) { current = std::move(member); return; }
+        members.emplace_back(std::move(name), std::move(member));
+    };
+    std::map<std::uint64_t, std::uint64_t> byte_map;
+    const auto retain_value = [&](const NativeRecord &value) {
+        for (const auto &raw : value.raw_sources()) {
+            if (byte_map.contains(raw.key())) continue;
+            const auto found = std::find_if(sources.begin(), sources.end(),
+                [&](const auto &candidate) { return candidate.shares_owner(raw); });
+            if (found != sources.end()) byte_map.emplace(raw.key(), found->key());
+            else {
+                std::uint64_t key = 1;
+                for (const auto &candidate : sources)
+                    key = std::max(key, rfc::machine::checked_size_add(candidate.key(), 1));
+                sources.push_back(raw.rekey(key)); byte_map.emplace(raw.key(), key);
+            }
+        }
+        return value.unbound_value(byte_map);
+    };
+    const auto declared = [&](std::string_view name) { return retain_value(declaration.native().at(name)); };
     const auto endpoint = directory->pin_snapshot();
-    result.set("source_sequence", Json::string(std::to_string(endpoint->sequence)));
-    auto native_carriers = Json::array();
+    N result(N::Object{});
+    put(result, "schema", text_value("gadget.scientific.catalog.v1"));
+    put(result, "study_id", declared("id"));
+    put(result, "source_digest", text_value(digest));
+    put(result, "source_sequence", text_value(std::to_string(endpoint->sequence)));
+    N::Array carriers;
     for (const auto &carrier : endpoint->carriers) {
-        auto item = carrier_metadata(carrier);
-        native_carriers.push(item);
+        N item(N::Object{});
+        put(item, "key", text_value(std::to_string(carrier.key)));
+        put(item, "kind", text_value(carrier.kind == TemporalCarrierKind::SourceGrade ? "source_grade"
+            : carrier.kind == TemporalCarrierKind::CellStalk ? "cell_stalk" : "explicit"));
+        put(item, "grade", count_value(carrier.grade.value));
+        put(item, "coordinate_system", text_value(std::to_string(carrier.coordinate_system)));
+        N::Array extents;
+        for (const auto extent : carrier.domain.extents()) extents.elements.push_back(count_value(extent));
+        put(item, "extents", N(std::move(extents)));
+        put(item, "coordinates", count_value(carrier.domain.logical_size()));
+        if (carrier.kind == TemporalCarrierKind::CellStalk)
+            put(item, "cell", N(N::Object{{{"grade", count_value(carrier.cell->grade.value)},
+                {"key", text_value(std::to_string(carrier.cell->key))}}}));
+        carriers.elements.push_back(std::move(item));
     }
-    result.set("carriers", native_carriers);
-    if (declaration.at("native").has("cutoff")) {
-        result.set("native_history", history_metadata());
-    }
-    result.set("design", declaration.at("design"));
-    auto bindings = Json::array();
+    put(result, "carriers", N(std::move(carriers)));
+    if (declaration.at("native").has("cutoff"))
+        put(result, "native_history", N(N::Object{{{"archive_sha256", text_value(native_digest)},
+            {"first_sequence", text_value(std::to_string(history->first_sequence()))},
+            {"cutoff", text_value(std::to_string(history->cutoff()))},
+            {"retained_segments", count_value(history->segment_count())}}}));
+    put(result, "design", declared("design"));
+    N::Array bindings;
     for (const auto &[id, owner] : publications) {
-        auto binding = Json::parse(publication_declarations.at(id).dump());
-        binding.set("catalog", owner->catalog());
-        bindings.push(binding);
+        auto binding = retain_value(publication_declarations.at(id).native());
+        put(binding, "catalog", owner->state_->catalog_value(sources));
+        bindings.elements.push_back(std::move(binding));
     }
-    result.set("publications", bindings);
-    result.set("contexts", declaration.at("contexts"));
-    auto list = Json::array();
+    put(result, "publications", N(std::move(bindings)));
+    put(result, "contexts", declared("contexts"));
+    N::Array list;
     for (const auto &[name, field] : fields) {
         (void)name;
-        auto item = field_metadata(field);
-        list.push(item);
+        N item(N::Object{});
+        for (const auto *member : {"id", "key", "context", "channel", "quantity", "units", "method", "value_type"})
+            put(item, member, retain_value(field.declaration.native().at(member)));
+        const auto pin = field_pins.at(field.tensor);
+        const auto &tensor = *pin.tensor_declaration(); const auto &carrier = *pin.carrier();
+        put(item, "grade", count_value(carrier.grade.value));
+        put(item, "carrier", text_value(std::to_string(carrier.key)));
+        put(item, "coordinate_system", text_value(std::to_string(carrier.coordinate_system)));
+        N::Array extents;
+        for (const auto extent : tensor.tensor.domain().extents()) extents.elements.push_back(count_value(extent));
+        put(item, "extents", N(std::move(extents)));
+        put(item, "coordinates", count_value(tensor.tensor.domain().logical_size()));
+        put(item, "reported", count_value(tensor.tensor.support().count()));
+        put(item, "profile", text_value(carrier.kind == TemporalCarrierKind::SourceGrade ? "source_grade"
+            : carrier.kind == TemporalCarrierKind::Explicit ? "explicit_coordinates" : "native_stalk"));
+        list.elements.push_back(std::move(item));
     }
-    result.set("fields", list);
+    put(result, "fields", N(std::move(list)));
     if (declaration.has("operators")) {
-        auto declared = Json::array();
-        for (const auto &[id, d] : operators) {
-            (void)d;
-            auto item = operator_metadata(id);
-            declared.push(item);
+        N::Array list_operators;
+        for (const auto &[id, declaration_] : operators) {
+            auto item = retain_value(declaration_.native());
+            const auto tensor = operator_pins.at(id).tensor_declaration();
+            put(item, "native_role", count_value(static_cast<std::size_t>(tensor->role)));
+            put(item, "input_carrier", text_value(std::to_string(*tensor->input)));
+            put(item, "output_carrier", text_value(std::to_string(*tensor->output)));
+            N::Array extents;
+            for (const auto extent : tensor->tensor.domain().extents()) extents.elements.push_back(count_value(extent));
+            put(item, "extents", N(std::move(extents)));
+            put(item, "full_support", N(tensor->tensor.support().count() == tensor->tensor.domain().logical_size()));
+            list_operators.elements.push_back(std::move(item));
         }
-        result.set("operators", declared);
+        put(result, "operators", N(std::move(list_operators)));
     }
-    result.set("field_sets", declaration.at("field_sets"));
-    result.set(
-        "operations",
-        Json::parse(
-            R"(["inspect","coverage","provenance","boundary","adjoint","hodge","typed_moment","temporal_moment_change","native_boundary","field_summary","support_mask","controlled_pairings","trajectory_structure","structure_transition","paired_field_contrasts","local_sections","tensor_window","green_response","chain_certificate","realized_path_comparison","green_action","linear_model_comparison","finite_reference_calibration","relational_field_ensemble","structural_reference_calibration","source_structure_ablation","observed_response_model","constrained_response_model","temporal_field_history","censored_endpoint_bounds","declared_response_transition","hodge_frame_decomposition","linear_response_observation","metric_relative_novelty"])"));
-    auto docs = Json::array();
+    put(result, "field_sets", declared("field_sets"));
+    N::Array operations;
+    for (const auto *operation : {"inspect", "coverage", "provenance", "boundary", "adjoint", "hodge",
+        "typed_moment", "temporal_moment_change", "native_boundary", "field_summary", "support_mask",
+        "controlled_pairings", "trajectory_structure", "structure_transition", "paired_field_contrasts",
+        "local_sections", "tensor_window", "green_response", "chain_certificate", "realized_path_comparison",
+        "green_action", "linear_model_comparison", "finite_reference_calibration", "relational_field_ensemble",
+        "structural_reference_calibration", "source_structure_ablation", "observed_response_model",
+        "constrained_response_model", "temporal_field_history", "censored_endpoint_bounds",
+        "declared_response_transition", "hodge_frame_decomposition", "linear_response_observation", "metric_relative_novelty"})
+        operations.elements.push_back(text_value(operation));
+    put(result, "operations", N(std::move(operations)));
+    N::Array docs;
     for (const auto &[name, document] : documents) {
         (void)name;
-        auto item = Json::parse(document.metadata.dump());
-        // Models see a bounded exact prefix; the validator uses complete bytes.
+        auto item = retain_value(document.metadata.native());
         if (document.metadata.at("format").text() == "utf8") {
             auto end = std::min<std::size_t>(document.bytes.size(), 2048);
-            while (end && !boundary(document.bytes, end))
-                --end;
-            item.set("text_prefix", Json::string(std::string(document.bytes.substr(0, end))));
-            item.set("prefix_bytes", cardinality(end));
+            while (end && !boundary(document.bytes, end)) --end;
+            put(item, "text_prefix", text_value(std::string(document.bytes.substr(0, end))));
+            put(item, "prefix_bytes", count_value(end));
         }
-        docs.push(item);
+        docs.elements.push_back(std::move(item));
     }
-    result.set("documents", docs);
-    auto identities = Json::array();
+    put(result, "documents", N(std::move(docs)));
+    N::Array identities;
     for (const auto &[cell, item] : cells) {
         (void)cell;
-        auto identity = Json::object();
-        for (const auto &member : {"grade", "key", "id", "kind", "label"})
-            identity.set(member, item.at(member));
-        identities.push(identity);
+        N identity(N::Object{});
+        for (const auto *member : {"grade", "key", "id", "kind", "label"})
+            put(identity, member, retain_value(item.native().at(member)));
+        identities.elements.push_back(std::move(identity));
     }
-    result.set("identities", identities);
-    result.set("identity_catalog_complete", Json::boolean(!compact));
+    put(result, "identities", N(std::move(identities)));
+    put(result, "identity_catalog_complete", N(!compact));
     return result;
+}
+Json ScientificStudy::State::catalog() const {
+    auto sources = native_publication->raw_sources();
+    auto value = catalog_value(sources);
+    return render_record_view(NativeRecord::create(std::move(value), new_native_record_namespace(),
+                                                   std::move(sources)));
 }
 ScientificStudy::ScientificStudy(const fs::path &path) : ScientificStudy(std::make_unique<State>(path)) {}
 ScientificStudy::ScientificStudy(const fs::path &path, const ScientificAdmissionObserver &observer)

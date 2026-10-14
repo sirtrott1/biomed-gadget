@@ -58,6 +58,7 @@ class ScientificStudy {
     // A compact inventory plus complete, independently addressed source pages.
     // Offsets select presentation only; mathematics retains the original owner.
     Json source_index() const;
+    NativeRecord source_index_record() const;
     Json read_source(const Json &request) const;
     Json read_source(const Json &request, rfc::runtime::ExecutionLease lease) const;
     Json declaration() const;
@@ -95,6 +96,7 @@ class ScientificSession {
     ScientificSession(const ScientificSession &) = delete;
     ScientificSession &operator=(const ScientificSession &) = delete;
     Json execute(const Json &query);
+    Json execute_source(const Json &query, rfc::runtime::ExecutionLease lease);
     NativeRecord execute_record(const NativeRecord &query);
     Json read_source(const Json &request) const;
     // Explicit current host limits and cancellation for declared native responses.
@@ -104,12 +106,16 @@ class ScientificSession {
     Json execute_native_observation(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_native_novelty(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_structure_transition(const Json &query, rfc::runtime::ExecutionLease lease);
+    Json execute_temporal_history(const Json &query, rfc::runtime::ExecutionLease lease);
+    Json execute_trajectory(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_comparison(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_tensor_window(const Json &query, rfc::runtime::ExecutionLease lease);
     Json execute_green_response(const Json &query, rfc::runtime::ExecutionLease lease);
     void validate(const Json &query);
     Json execute_plan(const Json &plan);
     NativeRecord execute_plan_record(const NativeRecord &plan);
+    // Query and plan proposals retain their original request and actual results.
+    NativeRecord apply_proposal_record(const NativeRecord &proposal);
     Json propose_annotations(const Json &annotations);
     Json native_cache_statistics() const;
     // Counts source-bound preparations separately from immutable certificates.

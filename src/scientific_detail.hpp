@@ -113,6 +113,7 @@ struct ScientificStudy::State {
                    const ScientificAdmissionObserver &observer = {});
     Json evidence(const Json &value) const;
     Json catalog() const;
+    NativeRecordValue catalog_value(std::vector<RawByteSource> &sources) const;
     Json history_metadata() const;
     Json referenced(const Json &metadata) const;
     Json field_metadata(const scientific_detail::Field &field) const;
