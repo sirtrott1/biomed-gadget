@@ -1822,114 +1822,9 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
     } else if (operation == "relational_gluing") {
         result = relational_gluing(*this, request, resources);
     } else if (operation == "field_transfer") {
-        members(request, {"schema", "operation", "left", "right", "map", "metric"});
-        require(request.at("metric").text() == "identity", "field transfer metric profile");
-        const auto load = [&](const Json &record) {
-            members(record, {"assay", "partition", "field"});
-            const auto a = text(record.at("assay"));
-            require(state_->assays.contains(a), "field transfer assay");
-            const auto p =
-                count(record.at("partition"), state_->assays.at(a).at("partitions").size() - 1,
-                      "field transfer partition");
-            auto input = load_assay_field(study(a, p), record.at("field").text());
-            require(!input.values.empty(), "empty field transfer input");
-            require(std::all_of(input.supported.begin(), input.supported.end(),
-                                [](auto v) { return v; }),
-                    "field transfer requires complete support; no implicit missing extension");
-            return input;
-        };
-        const auto left = load(request.at("left")), right = load(request.at("right"));
-        const auto map = request.at("map");
-        members(map, {"domain_quantity", "domain_units", "codomain_quantity", "codomain_units",
-                      "method", "evidence", "entries"});
-        require(map.at("domain_quantity").text() == right.meaning.at("quantity").text() &&
-                    map.at("domain_units").text() == right.meaning.at("units").text() &&
-                    map.at("codomain_quantity").text() == left.meaning.at("quantity").text() &&
-                    map.at("codomain_units").text() == left.meaning.at("units").text(),
-                "field transfer domain/codomain meanings differ from measurements");
-        (void)text(map.at("method"));
-        (void)text(map.at("evidence"), 16384);
-        std::map<std::string, std::size_t> li, ri;
-        for (std::size_t i = 0; i < left.ids.size(); ++i)
-            li.emplace(left.ids.at(i).text(), i);
-        for (std::size_t i = 0; i < right.ids.size(); ++i)
-            ri.emplace(right.ids.at(i).text(), i);
-        rfc::numeric::ExactMatrix matrix(left.values.size(), right.values.size());
-        std::set<std::pair<std::size_t, std::size_t>> seen;
-        for (std::size_t i = 0; i < map.at("entries").size(); ++i) {
-            const auto e = map.at("entries").at(i);
-            members(e, {"left_id", "right_id", "coefficient"});
-            const auto l = text(e.at("left_id")), r = text(e.at("right_id"));
-            require(li.contains(l) && ri.contains(r) && seen.emplace(li.at(l), ri.at(r)).second,
-                    "field transfer coordinate identity or duplicate entry");
-            matrix.set(li.at(l), ri.at(r), exact_rational(text(e.at("coefficient"))));
-        }
-        auto reservation = resources->reserve(1);
-        const auto transported = matrix.apply(right.values),
-                   residual = rfc::numeric::sub(left.values, transported);
-        const auto vector_json = [](const Vector &v) {
-            auto out = Json::array();
-            for (const auto &q : v)
-                out.push(Json::string(q.get_str()));
-            return out;
-        };
-        result.set("left", vector_json(left.values));
-        result.set("right", vector_json(right.values));
-        result.set("transported_right", vector_json(transported));
-        result.set("residual", vector_json(residual));
-        result.set("left_ids", left.ids);
-        result.set("right_ids", right.ids);
-        result.set("left_carrier_grade", Json::integer(left.grade));
-        result.set("right_carrier_grade", Json::integer(right.grade));
-        const auto rank = matrix.rank();
-        result.set("map_rank", cardinality(rank));
-        result.set("map_kernel_dimension", cardinality(matrix.cols() - rank));
-        result.set("residual_quadrance",
-                   Json::string(rfc::numeric::dot(residual, residual).get_str()));
-        result.set("pairing", Json::string(rfc::numeric::dot(left.values, transported).get_str()));
-        result.set("left_source_digest", Json::string(left.owner->digest()));
-        result.set("right_source_digest", Json::string(right.owner->digest()));
-        result.set("left_meaning", left.meaning);
-        result.set("right_meaning", right.meaning);
-        result.set("map", map);
-        result.set(
-            "scope",
-            Json::string("Full field comparison under the declared measurement map and metric; the "
-                         "map's biological validity is supplied by its evidence"));
+        result = field_transfer(*this, request, resources);
     } else if (operation == "allocation_bounds") {
-        members(request,
-                {"schema", "operation", "resource", "targets", "candidate_search", "scale",
-                 "scale_provenance"},
-                {"kernel_certificate"});
-        const auto id = text(request.at("resource"));
-        require(state_->physical.contains(id), "unknown assignment resource");
-        const auto item = state_->physical.at(id);
-        require(item.at("declaration").at("format").text() == "salmon_eq",
-                "assignment resource must be unweighted Salmon equivalence classes");
-        const auto parsed = salmon_classes(state_->artifact( item.at("original")));
-        auto allocation = Json::object();
-        allocation.set("schema", Json::string("gadget.assay.allocations.v1"));
-        allocation.set("operation", Json::string("allocation_bounds"));
-        allocation.set("candidates", parsed.at("candidates"));
-        allocation.set("classes", parsed.at("classes"));
-        allocation.set("targets", request.at("targets"));
-        if (request.has("kernel_certificate"))
-            allocation.set("kernel_certificate", request.at("kernel_certificate"));
-        allocation.set("contrasts", Json::array());
-        allocation.set("class_partition", Json::string("disjoint_observations"));
-        allocation.set("units", Json::string("assigned_fragment_count"));
-        allocation.set("candidate_search", request.at("candidate_search"));
-        auto evidence = Json::array();
-        evidence.push(item.at("original").at("sha256"));
-        allocation.set("evidence", evidence);
-        auto samples = Json::array(), sample = Json::object();
-        sample.set("id", request.at("resource"));
-        sample.set("counts", parsed.at("counts"));
-        sample.set("scale", request.at("scale"));
-        sample.set("scale_provenance", request.at("scale_provenance"));
-        samples.push(sample);
-        allocation.set("samples", samples);
-        result = analyze_allocations(allocation, resources).at("result");
+        result = render_record_view(execute_record(admit_record_view(request), resources)).at("result").at("result");
     } else
         throw std::invalid_argument("unsupported assay workspace operation: " + operation);
     auto output = Json::object();
@@ -2950,7 +2845,9 @@ bool AssayWorkspace::supports_native_publication(std::string_view operation) noe
            operation == "native_query" || operation == "relational_persistence" ||
            operation == "indexed_sequence_alignment" ||
            operation == "reference_sequence_matches" || operation == "sequence_splice_discovery" ||
-           operation == "read_overlap_reconstruction" || operation == "read_edit_consensus";
+           operation == "read_overlap_reconstruction" || operation == "read_edit_consensus" ||
+           operation == "relational_gluing" ||
+           operation == "field_transfer" || operation == "allocation_bounds";
 }
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
@@ -2959,6 +2856,72 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
         return query_batch_record(*this, request, resources);
     }
     const auto query = render_record_view(request);
+    if (query.has("operation") && (query.at("operation").text() == "relational_gluing" ||
+                                   query.at("operation").text() == "field_transfer" ||
+                                   query.at("operation").text() == "allocation_bounds")) {
+        using N = NativeRecordValue;
+        require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
+        if (!resources) resources = CpuResources::local();
+        std::optional<AssayFieldsSource> retained;
+        const auto operation = query.at("operation").text();
+        if (operation == "relational_gluing") relational_gluing(*this, query, resources, &retained);
+        else if (operation == "field_transfer") field_transfer(*this, query, resources, &retained);
+        else {
+            members(query,
+                    {"schema", "operation", "resource", "targets", "candidate_search", "scale",
+                     "scale_provenance"},
+                    {"kernel_certificate"});
+            const auto id = text(query.at("resource"));
+            require(state_->physical.contains(id), "unknown assignment resource");
+            const auto item = state_->physical.at(id);
+            require(item.at("declaration").at("format").text() == "salmon_eq",
+                    "assignment resource must be unweighted Salmon equivalence classes");
+            const auto parsed = salmon_classes(state_->artifact( item.at("original")));
+            auto allocation = Json::object();
+            allocation.set("schema", Json::string("gadget.assay.allocations.v1"));
+            allocation.set("operation", Json::string("allocation_bounds"));
+            allocation.set("candidates", parsed.at("candidates"));
+            allocation.set("classes", parsed.at("classes"));
+            allocation.set("targets", query.at("targets"));
+            if (query.has("kernel_certificate"))
+                allocation.set("kernel_certificate", query.at("kernel_certificate"));
+            allocation.set("contrasts", Json::array());
+            allocation.set("class_partition", Json::string("disjoint_observations"));
+            allocation.set("units", Json::string("assigned_fragment_count"));
+            allocation.set("candidate_search", query.at("candidate_search"));
+            auto evidence = Json::array();
+            evidence.push(item.at("original").at("sha256"));
+            allocation.set("evidence", evidence);
+            auto samples = Json::array(), sample = Json::object();
+            sample.set("id", query.at("resource"));
+            sample.set("counts", parsed.at("counts"));
+            sample.set("scale", query.at("scale"));
+            sample.set("scale_provenance", query.at("scale_provenance"));
+            samples.push(sample);
+            allocation.set("samples", samples);
+            allocation_analysis(allocation, resources, &retained);
+        }
+        require(retained.has_value(), "native assay result fields missing");
+        auto fields = std::move(*retained);
+        std::uint64_t source_key = 1;
+        for (const auto &source : fields.sources) {
+            require(source.key() < std::numeric_limits<std::uint64_t>::max(),
+                    "raw source identity space exhausted");
+            source_key = std::max(source_key, source.key() + 1);
+        }
+        auto owner = native_publication().archive_source(source_key);
+        const auto bytes = owner.bytes().size();
+        fields.sources.push_back(std::move(owner));
+        N certificate(N::Object{{{"schema", N(std::string("gadget.assay.result.native.v1"))},
+            {"query", import_record_view(query)}, {"source_digest", N(digest())},
+            {"result", std::move(fields.declaration)},
+            {"workspace_publication", N(N::ByteSpan{source_key, 0, bytes, false})},
+            {"arithmetic", N(std::string("rational"))},
+            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+        return retain_operation(std::move(fields.endpoint), new_native_record_namespace(),
+            std::move(fields.sources), request, std::move(certificate));
+    }
     if (query.has("operation") && (query.at("operation").text() == "inspect" ||
                                    query.at("operation").text() == "native_query" ||
                                    query.at("operation").text() == "relational_persistence")) {

@@ -1,4 +1,6 @@
 #include "pipeline_answers.hpp"
+#include "scientific_result_fields.hpp"
+#include <rfc/storage/temporal_finite.hpp>
 #include <gadget/record_view.hpp>
 #include <algorithm>
 #include <limits>
@@ -216,13 +218,6 @@ fs::path checked_answer_path(const fs::path &directory, const Json &record) {
     require(!relative.empty() && *relative.begin() != "..", "answer artifact escapes owner");
     return resolved;
 }
-std::string checked_answer_bytes(const fs::path &directory, const Json &record) {
-    const auto resolved = checked_answer_path(directory, record);
-    const auto bytes = read_text(resolved);
-    require(record.at("sha256").text() == "sha256:" + sha256(bytes),
-            "answer artifact hash mismatch");
-    return bytes;
-}
 Json checked_answer_view(const fs::path &directory,const Json &record) {
     if (record.has("native_selection")) {
         const auto selection = record.at("native_selection");
@@ -238,9 +233,10 @@ Json checked_answer_view(const fs::path &directory,const Json &record) {
         require(record.at("sha256").text() == digest, "native answer publication hash mismatch");
         return workspace.derivation_certificate(selection.at("assay").text());
     }
-    const auto bytes = checked_answer_bytes(directory, record);
-    const auto retained = decode_record(std::span<const std::byte>{
-        reinterpret_cast<const std::byte *>(bytes.data()), bytes.size()});
+    const auto path = checked_answer_path(directory, record);
+    require(record.at("sha256").text() == "sha256:" + sha256_file(path),
+            "answer artifact hash mismatch");
+    const auto retained = read_record(path);
     if (retained.has("schema") && retained.at("schema").text() == "gadget.operation.native.v1")
         return retained.at("result");
     return static_cast<Json>(retained);
@@ -257,9 +253,10 @@ Json observable_catalog() {
     }
     return out;
 }
-Json answer_admission(const Json &intent, const Json &catalog, const Json *included,
+NativeRecord answer_admission_record(const Json &intent, const Json &catalog, const Json *included,
                       const std::string *question) {
-    auto out = Json::object();
+    using R = scientific_detail::ResultValue;
+    auto out = R::object();
     out.set("schema", Json::string("gadget.pipeline.answer.admission.v1"));
     out.set("source_digest", catalog.at("source_digest"));
     out.set("intent_sha256", catalog.at("intent_sha256"));
@@ -267,7 +264,7 @@ Json answer_admission(const Json &intent, const Json &catalog, const Json *inclu
         out.set("status", Json::string("untyped"));
         out.set("authority",
                 Json::string("Recipe provenance only; question coverage is undeclared"));
-        return out;
+        return NativeRecord::create(std::move(out).release(), new_native_record_namespace());
     }
     const auto contract = intent.at("answer_contract");
     keys(contract, {"schema", "question", "requirements"});
@@ -297,8 +294,8 @@ Json answer_admission(const Json &intent, const Json &catalog, const Json *inclu
     for (std::size_t i = 0; i < requests.size(); ++i)
         builder.declare_witness_identity(i + 1);
     const auto carrier = builder.freeze();
-    local::FiniteConstraintSystem<std::uint8_t> constraints(carrier);
-    local::FiniteConstraintSystem<std::uint8_t>::Assignment mandatory;
+    local::FiniteConstraintSystem<std::int64_t> constraints(carrier);
+    local::FiniteConstraintSystem<std::int64_t>::Assignment mandatory;
     std::optional<core::CellId> missing;
     algebra::SubcomplexMask full(carrier);
     auto requirements = Json::array();
@@ -334,7 +331,7 @@ Json answer_admission(const Json &intent, const Json &catalog, const Json *inclu
         }
         const core::CellId cell{core::Grade{0}, static_cast<std::uint32_t>(i)};
         constraints.set_boolean_domain(cell);
-        mandatory.emplace(cell, std::uint8_t{1});
+        mandatory.emplace(cell, std::int64_t{1});
         if (!supplied.size() && !missing)
             missing = cell;
         algebra::SubcomplexMask patch(carrier);
@@ -342,7 +339,7 @@ Json answer_admission(const Json &intent, const Json &catalog, const Json *inclu
         full.select(cell);
         constraints.add_chart("require/" + id, patch, {cell}, {{1}});
         constraints.add_chart("supply/" + id, patch, {cell},
-                              {{static_cast<std::uint8_t>(supplied.size() != 0)}});
+                              {{static_cast<std::int64_t>(supplied.size() != 0)}});
         auto row = Json::parse(request.dump());
         row.set("eligible_bindings", eligible);
         row.set("supplied_bindings", supplied);
@@ -355,52 +352,62 @@ Json answer_admission(const Json &intent, const Json &catalog, const Json *inclu
     // unique possible section directly, avoiding a redundant recursive search.
     // A local unsatisfiable chart pair certifies failure of the global family.
     const bool valid = constraints.globally_valid(mandatory);
-    auto native = Json::object(), charts = Json::array(), assignment = Json::array();
-    native.set("owner", Json::string("rfc::local::FiniteConstraintSystem<uint8_t>"));
-    native.set("carrier",
-               Json::string("Separate grade-zero answer obligations; no biological incidence"));
-    native.set("cells", Json::integer(requests.size()));
-    native.set("constraint_complete",
-               Json::boolean(constraints.cover_is_constraint_complete({full})));
-    native.set("global_section_exists", Json::boolean(valid));
+    auto native = R::object(), charts = R::array(), assignment = R::array();
+    native.set("owner", R::string("rfc::local::FiniteConstraintSystem<int64_t>"));
+    native.set("carrier", R::string("Separate grade-zero answer obligations; no biological incidence"));
+    native.set("cells", R::count(requests.size()));
+    native.set("constraint_complete", R::boolean(constraints.cover_is_constraint_complete({full})));
+    native.set("global_section_exists", R::boolean(valid));
+    std::vector<std::uint64_t> chart_keys;
     for (const auto &chart : constraints.charts()) {
-        auto row = Json::object();
-        row.set("name", Json::string(chart.name));
-        row.set("cell", Json::integer(chart.support.at(0).index));
-        row.set("allowed", Json::integer(chart.allowed.at(0).at(0)));
-        charts.push(row);
+        auto row = R::object();
+        row.set("name", R::string(chart.name));
+        row.set("cell", R::count(chart.support.at(0).index));
+        row.set("allowed", R::count(static_cast<std::size_t>(chart.allowed.at(0).at(0))));
+        charts.push(std::move(row));
+        chart_keys.push_back(chart_keys.size() + 1);
     }
-    native.set("charts", charts);
-    native.set("validation", Json::string("mandatory section and exact local conflict core"));
+    native.set("charts", std::move(charts));
+    native.set("validation", R::string("mandatory section and exact local conflict core"));
     if (valid) {
         for (std::size_t i = 0; i < requests.size(); ++i)
-            assignment.push(
-                Json::integer(mandatory.at({core::Grade{0}, static_cast<std::uint32_t>(i)})));
-        native.set("assignment", assignment);
+            assignment.push(R::count(static_cast<std::size_t>(mandatory.at(
+                {core::Grade{0}, static_cast<std::uint32_t>(i)}))));
+        native.set("assignment", std::move(assignment));
     } else {
         require(missing.has_value(), "native answer failure requires an unsupplied obligation");
-        algebra::SubcomplexMask patch(carrier);
-        patch.select(*missing);
+        algebra::SubcomplexMask patch(carrier); patch.select(*missing);
         const auto core = constraints.exact_patch_unsat_core(patch);
         require(core.has_value() && core->subset_minimal, "native answer conflict certificate");
-        auto conflict = Json::object(), names = Json::array(), cells = Json::array();
+        auto conflict = R::object(), names = R::array(), cells = R::array();
         for (const auto index : core->chart_indices)
-            names.push(Json::string(constraints.charts().at(index).name));
-        for (const auto cell : core->cells)
-            cells.push(Json::integer(cell.index));
-        conflict.set("charts", names);
-        conflict.set("cells", cells);
-        conflict.set("subset_minimal", Json::boolean(core->subset_minimal));
-        native.set("unsat_core", conflict);
+            names.push(R::string(constraints.charts().at(index).name));
+        for (const auto cell : core->cells) cells.push(R::count(cell.index));
+        conflict.set("charts", std::move(names)); conflict.set("cells", std::move(cells));
+        conflict.set("subset_minimal", R::boolean(core->subset_minimal));
+        native.set("unsat_core", std::move(conflict));
     }
+    storage::TemporalEndpoint endpoint(carrier);
+    auto system = storage::capture_temporal_finite_system(1, constraints, chart_keys);
+    system.sections.push_back(storage::capture_temporal_finite_section(carrier, 1, mandatory));
+    endpoint.finite_systems.push_back(std::move(system));
     out.set("status", Json::string(valid ? "satisfied" : "unsatisfied"));
     out.set("question_sha256", Json::string("sha256:" + sha256(declared_question)));
-    out.set("question_bytes", Json::integer(declared_question.size()));
+    out.set("question_bytes", R::count(declared_question.size()));
     out.set("contract_sha256", Json::string("sha256:" + sha256(contract.dump())));
     out.set("authority", Json::string("Researcher-declared observables and bound goal parameters"));
     out.set("requirements", requirements);
-    out.set("native", native);
-    return hashed(out, "admission_sha256");
+    out.set("native", std::move(native));
+    auto retained = NativeRecord::create_from_endpoint(std::move(out).release(),
+        new_native_record_namespace(), {}, std::move(endpoint));
+    auto value = retained.materialize_value();
+    std::get<NativeRecordValue::Object>(value.data).members.emplace_back("admission_sha256",
+        NativeRecordValue("sha256:" + sha256(render_record_view(retained).dump())));
+    return retained.derive(std::move(value));
+}
+Json answer_admission(const Json &intent, const Json &catalog, const Json *included,
+                      const std::string *question) {
+    return render_record_view(answer_admission_record(intent, catalog, included, question));
 }
 Json answer_witnesses(const Json &planning, const Json &pipeline, const Json &results,
                       const fs::path &directory) {

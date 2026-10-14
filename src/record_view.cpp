@@ -1,5 +1,6 @@
 #include "assay_coverage_detail.hpp"
 #include "assay_field_detail.hpp"
+#include "assay_result_fields.hpp"
 #include "assay_quality_detail.hpp"
 #include "genomic_detail.hpp"
 #include <cmath>
@@ -250,6 +251,12 @@ Json render_record_view(const NativeRecord &record) {
                 return assay_detail::read_reconstruction_fields_view(record);
             if (schema == "gadget.sequence.consensus.fields.v1")
                 return assay_detail::read_consensus_fields_view(record);
+            if (schema == "gadget.allocation.fields.v1")
+                return assay_detail::allocation_bounds_fields_view(record);
+            if (schema == "gadget.assays.gluing.fields.v1")
+                return assay_detail::gluing_fields_view(record);
+            if (schema == "gadget.assays.transfer.fields.v1")
+                return assay_detail::transfer_fields_view(record);
             if (schema == "gadget.sections.fields.v1" || schema == "gadget.sections.selected.v1")
                 return assay_detail::section_fields_view(record);
         }
