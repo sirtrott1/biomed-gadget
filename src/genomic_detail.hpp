@@ -109,6 +109,8 @@ class SequenceSource {
     std::string id(std::size_t record) const;
     Json evidence(std::size_t record) const;
     std::string bases(std::size_t record, std::size_t begin, std::size_t length) const;
+    std::vector<std::pair<std::size_t, std::size_t>> byte_spans(
+        std::size_t record, std::size_t begin, std::size_t length) const;
     SequenceRecord record(std::size_t index) const;
     void blocks(std::size_t record, std::size_t width,
                 const std::function<void(std::size_t, std::string_view)> &visit) const;
@@ -122,6 +124,14 @@ Json sequence_assembly_fields_view(const NativeRecord &record);
 Json indexed_alignment(const ResourceImages &images, const Json &request);
 Json splice_search(const ResourceImages &images, const Json &request);
 Json read_reconstruction(const ResourceImage &resource, const Json &request);
+AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, const Json &request);
+AssayFieldsSource reference_match_fields_source(const ResourceImages &images, const Json &request);
+AssayFieldsSource splice_search_fields_source(const ResourceImages &images, const Json &request);
+AssayFieldsSource read_reconstruction_fields_source(const ResourceImage &resource, const Json &request);
+Json indexed_alignment_fields_view(const NativeRecord &record);
+Json reference_match_fields_view(const NativeRecord &record);
+Json splice_search_fields_view(const NativeRecord &record);
+Json read_reconstruction_fields_view(const NativeRecord &record);
 Json query_batch(const AssayWorkspace &workspace, const Json &request,
                  const std::shared_ptr<CpuResources> &resources);
 NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRecord &request,

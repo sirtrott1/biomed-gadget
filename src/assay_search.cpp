@@ -72,6 +72,24 @@ std::string SequenceSource::bases(std::size_t index, std::size_t begin, std::siz
 SequenceRecord SequenceSource::record(std::size_t index) const {
     return {id(index), bases(index, 0, length(index)), evidence(index)};
 }
+std::vector<std::pair<std::size_t, std::size_t>> SequenceSource::byte_spans(
+    std::size_t index, std::size_t begin, std::size_t length) const {
+    require(begin <= this->length(index) && length <= this->length(index) - begin,
+            "sequence byte window outside original record");
+    std::vector<std::pair<std::size_t, std::size_t>> result;
+    if (!length) return result;
+    const auto &segments = segments_.at(index);
+    auto segment = std::upper_bound(segments.begin(), segments.end(), begin,
+        [](auto position, const auto &part) { return position < part.begin; });
+    --segment;
+    while (length) {
+        const auto local = begin - segment->begin;
+        const auto count = std::min(length, segment->length - local);
+        result.emplace_back(segment->source + local, count);
+        begin += count; length -= count; ++segment;
+    }
+    return result;
+}
 void SequenceSource::blocks(std::size_t index, std::size_t width,
                             const std::function<void(std::size_t, std::string_view)> &visit) const {
     require(width > 0, "sequence block width must be positive");
@@ -99,7 +117,8 @@ std::vector<SequenceRecord> sequence_records(const ResourceImage &resource) {
         out.push_back(source.record(i));
     return out;
 }
-Json reference_matches(const ResourceImages &images, const Json &request) {
+AssayFieldsSource reference_match_fields_source(const ResourceImages &images, const Json &request) {
+    using namespace sequence;
     using rfc::numeric::ExactMatrix;
     members(request,
             {"schema", "operation", "query_resource", "reference_resource", "strands", "ambiguity",
@@ -108,7 +127,8 @@ Json reference_matches(const ResourceImages &images, const Json &request) {
     const auto &qimage = images.at(text(request.at("query_resource"))),
                &rimage = images.at(text(request.at("reference_resource")));
     require(rimage.declaration.at("format").text() == "fasta", "reference matching requires FASTA");
-    const auto queries = sequence_records(qimage), references = sequence_records(rimage);
+    const SequenceSource query_source(qimage), reference_source(rimage);
+    const auto queries = records(query_source), references = records(reference_source);
     sequence::reference_frame(rimage, references);
     require(!queries.empty(), "reference matching requires query records");
     std::size_t bases = 0;
@@ -196,7 +216,10 @@ Json reference_matches(const ResourceImages &images, const Json &request) {
     using rfc::numeric::Integer;
     Integer comparisons{0}, candidates{0}, contiguous_universe{0}, junction_universe{0};
     const Rational mismatch_bound{std::to_string(max_mismatches)};
-    auto matches = Json::array(), summaries = Json::array();
+    N::Array matches, summaries, children, contexts;
+    std::vector<PlacementSource> placements; Vector collection_mismatches;
+    std::vector<RawByteSource> sources{RawByteSource(1, std::as_bytes(std::span(qimage.bytes))),
+                                     RawByteSource(2, std::as_bytes(std::span(rimage.bytes)))};
     std::size_t oriented_position = 0;
     for (std::size_t query_index = 0; query_index < queries.size(); ++query_index) {
         const auto &q = queries[query_index];
@@ -204,6 +227,22 @@ Json reference_matches(const ResourceImages &images, const Json &request) {
         ExactMatrix count_map(1, q.bases.size());
         for (std::size_t i = 0; i < q.bases.size(); ++i)
             count_map.set(0, i, Rational{1});
+        rfc::core::RelationalComplexBuilder coordinate_builder(rfc::core::RelationSignature{});
+        coordinate_builder.declare_grade({1});
+        for (std::size_t i = 0; i < q.bases.size(); ++i) coordinate_builder.declare_witness_identity(i + 1);
+        rfc::storage::TemporalEndpoint comparison_endpoint(coordinate_builder.freeze());
+        comparison_endpoint.carriers.push_back({1, rfc::storage::TemporalCarrierKind::SourceGrade,
+            {0}, {}, 0, rfc::numeric::IndexDomain::linear(q.bases.size())});
+        SourceGradeFields fields(comparison_endpoint);
+        const auto scalar = fields.explicit_carrier(1);
+        comparison_endpoint.carriers.push_back({3, rfc::storage::TemporalCarrierKind::SourceGrade,
+            {1}, {}, 0, rfc::numeric::IndexDomain::linear(0)});
+        N::Object comparison_declaration;
+        member(comparison_declaration, "query_record", integer(query_index));
+        member(comparison_declaration, "scalar_carrier", integer(scalar));
+        member(comparison_declaration, "scalar_coordinate", std::string("mismatch_count"));
+        member(comparison_declaration, "count_map", fields.map("query.count_map", 1, scalar, count_map));
+        N::Array native_comparisons;
         Vector disagreement(q.bases.size(), Rational{0});
         for (std::size_t orientation = 0; orientation < strands.size(); ++orientation) {
             const auto &v = oriented.at(oriented_position++);
@@ -230,29 +269,57 @@ Json reference_matches(const ResourceImages &images, const Json &request) {
                 if (mismatch > mismatch_bound)
                     return;
                 ++query_matches;
-                auto m = Json::object(), blocks = Json::array();
-                m.set("query_id", Json::string(q.id));
-                m.set("query_record_index", cardinality(query_index));
-                m.set("reference_id", Json::string(reference.id));
-                m.set("strand", Json::string(strand));
-                m.set("mismatches", Json::string(mismatch.get_str()));
-                m.set("query_evidence", q.evidence);
-                m.set("reference_evidence", reference.evidence);
+                auto m = N::Object{}; auto blocks = N::Array{};
+                member(m, "query_id", N(q.id));
+                member(m, "query_record_index", integer(query_index));
+                member(m, "reference_id", N(reference.id));
+                member(m, "strand", N(strand));
+                member(m, "mismatches", N(mismatch));
+                member(m, "query_evidence", import_record_view(q.evidence));
+                member(m, "reference_evidence", import_record_view(reference.evidence));
                 const auto block = [&](std::size_t a, std::size_t b) {
-                    auto p = Json::array();
-                    p.push(cardinality(a));
-                    p.push(cardinality(b));
-                    blocks.push(p);
+                    auto p = N::Array{};
+                    element(p, integer(a));
+                    element(p, integer(b));
+                    element(blocks, p);
                 };
                 if (split) {
                     block(start, junction->donor);
                     block(junction->acceptor, junction->acceptor + sequence.size() - *split);
-                    m.set("junction", junction->declaration);
-                    m.set("query_split_in_reference_orientation", cardinality(*split));
+                    member(m, "junction", import_record_view(junction->declaration));
+                    member(m, "query_split_in_reference_orientation", integer(*split));
                 } else
                     block(start, start + sequence.size());
-                m.set("blocks", blocks);
-                matches.push(m);
+                member(m, "blocks", blocks);
+                const auto reference_index = static_cast<std::size_t>(&reference - references.data());
+                const auto junction_index = junction ? std::optional<std::size_t>(static_cast<std::size_t>(junction - junctions.data())) : std::nullopt;
+                PlacementSource placement{query_index, reference_index, junction_index,
+                    query_index, native_comparisons.elements.size(), {}};
+                if (split) {
+                    placement.blocks.emplace_back(start, junction->donor);
+                    placement.blocks.emplace_back(junction->acceptor, junction->acceptor + sequence.size() - *split);
+                } else placement.blocks.emplace_back(start, start + sequence.size());
+                placements.push_back(std::move(placement));
+                collection_mismatches.push_back(mismatch);
+                Vector original_disagreement(q.bases.size()), positions(q.bases.size()), permutation(q.bases.size());
+                for (std::size_t i = 0; i < q.bases.size(); ++i) {
+                    const auto original = strand == "+" ? i : q.bases.size() - 1 - i;
+                    original_disagreement[original] = disagreement[i];
+                    permutation[original] = Rational(std::to_string(i));
+                    positions[original] = Rational(std::to_string(split && i >= *split ? junction->acceptor + i - *split : start + i));
+                }
+                require(count_map.apply(original_disagreement).at(0) == mismatch,
+                        "original coordinate mismatch-count action changed");
+                N::Object operand;
+                member(operand, "disagreement", fields.field("placement.disagreement", 0, original_disagreement));
+                member(operand, "reference_positions", fields.field("placement.reference_positions", 0, positions));
+                member(operand, "oriented_positions", fields.field("placement.oriented_positions", 0, permutation));
+                member(operand, "reference_record", integer(reference_index));
+                member(operand, "count", fields.vector("placement.mismatch_count", scalar, Vector{mismatch}));
+                member(operand, "reverse", strand == "-");
+                member(m, "comparison_index", integer(native_comparisons.elements.size()));
+                element(native_comparisons, std::move(operand));
+                element(matches, m);
             };
             for (std::size_t r_index = 0; r_index < references.size(); ++r_index) {
                 const auto &r = references[r_index];
@@ -281,33 +348,65 @@ Json reference_matches(const ResourceImages &images, const Json &request) {
                 }
             }
         }
-        auto s = Json::object();
-        s.set("query_id", Json::string(q.id));
-        s.set("query_record_index", cardinality(query_index));
-        s.set("matches", cardinality(query_matches));
-        s.set("status", Json::string(query_matches ? "matched" : "no_match_in_declared_universe"));
-        summaries.push(s);
+        member(comparison_declaration, "comparisons", std::move(native_comparisons));
+        auto comparison_record = NativeRecord::create_from_endpoint(N(std::move(comparison_declaration)),
+            new_native_record_namespace(), {}, std::move(comparison_endpoint));
+        element(contexts, child_context(comparison_record));
+        element(children, archive_child(comparison_record, sources));
+        auto s = N::Object{};
+        member(s, "query_id", N(q.id));
+        member(s, "query_record_index", integer(query_index));
+        member(s, "matches", integer(query_matches));
+        member(s, "status", N(query_matches ? "matched" : "no_match_in_declared_universe"));
+        element(summaries, s);
     }
-    auto out = Json::object();
-    out.set("matches", matches);
-    out.set("queries", summaries);
-    out.set("tested_candidates", exact_count(candidates));
-    out.set("base_comparisons", exact_count(comparisons));
-    out.set("contiguous_candidate_universe", exact_count(contiguous_universe));
-    out.set("junction_candidate_universe", exact_count(junction_universe));
-    out.set("candidate_universe", exact_count(Integer(contiguous_universe + junction_universe)));
-    out.set("index", index.receipt());
-    out.set("compatibility_rule",
-            Json::string(ambiguity == "literal"    ? "equal_tokens"
+    auto out = N::Object{};
+    member(out, "matches", matches);
+    member(out, "queries", summaries);
+    member(out, "tested_candidates", N(candidates));
+    member(out, "base_comparisons", N(comparisons));
+    member(out, "contiguous_candidate_universe", N(contiguous_universe));
+    member(out, "junction_candidate_universe", N(junction_universe));
+    member(out, "candidate_universe", N(Integer(contiguous_universe + junction_universe)));
+    member(out, "index", import_record_view(index.receipt()));
+    member(out, "compatibility_rule",
+            N(ambiguity == "literal"    ? "equal_tokens"
                          : ambiguity == "possible" ? "nonempty_IUPAC_intersection"
                                                    : "query_IUPAC_set_contained_in_reference"));
-    out.set("complete", Json::boolean(true));
-    out.set("coordinate_convention", Json::string("zero_based_half_open"));
-    out.set(
+    member(out, "complete", N(true));
+    member(out, "coordinate_convention", N("zero_based_half_open"));
+    member(out,
         "search_universe",
-        Json::string(
+        N(
             "All contiguous placements and all single declared-junction placements, with specified "
             "strands, overhang, IUPAC rule and mismatch bound; no indels or undeclared junctions"));
+    auto result = collection_source("gadget.sequence.reference.fields.v1", request, qimage, rimage,
+        query_source, reference_source, placements, std::move(out), std::move(children), std::move(contexts), std::move(sources));
+    SourceGradeFields collection_fields(result.endpoint);
+    auto &declaration = std::get<N::Object>(result.declaration.data);
+    member(declaration, "mismatches", collection_fields.field("placement.mismatches", 1, collection_mismatches));
+    return result;
+}
+Json reference_match_fields_view(const NativeRecord &record) {
+    auto out = render_record_view(record.at("view"));
+    const auto &values = retained_tensor(record, record.at("mismatches")).tensor;
+    std::vector<NativeRecord> children;
+    children.reserve(record.at("children").size());
+    for (std::size_t i = 0; i < record.at("children").size(); ++i)
+        children.push_back(NativeRecord::decode(record.at("children").at(i).bytes()));
+    for (std::size_t i = 0; i < out.at("matches").size(); ++i) {
+        auto match = out.at("matches").at(i);
+        const auto coupling = record.at("placements").at(i);
+        const auto child = children.at(coupling.at("query_record").integer().get_ui());
+        const auto comparison = child.at("comparisons").at(coupling.at("operation_index").integer().get_ui());
+        const auto count = retained_tensor(child, comparison.at("count")).tensor.state(0).value();
+        require(count == values.state(i).value(), "placement count disagrees with its retained comparison");
+        json_object_object_del(match.raw(), "comparison_index");
+        match.set("mismatches", Json::string(count.get_str()));
+    }
     return out;
+}
+Json reference_matches(const ResourceImages &images, const Json &request) {
+    return reference_match_fields_view(sequence::source_record(reference_match_fields_source(images, request)));
 }
 } // namespace gadget::assay_detail

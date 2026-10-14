@@ -1643,7 +1643,11 @@ std::shared_ptr<const ScientificStudy> AssayWorkspace::study(const std::string &
 }
 Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> resources) const {
     if (request.has("operation") && (request.at("operation").text() == "read_protocol_evidence" ||
-                                    request.at("operation").text() == "query_batch"))
+                                    request.at("operation").text() == "query_batch" ||
+                                    request.at("operation").text() == "indexed_sequence_alignment" ||
+                                    request.at("operation").text() == "reference_sequence_matches" ||
+                                    request.at("operation").text() == "sequence_splice_discovery" ||
+                                    request.at("operation").text() == "read_overlap_reconstruction"))
         return render_record_view(execute_record(admit_record_view(request),
                                                 std::move(resources)).at("result"));
     members(request, {"schema", "operation"},
@@ -1848,11 +1852,7 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
                operation == "chromatin_contrast" ||
                operation == "controlled_coverage" || operation == "read_quality" ||
                operation == "exact_sequence_alignment" ||
-               operation == "reference_sequence_matches" ||
-               operation == "sequence_assembly_graph" ||
-               operation == "indexed_sequence_alignment" ||
-               operation == "sequence_splice_discovery" ||
-               operation == "read_overlap_reconstruction") {
+               operation == "sequence_assembly_graph") {
         ResourceImages images;
         const auto load = [&](const Json &id) {
             const auto name = text(id);
@@ -3012,7 +3012,9 @@ bool AssayWorkspace::supports_native_publication(std::string_view operation) noe
     return supports_native_materialization(operation) || operation == "interval_coverage" ||
            operation == "annotation_features" || operation == "sequence_motifs" ||
            operation == "read_protocol_evidence" || operation == "read_quality" ||
-           operation == "query_batch";
+           operation == "query_batch" || operation == "indexed_sequence_alignment" ||
+           operation == "reference_sequence_matches" || operation == "sequence_splice_discovery" ||
+           operation == "read_overlap_reconstruction";
 }
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
@@ -3021,6 +3023,42 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
         return query_batch_record(*this, request, resources);
     }
     const auto query = render_record_view(request);
+    if (query.has("operation") && (query.at("operation").text() == "indexed_sequence_alignment" ||
+                                   query.at("operation").text() == "reference_sequence_matches" ||
+                                   query.at("operation").text() == "sequence_splice_discovery" ||
+                                   query.at("operation").text() == "read_overlap_reconstruction")) {
+        using N = NativeRecordValue;
+        require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
+        if (!resources) resources = CpuResources::local();
+        auto reservation = resources->reserve(1);
+        ResourceImages images;
+        const auto load = [&](const Json &resource) {
+            const auto id = text(resource);
+            require(state_->physical.contains(id), "unknown physical resource");
+            if (images.contains(id)) return;
+            const auto item = state_->physical.at(id);
+            images.emplace(id, ResourceImage{item.at("declaration"), state_->artifact(item.at("original")), {}});
+        };
+        if (query.has("resource")) load(query.at("resource"));
+        else { load(query.at("query_resource")); load(query.at("reference_resource")); }
+        const auto operation = query.at("operation").text();
+        auto fields = operation == "indexed_sequence_alignment" ? indexed_alignment_fields_source(images, query)
+                    : operation == "reference_sequence_matches" ? reference_match_fields_source(images, query)
+                    : operation == "sequence_splice_discovery" ? splice_search_fields_source(images, query)
+                    : read_reconstruction_fields_source(images.at(query.at("resource").text()), query);
+        const auto key = rfc::machine::checked_size_add(fields.sources.size(), 1);
+        auto workspace = native_publication().archive_source(key); const auto bytes = workspace.bytes().size();
+        fields.sources.push_back(std::move(workspace));
+        N certificate(N::Object{{
+            {"schema", N(std::string("gadget.assay.result.native.v1"))},
+            {"query", import_record_view(query)}, {"source_digest", N(digest())},
+            {"result", std::move(fields.declaration)}, {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
+            {"arithmetic", N(std::string("rational"))},
+            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
+            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+        return retain_operation(std::move(fields.endpoint), new_native_record_namespace(),
+                                std::move(fields.sources), request, std::move(certificate));
+    }
     if (query.has("operation") && (query.at("operation").text() == "interval_coverage" ||
                                    query.at("operation").text() == "annotation_features" ||
                                    query.at("operation").text() == "sequence_motifs")) {

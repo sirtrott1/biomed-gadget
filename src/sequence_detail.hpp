@@ -1,5 +1,6 @@
 #pragma once
 #include "genomic_detail.hpp"
+#include "source_grade_fields.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -244,59 +245,243 @@ class Routes {
         return *prepared_costs_;
     }
 };
-inline Json realized_receipt(const rfc::core::RelationalComplex &source, const Routes &routes,
-                             const std::vector<std::uint32_t> &relations, std::size_t from,
-                             std::size_t to, const Rational &cost,
-                             rfc::path::RealizedPath *retained = nullptr) {
-    std::vector<rfc::path::TraversalStep> traversal;
-    for (auto e : relations)
-        traversal.push_back({e, Rational{1}});
-    auto p = rfc::path::realize(source, rfc::core::Grade{1}, std::move(traversal));
-    Vector demand(source.grade(rfc::core::Grade{0}).cell_count(), 0);
-    require(source.grade(rfc::core::Grade{0}).identities.at(from) == from + 1 &&
-                source.grade(rfc::core::Grade{0}).identities.at(to) == to + 1,
-            "native route coordinate declaration");
-    demand[from] -= 1;
-    demand[to] += 1;
-    require(p.boundary == demand && rfc::numeric::dot(routes.costs(), p.field) == cost,
-            "native ordered route realization/cost mismatch");
-    auto out = Json::object(), ordered = Json::array(), field = Json::array();
-    for (auto e : relations)
-        ordered.push(cardinality(e));
-    for (std::size_t e = 0; e < p.field.size(); ++e)
-        if (p.field[e] != 0) {
-            auto v = Json::object();
-            v.set("relation", cardinality(e));
-            v.set("coefficient", Json::string(p.field[e].get_str()));
-            field.push(v);
-        }
-    out.set("ordered_relations", ordered);
-    out.set("realized_field", field);
-    out.set("boundary_verified", Json::boolean(true));
-    out.set("cost_verified", Json::boolean(true));
-    if (retained)
-        *retained = std::move(p);
-    return out;
+using N = NativeRecordValue;
+inline std::vector<SequenceRecord> records(const SequenceSource &source) {
+    std::vector<SequenceRecord> result;
+    result.reserve(source.size());
+    for (std::size_t i = 0; i < source.size(); ++i) result.push_back(source.record(i));
+    return result;
 }
-inline Json carrier(const rfc::core::RelationalComplex &source, const Routes &routes) {
-    auto out = Json::object(), steps = Json::array();
+inline N integer(std::size_t value) { return N(rfc::numeric::Integer(std::to_string(value))); }
+template<class T> inline void member(N::Object &object, std::string key, T &&value) {
+    object.members.emplace_back(std::move(key), N(std::forward<T>(value)));
+}
+template<class T> inline void element(N::Array &array, T &&value) {
+    array.elements.emplace_back(std::forward<T>(value));
+}
+inline rfc::storage::TemporalEndpoint source_endpoint(const rfc::core::RelationalComplex &source) {
+    rfc::storage::TemporalEndpoint endpoint(source);
+    for (std::size_t k = 0; k < source.grade_count(); ++k)
+        endpoint.carriers.push_back({k + 1, rfc::storage::TemporalCarrierKind::SourceGrade,
+            rfc::core::Grade{static_cast<std::uint16_t>(k)}, {}, 0,
+            rfc::numeric::IndexDomain::linear(source.grade({static_cast<std::uint16_t>(k)}).cell_count())});
+    return endpoint;
+}
+inline AssayFieldsSource route_source(const rfc::core::RelationalComplex &source, const Routes &routes) {
+    auto endpoint = source_endpoint(source);
+    SourceGradeFields fields(endpoint);
+    N::Object declaration;
+    member(declaration, "costs", fields.field("route.cost", 1, routes.costs()));
+    return {std::move(endpoint), N(std::move(declaration)), {}};
+}
+inline N retain_route(SourceGradeFields &fields, const rfc::core::RelationalComplex &source,
+                      const Routes &routes, const std::vector<std::uint32_t> &relations,
+                      std::size_t from, std::size_t to, const Rational &cost,
+                      rfc::path::RealizedPath *retained = nullptr) {
+    std::vector<rfc::path::TraversalStep> traversal;
+    traversal.reserve(relations.size());
+    for (const auto e : relations) traversal.push_back({e, Rational{1}});
+    auto path = rfc::path::realize(source, rfc::core::Grade{1}, std::move(traversal));
+    Vector demand(source.grade({0}).cell_count(), Rational{0});
+    demand.at(from) -= 1; demand.at(to) += 1;
+    require(path.boundary == demand && rfc::numeric::dot(routes.costs(), path.field) == cost,
+            "native ordered route realization/cost mismatch");
+    N::Array ordered;
+    ordered.elements.reserve(relations.size());
+    for (const auto e : relations) element(ordered, integer(e));
+    N::Object result;
+    member(result, "ordered_relations", std::move(ordered));
+    member(result, "realized_field", fields.field("route.realization", 1, path.field));
+    member(result, "boundary", fields.field("route.boundary", 0, path.boundary));
+    member(result, "from_vertex", integer(from)); member(result, "to_vertex", integer(to));
+    member(result, "minimum_cost", cost);
+    if (retained) *retained = std::move(path);
+    return N(std::move(result));
+}
+inline Json retained_route_view(const NativeRecord &record) {
+    auto result = Json::object(), values = Json::array();
+    result.set("ordered_relations", render_record_view(record.at("ordered_relations")));
+    const auto &field = retained_tensor(record, record.at("realized_field")).tensor;
+    for (std::size_t e = 0; e < field.domain().logical_size(); ++e) {
+        const auto value = field.state(e);
+        if (value && *value != 0) {
+            auto row = Json::object(); row.set("relation", cardinality(e));
+            row.set("coefficient", Json::string(value->get_str())); values.push(row);
+        }
+    }
+    result.set("realized_field", values);
+    result.set("boundary_verified", Json::boolean(true));
+    result.set("cost_verified", Json::boolean(true));
+    return result;
+}
+inline Json carrier_fields_view(const NativeRecord &record, bool extras = true) {
+    const auto &source = record.endpoint()->source;
+    const auto &arena = source.grade({1});
+    const auto &costs = retained_tensor(record, record.at("costs")).tensor;
+    auto result = Json::object(), steps = Json::array();
+    for (std::size_t e = 0; e < arena.cell_count(); ++e) {
+        const auto range = arena.incidence_range(e);
+        require(range.second - range.first == 2, "native route occurrence arity");
+        auto step = Json::array();
+        step.push(cardinality(arena.lower_index.at(range.first)));
+        step.push(cardinality(arena.lower_index.at(range.first + 1)));
+        step.push(Json::string(costs.state(e).value().get_str())); steps.push(step);
+    }
     const auto bytes = rfc::storage::encode_native_series(rfc::storage::NativeTemporalSeries(
         rfc::storage::TemporalEndpoint(source), 1, source_codec_limits(source_byte_limit())));
-    for (const auto &s : routes.steps) {
-        auto row = Json::array();
-        row.push(cardinality(s.from));
-        row.push(cardinality(s.to));
-        row.push(Json::string(s.cost.get_str()));
-        steps.push(row);
+    result.set("steps", steps);
+    result.set("native_complex_sha256", Json::string("sha256:" + sha256(
+        std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size()))));
+    result.set("vertices", cardinality(source.grade({0}).cell_count()));
+    result.set("coordinate_rule", Json::string("vertex v has native identity v+1; step e has relation "
+                                             "identity 1000000+e and occurrences 2e+1,2e+2"));
+    if (extras && record.has("view")) {
+        const auto extras = render_record_view(record.at("view"));
+        for (const auto &name : record.at("view").names()) result.set(name, extras.at(name));
     }
-    out.set("steps", steps);
-    out.set("native_complex_sha256",
-            Json::string(
-                "sha256:" +
-                sha256(std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size()))));
-    out.set("vertices", cardinality(source.grade(rfc::core::Grade{0}).cell_count()));
-    out.set("coordinate_rule", Json::string("vertex v has native identity v+1; step e has relation "
-                                            "identity 1000000+e and occurrences 2e+1,2e+2"));
-    return out;
+    return result;
+}
+inline NativeRecord source_record(AssayFieldsSource fields) {
+    return NativeRecord::create_from_endpoint(std::move(fields.declaration), new_native_record_namespace(),
+                                              std::move(fields.sources), std::move(fields.endpoint));
+}
+// Keep the complete parent publication for original byte context when selecting child fields.
+inline N archive_child(const NativeRecord &child, std::vector<RawByteSource> &sources) {
+    const auto key = rfc::machine::checked_size_add(sources.size(), 1);
+    auto bytes = child.archive_source(key); const auto size = bytes.bytes().size();
+    sources.push_back(std::move(bytes));
+    return N(N::ByteSpan{key, 0, size, false});
+}
+inline N child_context(const NativeRecord &child) {
+    N::Object result;
+    member(result, "source_namespace", integer(child.source_namespace()));
+    member(result, "cutoff", integer(child.endpoint()->sequence));
+    N::Array carriers;
+    for (const auto &carrier : child.endpoint()->carriers) {
+        N::Object row;
+        member(row, "key", integer(carrier.key)); member(row, "coordinate_system", integer(carrier.coordinate_system));
+        member(row, "grade", integer(carrier.grade.value));
+        element(carriers, std::move(row));
+    }
+    member(result, "carriers", std::move(carriers));
+    for (const auto name : {"costs", "count_map"})
+        if (child.has(name)) member(result, name, child.at(name).materialize_value());
+    const auto name = child.has("comparisons") ? "comparisons" : "routes";
+    member(result, "operation_family", std::string(name));
+    N::Array operations;
+    if (child.has(name)) for (std::size_t i = 0; i < child.at(name).size(); ++i) {
+        N::Object row;
+        const auto operation = child.at(name).at(i);
+        for (const auto key : {"realized_field", "boundary", "disagreement", "reference_positions", "oriented_positions", "count"})
+            if (operation.has(key)) member(row, key, operation.at(key).materialize_value());
+        element(operations, std::move(row));
+    }
+    member(result, "operations", std::move(operations));
+    return N(std::move(result));
+}
+inline N original_records(const SequenceSource &source, std::uint64_t key,
+                          std::optional<std::size_t> cell_offset = {}) {
+    N::Array rows;
+    rows.elements.reserve(source.size());
+    for (std::size_t i = 0; i < source.size(); ++i) {
+        const auto &span = source.original_span(i);
+        N row(N::Object{{{"id", N(N::ByteSpan{key, span.id_start, span.id_length})},
+            {"record_index", integer(i)}, {"length", integer(source.length(i))},
+            {"bytes", N(N::ByteSpan{key, span.start, span.end - span.start, false})},
+            {"evidence", import_record_view(source.evidence(i))}}});
+        if (cell_offset) row = N(N::Owned{0, rfc::storage::StableCellKey{{0}, *cell_offset + i + 1}, {},
+            std::make_shared<const N>(std::move(row))});
+        element(rows, std::move(row));
+    }
+    return N(std::move(rows));
+}
+inline N original_bases(const SequenceSource &source, std::uint64_t key,
+                        std::size_t record, std::size_t begin, std::size_t length) {
+    N::Array spans;
+    for (const auto &[offset, count] : source.byte_spans(record, begin, length))
+        element(spans, N(N::ByteSpan{key, offset, count}));
+    return N(std::move(spans));
+}
+struct PlacementSource {
+    std::size_t query, reference;
+    std::optional<std::size_t> junction;
+    std::size_t child, operation;
+    std::vector<std::pair<std::size_t, std::size_t>> blocks;
+};
+inline AssayFieldsSource collection_source(const std::string &schema, const Json &request,
+    const ResourceImage &queries, const ResourceImage &references,
+    const SequenceSource &query_source, const SequenceSource &reference_source,
+    const std::vector<PlacementSource> &placements, N::Object view, N::Array children, N::Array contexts,
+    std::vector<RawByteSource> sources) {
+    rfc::core::RelationSignature signature;
+    const auto qrole = signature.aspects().add("query"), rrole = signature.aspects().add("reference"),
+               jrole = signature.aspects().add("junction");
+    const auto type = signature.add_type("sequence.returned_placement", rfc::core::BoundaryPolicy::DeclaredExact, 2, 3);
+    const auto junctions = request.has("junctions") ? request.at("junctions").size() : 0;
+    rfc::core::RelationalComplexBuilder builder(signature); builder.declare_grade({1});
+    const auto records = rfc::machine::checked_size_add(query_source.size(), reference_source.size());
+    const auto total = rfc::machine::checked_size_add(records, junctions);
+    for (std::size_t i = 0; i < total; ++i) builder.declare_witness_identity(i + 1);
+    std::uint64_t occurrence = 1;
+    for (std::size_t i = 0; i < placements.size(); ++i) {
+        const auto &p = placements[i];
+        std::vector<rfc::core::BoundaryOccurrenceInput> participants;
+        participants.push_back({p.query + 1, true, false, Rational{1}, {{qrole, true}}, rfc::core::OccurrenceKey{occurrence++}});
+        participants.push_back({query_source.size() + p.reference + 1, true, false, Rational{1}, {{rrole, true}}, rfc::core::OccurrenceKey{occurrence++}});
+        if (p.junction) participants.push_back({records + *p.junction + 1, true, false, Rational{1}, {{jrole, true}}, rfc::core::OccurrenceKey{occurrence++}});
+        builder.add_grade_one(rfc::core::RelationKey{i + 1}, type, std::move(participants));
+    }
+    N::Object declaration;
+    N::Array couplings;
+    couplings.elements.reserve(placements.size());
+    for (std::size_t i = 0; i < placements.size(); ++i) {
+        const auto &p = placements[i];
+        N::Object coupling;
+        member(coupling, "query_record", integer(p.query));
+        member(coupling, "reference_record", integer(p.reference));
+        member(coupling, "query_bases", original_bases(query_source, 1, p.query, 0, query_source.length(p.query)));
+        N::Array blocks;
+        for (const auto &[begin, end] : p.blocks) {
+            N::Object block;
+            member(block, "begin", integer(begin)); member(block, "end", integer(end));
+            member(block, "bytes", original_bases(reference_source, 2, p.reference, begin, end - begin));
+            element(blocks, std::move(block));
+        }
+        member(coupling, "reference_blocks", std::move(blocks));
+        member(coupling, "child_publication", children.elements.at(p.child));
+        member(coupling, "child_context", integer(p.child));
+        member(coupling, "operation_index", integer(p.operation));
+        element(couplings, N(N::Owned{0, rfc::storage::StableCellKey{{1}, i + 1}, {},
+            std::make_shared<const N>(std::move(coupling))}));
+    }
+    member(declaration, "schema", schema); member(declaration, "protocol", import_record_view(request));
+    member(declaration, "queries", original_records(query_source, 1, 0));
+    member(declaration, "references", original_records(reference_source, 2, query_source.size()));
+    member(declaration, "query_bytes", N(N::ByteSpan{1, 0, queries.bytes.size(), false}));
+    member(declaration, "reference_bytes", N(N::ByteSpan{2, 0, references.bytes.size(), false}));
+    if (request.has("junctions")) member(declaration, "junctions", import_record_view(request.at("junctions")));
+    member(declaration, "children", std::move(children)); member(declaration, "view", std::move(view));
+    member(declaration, "placements", std::move(couplings));
+    member(declaration, "child_contexts", std::move(contexts));
+    return {source_endpoint(builder.freeze()), N(std::move(declaration)), std::move(sources)};
+}
+inline Json routed_collection_view(const NativeRecord &record) {
+    auto result = render_record_view(record.at("view")), carriers = Json::array();
+    const auto matches = record.at("view").at("matches"), children = record.at("children");
+    std::vector<std::vector<std::size_t>> indices(children.size());
+    for (std::size_t i = 0; i < matches.size(); ++i)
+        indices.at(matches.at(i).at("carrier").integer().get_ui()).push_back(i);
+    for (std::size_t c = 0; c < children.size(); ++c) {
+        const auto child = NativeRecord::decode(children.at(c).bytes());
+        carriers.push(carrier_fields_view(child));
+        for (const auto i : indices[c]) {
+            const auto route = matches.at(i).at("route_index").integer().get_ui();
+            auto match = result.at("matches").at(i);
+            json_object_object_del(match.raw(), "route_index");
+            match.set("route", retained_route_view(child.at("routes").at(route)));
+        }
+    }
+    result.set("carriers", carriers);
+    return result;
 }
 } // namespace gadget::assay_detail::sequence

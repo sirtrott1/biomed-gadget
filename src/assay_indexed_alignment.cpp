@@ -1,7 +1,7 @@
 #include "sequence_detail.hpp"
 
 namespace gadget::assay_detail {
-Json indexed_alignment(const ResourceImages &images, const Json &request) {
+AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, const Json &request) {
     using namespace sequence;
     members(request,
             {"schema", "operation", "query_resource", "reference_resource", "strands",
@@ -13,7 +13,8 @@ Json indexed_alignment(const ResourceImages &images, const Json &request) {
     const auto errors = count(request.at("maximum_edits"), std::numeric_limits<std::size_t>::max(),
                               "indexed edit budget");
     const auto orientations = strands(request);
-    const SequenceSource queries(images.at(text(request.at("query_resource"))));
+    const auto &query_image = images.at(text(request.at("query_resource")));
+    const SequenceSource queries(query_image);
     const auto &image = images.at(text(request.at("reference_resource")));
     const SequenceSource refs(image);
     reference_frame(image, refs);
@@ -34,7 +35,10 @@ Json indexed_alignment(const ResourceImages &images, const Json &request) {
         std::string strand, bases;
         std::vector<std::pair<std::size_t, std::string>> seeds;
     };
-    auto matches = Json::array(), carriers = Json::array(), summaries = Json::array();
+    N::Array matches, children, summaries, contexts;
+    std::vector<PlacementSource> placements;
+    std::vector<RawByteSource> sources{RawByteSource(1, std::as_bytes(std::span(query_image.bytes))),
+                                     RawByteSource(2, std::as_bytes(std::span(image.bytes)))};
     std::vector<std::size_t> query_matches(queries.size());
     std::size_t candidate_count = 0, vertex_count = 0, relation_count = 0, native_calls = 0;
     std::size_t scans = 0, seed_hits = 0, blocks = 0, partitions = 0, peak_block = 0;
@@ -157,7 +161,9 @@ Json indexed_alignment(const ResourceImages &images, const Json &request) {
                 const auto source = routes.freeze();
                 const auto graph = rfc::view::project_pairwise_directed(source, routes.costs());
                 const auto origin = coordinates.at({0, 0});
-                auto accepted = Json::array();
+                auto native = route_source(source, routes);
+                SourceGradeFields fields(native.endpoint);
+                N::Array accepted, native_routes;
                 for (std::size_t length = q.bases.size() - errors; length <= width; ++length) {
                     const auto target = coordinates.at({q.bases.size(), length});
                     native_calls = rfc::machine::checked_size_add(native_calls, 1);
@@ -166,99 +172,119 @@ Json indexed_alignment(const ResourceImages &images, const Json &request) {
                     if (!route.reachable ||
                         route.distance > Rational{static_cast<unsigned long>(errors)})
                         continue;
-                    auto m = Json::object();
+                    auto m = N::Object{};
                     std::string aligned_query, aligned_reference;
                     for (auto e : route.relations) {
                         const auto [i, j] = positions[routes.steps[e].from];
                         aligned_query += operations[e] == 'D' ? '-' : q.bases[i];
                         aligned_reference += operations[e] == 'I' ? '-' : reference[j];
                     }
-                    m.set("query_id", Json::string(queries.id(q.read)));
-                    m.set("query_record_index", cardinality(q.read));
-                    m.set("reference_id", Json::string(refs.id(r)));
-                    m.set("strand", Json::string(q.strand));
-                    m.set("start", cardinality(start));
-                    m.set("end", cardinality(start + length));
-                    m.set("minimum_edits", Json::string(route.distance.get_str()));
-                    m.set("aligned_query", Json::string(aligned_query));
-                    m.set("aligned_reference", Json::string(aligned_reference));
-                    m.set("query_evidence", queries.evidence(q.read));
-                    m.set("reference_evidence", refs.evidence(r));
-                    m.set("route", realized_receipt(source, routes, route.relations, origin, target,
-                                                    route.distance));
-                    accepted.push(m);
+                    member(m, "query_id", N(queries.id(q.read)));
+                    member(m, "query_record_index", integer(q.read));
+                    member(m, "reference_id", N(refs.id(r)));
+                    member(m, "strand", N(q.strand));
+                    member(m, "start", integer(start));
+                    member(m, "end", integer(start + length));
+                    member(m, "minimum_edits", N(route.distance));
+                    member(m, "aligned_query", N(aligned_query));
+                    member(m, "aligned_reference", N(aligned_reference));
+                    member(m, "query_evidence", import_record_view(queries.evidence(q.read)));
+                    member(m, "reference_evidence", import_record_view(refs.evidence(r)));
+                    member(m, "route_index", integer(native_routes.elements.size()));
+                    element(native_routes, retain_route(fields, source, routes, route.relations, origin, target, route.distance));
+                    element(accepted, m);
                     query_matches[q.read] =
                         rfc::machine::checked_size_add(query_matches[q.read], 1);
                 }
-                if (accepted.size() == 0)
+                if (accepted.elements.empty())
                     continue;
-                auto c = carrier(source, routes), coords = Json::array();
+                N::Object c;
+                N::Array coords;
                 for (const auto &[i, j] : positions) {
-                    auto row = Json::array();
-                    row.push(cardinality(i));
-                    row.push(cardinality(j));
-                    coords.push(row);
+                    auto row = N::Array{};
+                    element(row, integer(i));
+                    element(row, integer(j));
+                    element(coords, row);
                 }
-                c.set("prefix_coordinates", coords);
-                c.set("reference_start", cardinality(start));
-                const auto carrier_index = carriers.size();
-                carriers.push(c);
-                for (std::size_t i = 0; i < accepted.size(); ++i) {
-                    auto m = accepted.at(i);
-                    m.set("carrier", cardinality(carrier_index));
-                    matches.push(m);
+                member(c, "prefix_coordinates", coords);
+                member(c, "reference_start", integer(start));
+                const auto carrier_index = children.elements.size();
+                auto &declaration = std::get<N::Object>(native.declaration.data);
+                member(declaration, "view", std::move(c));
+                member(declaration, "routes", std::move(native_routes));
+                member(declaration, "query_prefix", fields.column("query.prefix", 0, positions.size(), [&](auto v) { return Rational(std::to_string(positions[v].first)); }));
+                member(declaration, "reference_prefix", fields.column("reference.prefix", 0, positions.size(), [&](auto v) { return Rational(std::to_string(positions[v].second)); }));
+                N::Array codes; for (auto code : operations) element(codes, std::string(1, code));
+                member(declaration, "operations", std::move(codes));
+                const auto child = source_record(std::move(native));
+                element(contexts, child_context(child));
+                element(children, archive_child(child, sources));
+                for (std::size_t i = 0; i < accepted.elements.size(); ++i) {
+                    auto m = std::get<N::Object>(std::move(accepted.elements[i].data));
+                    const auto end = std::get<rfc::numeric::Integer>(
+                        std::find_if(m.members.begin(), m.members.end(),
+                            [](const auto &entry) { return entry.first == "end"; })->second.data).get_ui();
+                    placements.push_back({q.read, r, {}, carrier_index, i, {{start, end}}});
+                    member(m, "carrier", integer(carrier_index));
+                    element(matches, m);
                 }
             }
         }
         begin = end;
     }
     for (std::size_t q = 0; q < queries.size(); ++q) {
-        auto row = Json::object();
-        row.set("query_id", Json::string(queries.id(q)));
-        row.set("query_record_index", cardinality(q));
-        row.set("matches", cardinality(query_matches[q]));
-        summaries.push(row);
+        auto row = N::Object{};
+        member(row, "query_id", N(queries.id(q)));
+        member(row, "query_record_index", integer(q));
+        member(row, "matches", integer(query_matches[q]));
+        element(summaries, row);
     }
-    auto out = Json::object(), work = Json::object();
-    work.set("reference_base_visits", cardinality(scans));
-    work.set("retained_seed_hits", cardinality(seed_hits));
-    work.set("seed_lengths", cardinality(seed_lengths.size()));
-    work.set("key_encoding", Json::string("injective_two_bit_DNA"));
-    work.set("reference_blocks", cardinality(blocks));
-    work.set("read_partitions", cardinality(partitions));
-    work.set("read_partition_records", cardinality(partition_records));
-    work.set("reference_block_bases", cardinality(block_bases));
-    work.set("peak_partition_reads", cardinality(peak_queries));
-    work.set("peak_oriented_query_bases", cardinality(peak_query_bases));
-    work.set("peak_normalized_reference_block_bases", cardinality(peak_block));
-    work.set("peak_normalized_candidate_window_bases", cardinality(peak_window));
-    work.set("source_layout",
-             Json::string("Original byte spans and sequence coordinates; seed state "
+    auto out = N::Object{}, work = N::Object{};
+    member(work, "reference_base_visits", integer(scans));
+    member(work, "retained_seed_hits", integer(seed_hits));
+    member(work, "seed_lengths", integer(seed_lengths.size()));
+    member(work, "key_encoding", N("injective_two_bit_DNA"));
+    member(work, "reference_blocks", integer(blocks));
+    member(work, "read_partitions", integer(partitions));
+    member(work, "read_partition_records", integer(partition_records));
+    member(work, "reference_block_bases", integer(block_bases));
+    member(work, "peak_partition_reads", integer(peak_queries));
+    member(work, "peak_oriented_query_bases", integer(peak_query_bases));
+    member(work, "peak_normalized_reference_block_bases", integer(peak_block));
+    member(work, "peak_normalized_candidate_window_bases", integer(peak_window));
+    member(work, "source_layout",
+             N("Original byte spans and sequence coordinates; seed state "
                           "continues across blocks and source lines, and resets at record "
                           "boundaries and ambiguity."));
-    work.set("candidate_starts", cardinality(candidate_count));
-    work.set("route_vertices", cardinality(vertex_count));
-    work.set("route_relations", cardinality(relation_count));
-    work.set("native_route_calls", cardinality(native_calls));
-    out.set("matches", matches);
-    out.set("queries", summaries);
-    out.set("carriers", carriers);
-    out.set("work", work);
-    out.set("complete", Json::boolean(true));
-    out.set("coordinate_convention", Json::string("zero_based_half_open"));
-    out.set("optimality",
-            Json::string("rfc::path::dijkstra_exact on every admitted candidate endpoint"));
-    out.set("completeness_argument",
-            Json::string(
+    member(work, "candidate_starts", integer(candidate_count));
+    member(work, "route_vertices", integer(vertex_count));
+    member(work, "route_relations", integer(relation_count));
+    member(work, "native_route_calls", integer(native_calls));
+    member(out, "matches", matches);
+    member(out, "queries", summaries);
+    member(out, "work", work);
+    member(out, "complete", N(true));
+    member(out, "coordinate_convention", N("zero_based_half_open"));
+    member(out, "optimality",
+            N("rfc::path::dijkstra_exact on every admitted candidate endpoint"));
+    member(out, "completeness_argument",
+            N(
                 "At most e edits disrupt at most e of e+1 disjoint nonempty seeds. A surviving "
                 "seed locates the start within e bases of its query offset. Every path of cost at "
                 "most e has |query_prefix-reference_prefix|<=e; omitted vertices cannot belong to "
                 "an admitted path. Every nonempty endpoint length from m-e to m+e is tested."));
-    out.set(
+    member(out,
         "search_universe",
-        Json::string("All nonempty contiguous reference substrings on the specified strands, with "
+        N("All nonempty contiguous reference substrings on the specified strands, with "
                      "a full literal ACGT query and unit-cost substitution, insertion and deletion "
                      "budget. One exact minimizing edit history is retained per placement."));
-    return out;
+    return collection_source("gadget.sequence.indexed.fields.v1", request, query_image, image, queries, refs,
+                             placements, std::move(out), std::move(children), std::move(contexts), std::move(sources));
+}
+Json indexed_alignment_fields_view(const NativeRecord &record) {
+    return sequence::routed_collection_view(record);
+}
+Json indexed_alignment(const ResourceImages &images, const Json &request) {
+    return indexed_alignment_fields_view(sequence::source_record(indexed_alignment_fields_source(images, request)));
 }
 } // namespace gadget::assay_detail

@@ -1,7 +1,7 @@
 #include "sequence_detail.hpp"
 
 namespace gadget::assay_detail {
-Json splice_search(const ResourceImages &images, const Json &request) {
+AssayFieldsSource splice_search_fields_source(const ResourceImages &images, const Json &request) {
     using namespace sequence;
     members(request, {"schema", "operation", "query_resource", "reference_resource", "strands",
                       "minimum_exon_bases", "minimum_intron_bases", "maximum_intron_bases",
@@ -30,9 +30,12 @@ Json splice_search(const ResourceImages &images, const Json &request) {
         require(motifs.insert(motif).second, "duplicate splice motif");
     }
     require(!motifs.empty(), "splice motif count");
-    const auto queries = sequence_records(images.at(text(request.at("query_resource"))));
+    const auto &query_image = images.at(text(request.at("query_resource")));
+    const SequenceSource query_source(query_image);
+    const auto queries = records(query_source);
     const auto &reference_image = images.at(text(request.at("reference_resource")));
-    const auto refs = sequence_records(reference_image);
+    const SequenceSource reference_source(reference_image);
+    const auto refs = records(reference_source);
     reference_frame(reference_image, refs);
     require(!queries.empty(), "splice query count");
     struct Query {
@@ -62,7 +65,10 @@ Json splice_search(const ResourceImages &images, const Json &request) {
         std::size_t relation, next;
         std::string motif;
     };
-    auto matches = Json::array(), carriers = Json::array(), summaries = Json::array();
+    N::Array matches, children, summaries, contexts;
+    std::vector<PlacementSource> placements;
+    std::vector<RawByteSource> sources{RawByteSource(1, std::as_bytes(std::span(query_image.bytes))),
+                                     RawByteSource(2, std::as_bytes(std::span(reference_image.bytes)))};
     std::vector<std::size_t> counts(queries.size());
     rfc::numeric::Integer total_exons{0}, total_links{0}, visits{0};
     for (const auto &q : oriented) {
@@ -136,59 +142,67 @@ Json splice_search(const ResourceImages &images, const Json &request) {
         const auto graph = rfc::view::project_pairwise_directed(source, routes.costs());
         const auto optimum =
             rfc::path::dijkstra_exact(graph, graph.object_index(1), graph.object_index(sink + 1));
-        auto c = carrier(source, routes), exon_records = Json::array();
+        auto native = route_source(source, routes);
+        SourceGradeFields fields(native.endpoint);
+        N::Object c;
+        N::Array exon_records, native_routes;
         for (const auto &exon : exons) {
-            auto row = Json::object();
-            row.set("reference_id", Json::string(refs[exon.reference].id));
-            row.set("query_begin", cardinality(exon.begin));
-            row.set("query_end", cardinality(exon.end));
-            row.set("start", cardinality(exon.start));
-            row.set("end", cardinality(exon.start + exon.end - exon.begin));
-            exon_records.push(row);
+            auto row = N::Object{};
+            member(row, "reference_id", N(refs[exon.reference].id));
+            member(row, "query_begin", integer(exon.begin));
+            member(row, "query_end", integer(exon.end));
+            member(row, "start", integer(exon.start));
+            member(row, "end", integer(exon.start + exon.end - exon.begin));
+            element(exon_records, row);
         }
-        c.set("exons", exon_records);
-        c.set("source_vertex", cardinality(0));
-        c.set("sink_vertex", cardinality(sink));
-        c.set("minimum_junctions",
-              optimum.reachable ? Json::string(optimum.distance.get_str()) : Json{});
-        const auto carrier_index = carriers.size();
-        carriers.push(c);
+        member(c, "exons", exon_records);
+        member(c, "source_vertex", integer(0));
+        member(c, "sink_vertex", integer(sink));
+        member(c, "minimum_junctions",
+              optimum.reachable ? N(optimum.distance) : N{});
+        const auto carrier_index = children.elements.size();
         std::vector<std::size_t> chain;
         std::vector<std::uint32_t> ordered;
         std::vector<std::string> chain_motifs;
         const auto emit = [&]() {
-            auto m = Json::object(), blocks = Json::array(), junctions = Json::array();
+            auto m = N::Object{}; auto blocks = N::Array{}, junctions = N::Array{};
             std::string spelling;
             for (std::size_t i = 0; i < chain.size(); ++i) {
                 const auto &e = exons[chain[i]];
-                auto b = exon_records.at(chain[i]);
-                b.set("exon_identity", cardinality(chain[i]));
-                blocks.push(b);
+                auto b = std::get<N::Object>(exon_records.elements.at(chain[i]).data);
+                member(b, "exon_identity", integer(chain[i]));
+                element(blocks, b);
                 spelling += refs[e.reference].bases.substr(e.start, e.end - e.begin);
                 if (i) {
                     const auto &left = exons[chain[i - 1]];
-                    auto j = Json::object();
-                    j.set("donor", cardinality(left.start + left.end - left.begin));
-                    j.set("acceptor", cardinality(e.start));
-                    j.set("motif", Json::string(chain_motifs[i - 1]));
-                    j.set("origin", Json::string("reference_sequence_and_exact_exon_match"));
-                    junctions.push(j);
+                    auto j = N::Object{};
+                    member(j, "donor", integer(left.start + left.end - left.begin));
+                    member(j, "acceptor", integer(e.start));
+                    member(j, "motif", N(chain_motifs[i - 1]));
+                    member(j, "origin", N("reference_sequence_and_exact_exon_match"));
+                    element(junctions, j);
                 }
             }
             require(spelling == q.bases, "splice exon gluing must reconstruct the entire query");
-            m.set("query_id", Json::string(queries[q.read].id));
-            m.set("query_record_index", cardinality(q.read));
-            m.set("reference_id", Json::string(refs[exons[chain.front()].reference].id));
-            m.set("strand", Json::string(q.strand));
-            m.set("blocks", blocks);
-            m.set("junctions", junctions);
-            m.set("query_evidence", queries[q.read].evidence);
-            m.set("reference_evidence", refs[exons[chain.front()].reference].evidence);
-            m.set("carrier", cardinality(carrier_index));
-            m.set("route", realized_receipt(source, routes, ordered, 0, sink,
-                                            Rational{std::to_string(junctions.size())}));
-            m.set("query_reconstruction_verified", Json::boolean(true));
-            matches.push(m);
+            member(m, "query_id", N(queries[q.read].id));
+            member(m, "query_record_index", integer(q.read));
+            member(m, "reference_id", N(refs[exons[chain.front()].reference].id));
+            member(m, "strand", N(q.strand));
+            member(m, "blocks", blocks);
+            member(m, "junctions", junctions);
+            member(m, "query_evidence", import_record_view(queries[q.read].evidence));
+            member(m, "reference_evidence", import_record_view(refs[exons[chain.front()].reference].evidence));
+            member(m, "carrier", integer(carrier_index));
+            member(m, "route_index", integer(native_routes.elements.size()));
+            element(native_routes, retain_route(fields, source, routes, ordered, 0, sink,
+                                                Rational{std::to_string(junctions.elements.size())}));
+            PlacementSource placement{q.read, exons[chain.front()].reference, {},
+                carrier_index, native_routes.elements.size() - 1, {}};
+            for (const auto e : chain) placement.blocks.emplace_back(
+                exons[e].start, exons[e].start + exons[e].end - exons[e].begin);
+            placements.push_back(std::move(placement));
+            member(m, "query_reconstruction_verified", N(true));
+            element(matches, m);
             ++counts[q.read];
         };
         // Enumerate biological exon-chain declarations, preserving all ties.
@@ -230,38 +244,72 @@ Json splice_search(const ResourceImages &images, const Json &request) {
             }
             ordered.pop_back();
         }
+        auto &declaration = std::get<N::Object>(native.declaration.data);
+        member(declaration, "view", std::move(c)); member(declaration, "routes", std::move(native_routes));
+        member(declaration, "query_record", integer(q.read)); member(declaration, "strand", q.strand);
+        std::vector<std::size_t> support;
+        for (std::size_t e = 0; e < exons.size(); ++e) support.push_back(e + 1);
+        const auto reported = rfc::numeric::StructuralSupport::sparse(source.grade({0}).cell_count(), support);
+        member(declaration, "query_begin", fields.column("exon.query_begin", 0, source.grade({0}).cell_count(),
+            [&](auto i) { return Rational(std::to_string(exons.at(i - 1).begin)); }, reported));
+        member(declaration, "query_end", fields.column("exon.query_end", 0, source.grade({0}).cell_count(),
+            [&](auto i) { return Rational(std::to_string(exons.at(i - 1).end)); }, reported));
+        member(declaration, "reference_record", fields.column("exon.reference_record", 0, source.grade({0}).cell_count(),
+            [&](auto i) { return Rational(std::to_string(exons.at(i - 1).reference)); }, reported));
+        member(declaration, "reference_start", fields.column("exon.reference_start", 0, source.grade({0}).cell_count(),
+            [&](auto i) { return Rational(std::to_string(exons.at(i - 1).start)); }, reported));
+        const auto child = source_record(std::move(native));
+        element(contexts, child_context(child));
+        element(children, archive_child(child, sources));
     }
     for (std::size_t q = 0; q < queries.size(); ++q) {
-        auto s = Json::object();
-        s.set("query_id", Json::string(queries[q].id));
-        s.set("query_record_index", cardinality(q));
-        s.set("matches", cardinality(counts[q]));
-        summaries.push(s);
+        auto s = N::Object{};
+        member(s, "query_id", N(queries[q].id));
+        member(s, "query_record_index", integer(q));
+        member(s, "matches", integer(counts[q]));
+        element(summaries, s);
     }
-    auto out = Json::object(), work = index.receipt();
-    work.set("exon_candidates", exact_count(total_exons));
-    work.set("splice_transitions", exact_count(total_links));
-    work.set("candidate_and_enumeration_visits", exact_count(visits));
-    out.set("matches", matches);
-    out.set("queries", summaries);
-    out.set("carriers", carriers);
-    out.set("work", work);
-    out.set("complete", Json::boolean(true));
-    out.set("coordinate_convention", Json::string("zero_based_half_open_reference_orientation"));
-    out.set(
+    N::Object out;
+    const auto index_view = index.receipt();
+    auto work = std::get<N::Object>(import_record_view(index_view).data);
+    member(work, "exon_candidates", N(total_exons));
+    member(work, "splice_transitions", N(total_links));
+    member(work, "candidate_and_enumeration_visits", N(visits));
+    member(out, "matches", matches);
+    member(out, "queries", summaries);
+    member(out, "work", work);
+    member(out, "complete", N(true));
+    member(out, "coordinate_convention", N("zero_based_half_open_reference_orientation"));
+    member(out,
         "search_universe",
-        Json::string("All exact literal ACGT exon chains in the retained reference on the "
+        N("All exact literal ACGT exon chains in the retained reference on the "
                      "specified strands, including unspliced placements, with declared exon/intron "
                      "lengths, transcript-oriented boundary motifs and junction-count limit. "
                      "Junctions are discovered from sequence; no annotation is required."));
-    out.set(
+    member(out,
         "completeness_argument",
-        Json::string(
+        N(
             "Every admitted exon starts with an indexed exact seed within the declared overhang. "
             "The full overhang and all matching extensions of "
             "that overhang are retained. Every ordered exon pair meeting the query-coordinate, "
             "reference-gap and motif constraints is declared. All complete chains through at most "
             "the declared number of junctions are enumerated, without partial truncation."));
-    return out;
+    return collection_source("gadget.sequence.splice.fields.v1", request, query_image, reference_image, query_source, reference_source,
+                             placements, std::move(out), std::move(children), std::move(contexts), std::move(sources));
+}
+Json splice_search_fields_view(const NativeRecord &record) {
+    auto result = sequence::routed_collection_view(record);
+    for (std::size_t i = 0; i < result.at("matches").size(); ++i) {
+        const auto match = result.at("matches").at(i);
+        const auto exons = result.at("carriers").at(match.at("carrier").integer()).at("exons");
+        for (std::size_t b = 0; b < match.at("blocks").size(); ++b) {
+            const auto identity = match.at("blocks").at(b).at("exon_identity");
+            exons.at(identity.integer()).set("exon_identity", identity);
+        }
+    }
+    return result;
+}
+Json splice_search(const ResourceImages &images, const Json &request) {
+    return splice_search_fields_view(sequence::source_record(splice_search_fields_source(images, request)));
 }
 } // namespace gadget::assay_detail
