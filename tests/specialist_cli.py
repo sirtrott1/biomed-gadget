@@ -146,10 +146,11 @@ def qualify(binary, root):
         run('assay-query','--workspace',manifest,'--request',save('invalid-workers-'+str(invalid)+'.json',{**query,'workers':invalid}),fail=True)
     batched=execute('aggregate-batch',manifest,dict(schema='gadget.assays.query.v1',operation='query_batch',
         concurrent_jobs=min(2,capacity),queries=[dict(id='aggregate',query={**query,'workers':workers}),
-        dict(id='support',query=dict(schema='gadget.assays.query.v1',operation='native_query',
-             assay='cells',query=dict(operation='coverage',field='all.x')))]))
+        dict(id='repeat',query={**query,'workers':1})]))
     check(batched['results'][0]['admitted_workers']==workers,'Direct query batch delegates aggregation workers')
     check(batched['results'][0]['answer']['result']['rows']==expected,'Joined batch preserves every coordinate')
+    check(batched['results'][1]['id']=='repeat' and batched['results'][1]['answer']['result']['rows']==expected,
+          'Independent repeated native publisher retains every original coordinate')
     cancel=[group('annihilate',[('a',1),('b',-1)])]
     cancellation=execute('cancellation',manifest,{**query,'feature_groups':cancel,'observation_groups':[group('x',[('x',1)])]})
     check(cancellation['rows']==[['NA']],'Numerical cancellation cannot certify missing support')

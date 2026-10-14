@@ -63,6 +63,8 @@ class AssayWorkspace {
         const std::map<std::string, std::shared_ptr<const ScientificStudy>> &studies);
     static bool supports_native_materialization(std::string_view operation);
     static bool supports_native_materialization(const NativeRecord &recipe);
+    // A native result retains the producer's fields before any display view.
+    static bool supports_native_publication(std::string_view operation) noexcept;
     // Publish once and return the admitted workspace with its actual study,
     // source history, byte owners and field accessions available to consumers.
     // Unsupported native producers refuse before creating a destination.

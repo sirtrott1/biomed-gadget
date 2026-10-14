@@ -1642,7 +1642,8 @@ std::shared_ptr<const ScientificStudy> AssayWorkspace::study(const std::string &
     return state_->sources.at(assay).at(partition);
 }
 Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> resources) const {
-    if (request.has("operation") && request.at("operation").text() == "read_protocol_evidence")
+    if (request.has("operation") && (request.at("operation").text() == "read_protocol_evidence" ||
+                                    request.at("operation").text() == "query_batch"))
         return render_record_view(execute_record(admit_record_view(request),
                                                 std::move(resources)).at("result"));
     members(request, {"schema", "operation"},
@@ -1764,9 +1765,7 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
     if (operation == "aggregate_assay" || operation == "design_aggregation")
         return render_record_view(execute_aggregation(admit_record_view(request), resources, {}, false).at("result"));
     auto result = Json::object();
-    if (operation == "query_batch") {
-        result = query_batch(*this, request, resources);
-    } else if (operation == "inspect") {
+    if (operation == "inspect") {
         members(request, {"schema", "operation"});
         result = catalog();
     } else if (operation == "native_query") {
@@ -3009,8 +3008,18 @@ NativeRecord AssayWorkspace::execute_structured(
                             std::move(fields.sources), request,
                             certificate(std::move(fields.declaration), std::move(workspace)));
 }
+bool AssayWorkspace::supports_native_publication(std::string_view operation) noexcept {
+    return supports_native_materialization(operation) || operation == "interval_coverage" ||
+           operation == "annotation_features" || operation == "sequence_motifs" ||
+           operation == "read_protocol_evidence" || operation == "read_quality" ||
+           operation == "query_batch";
+}
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
+    if (request.has("operation") && request.at("operation").text() == "query_batch") {
+        if (!resources) resources = CpuResources::local();
+        return query_batch_record(*this, request, resources);
+    }
     const auto query = render_record_view(request);
     if (query.has("operation") && (query.at("operation").text() == "interval_coverage" ||
                                    query.at("operation").text() == "annotation_features" ||
@@ -3295,6 +3304,12 @@ Json bioinformatics_capabilities() {
     for (const auto *op : {"alignment_evidence", "feature_counts", "variant_genotypes"})
         result.at("workspace_methods").push(Json::string(op));
 #endif
+    auto native_publications = Json::array();
+    const auto methods = result.at("workspace_methods");
+    for (std::size_t i = 0; i < methods.size(); ++i)
+        if (AssayWorkspace::supports_native_publication(methods.at(i).text()))
+            native_publications.push(methods.at(i));
+    result.set("native_publication_methods", native_publications);
     result.set("htslib_enabled", Json::boolean(GADGET_HAS_HTSLIB));
     result.set(
         "source_admission",

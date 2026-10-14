@@ -32,6 +32,8 @@ def main():
         p = subprocess.run([str(binary), *map(str, args)], capture_output=True, text=True)
         if fail:
             check(p.returncode != 0, 'invalid declaration must reject')
+            if isinstance(fail, str):
+                check(fail in p.stderr, 'unconverted publisher refuses before native publication')
             return
         if p.returncode:
             raise RuntimeError(f'{args}: {p.stderr}')
@@ -213,12 +215,20 @@ def main():
     check(len(results['cover-ambiguous']['result']['sequences']) == 3, 'distinct cycle-derived minimum reconstructions retained')
     check(len(results['cover-duplicates']['result']['layouts']) == 2, 'duplicate source read identities survive')
 
-    batch = execute('parallel-source-queries', dict(operation='query_batch', concurrent_jobs=2,
-                    queries=[dict(id=name, query=requests[name]) for name in ['indexed-1', 'splice-2', 'cover-ambiguous']]))
-    for item in batch['results']:
-        check(item['answer']['result'] == results[item['id']]['result'], 'joined native parallel source queries equal serial complete results')
-        check(item['admitted_workers'] == 1, 'native assigned worker admission retained')
-    check(batch['dispatcher'] == 'rfc::runtime::WorkGraph', 'canonical dispatcher owns and joins all jobs')
+    batch_request = dict(operation='query_batch', concurrent_jobs=2,
+                         queries=[dict(id=name, query=requests[name])
+                                  for name in ['indexed-1', 'splice-2', 'cover-ambiguous']])
+    caps = run('bioinformatics')
+    if all(job['query']['operation'] in caps['native_publication_methods'] for job in batch_request['queries']):
+        batch = execute('parallel-source-queries', batch_request)
+        for item in batch['results']:
+            check(item['answer']['result'] == results[item['id']]['result'], 'joined native parallel source queries equal serial complete results')
+            check(item['admitted_workers'] == 1, 'native assigned worker admission retained')
+        check(batch['dispatcher'] == 'rfc::runtime::WorkGraph', 'canonical dispatcher owns and joins all jobs')
+    else:
+        run('assay-query', '--workspace', workspace, '--request',
+            save('parallel-source-queries-request.json', dict(schema='gadget.assays.query.v1', **batch_request)),
+            fail='source query child has no native publisher')
 
     for i, req in enumerate([
         dict(indexed, scoring='approximate'), dict(indexed, maximum_edits=3),

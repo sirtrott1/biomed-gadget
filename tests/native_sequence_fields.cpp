@@ -1,5 +1,7 @@
 #include <gadget/assay.hpp>
+#include "../src/genomic_detail.hpp"
 #include <gadget/record_view.hpp>
+#include <atomic>
 #include <rfc/storage/file_io.hpp>
 #include <iostream>
 
@@ -16,7 +18,7 @@ const rfc::storage::TemporalTensor &field(const NativeRecord &record, const Nati
 void refuse(const std::function<void()> &action) {
     bool rejected = false;
     try {action();} catch (const std::exception &) {rejected = true;}
-    check(rejected, "infeasible bounds were admitted as measurements");
+    check(rejected, "invalid native request was admitted");
 }
 }
 int main(int argc, char **argv) {
@@ -24,10 +26,12 @@ int main(int argc, char **argv) {
     fs::remove_all(root); fs::create_directories(root);
     const std::string reads = ">q0\r\nAC\r\n>q1\nAAA\n", reference = ">r0\nAC\n>r1\nAC\n";
     auto resources = Json::array();
-    for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}, {"ambiguous", ">a\nAN\n>b\nTA\n"}}) {
-        write_text(root / (id + ".fa"), bytes);
+    for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}, {"ambiguous", ">a\nAN\n>b\nTA\n"}, {"quality", "@q0\nAC\n+\n!I\n"}}) {
+        const auto filename = id + (id == "quality" ? ".fastq" : ".fa");
+        write_text(root / filename, bytes);
         auto resource = Json::parse(R"({"id":"","format":"fasta","source":{"path":"","sha256":""},"method":"Authored source fixture"})");
-        resource.set("id", Json::string(id)); resource.at("source").set("path", Json::string(id + ".fa"));
+        resource.set("id", Json::string(id)); resource.at("source").set("path", Json::string(filename));
+        if (id == "quality") resource.set("format", Json::string("fastq"));
         resource.at("source").set("sha256", Json::string("sha256:" + sha256(bytes))); resources.push(resource);
     }
     auto spec = Json::parse(R"({"schema":"gadget.assays.import.v1","id":"sequences","design":{"question":"Preserve ordered source witnesses","population":"Authored fixture","selection":"All source records","limitations":["Verification fixture"]},"assays":[],"resources":[],"links":[]})");
@@ -148,10 +152,156 @@ int main(int argc, char **argv) {
     check(failed.at("summary").at("status").text() == "infeasible" &&
           field(failed, failed.at("tensors").at("lower")).tensor.support().count() == 0,
           "infeasible bounds have numerical support");
+    auto batch = Json::parse(
+        R"({"schema":"gadget.assays.query.v1","operation":"query_batch","concurrent_jobs":2,"queries":[]})");
+    const std::vector<std::pair<std::string, Json>> batch_jobs{
+        {"motifs", motif_request}, {"missing", impossible}, {"alignment", alignment},
+        {"motifs_again", motif_request}, {"assembly", assembly},
+        {"quality", Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"read_quality","resource":"quality","quality_thresholds":[0,20]})")}};
+    for (const auto &[id, query] : batch_jobs) {
+        auto job = Json::object(); job.set("id", Json::string(id)); job.set("query", query);
+        batch.at("queries").push(job);
+    }
+    const auto hardware = rfc::runtime::detect_hardware();
+    rfc::runtime::CpuResourcePolicy policy;
+    policy.worker_limit = 2; policy.declared_buffer_byte_limit = 128u * 1024u * 1024u;
+    const auto cpu = std::make_shared<CpuResources>(hardware, policy, [hardware] { return hardware; });
+    const auto batch_request = admit_record_view(batch);
+    const auto batched = workspace->execute_record(batch_request, cpu);
+    const auto batch_fields = batched.at("result").at("result");
+    const auto entries = batch_fields.at("results");
+    const auto batch_view = render_record_view(batch_fields);
+    check(workspace->execute(batch, cpu).at("result").dump() == batch_view.dump(),
+          "public batch display differs from the owning native producer");
+    check(AssayWorkspace::supports_native_publication("query_batch") &&
+              batch_fields.at("schema").text() == "gadget.assay.batch.fields.v1" &&
+              entries.size() == batch_jobs.size() &&
+              batched.source_namespace() == workspace->native_publication().source_namespace() &&
+              batched.endpoint()->tensors.size() == workspace->native_publication().endpoint()->tensors.size(),
+          "batch substituted a common mathematical carrier for independent children");
+    check(NativeRecord::decode(batched.at("request_publication").bytes()).encode() == batch_request.encode(),
+          "batch lost the complete original request publication");
+    std::vector<NativeRecord> children;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto entry = entries.at(i);
+        const auto child = NativeRecord::decode(entry.at("child_publication").bytes());
+        check(entry.at("id").text() == batch_jobs[i].first &&
+                  entry.at("admitted_workers").integer() == 1 &&
+                  render_record_view(child.at("request")).dump() ==
+                      render_record_view(batch_request.at("queries").at(i).at("query")).dump(),
+              "batch changed the admitted child selection or declaration order");
+        check(NativeRecord::decode(child.at("request_publication").bytes()).encode() == batch_request.encode(),
+              "selected child lost its original outer publication");
+        check(render_record_view(child.at("result")).dump() ==
+                  batch_view.at("results").at(i).at("answer").dump(),
+              "batch view did not read the retained child owner");
+        check(render_record_view(child.at("result")).at("result").dump() ==
+                  workspace->execute(batch_jobs[i].second, cpu).at("result").dump(),
+              "batch result differs from the complete direct result");
+        child.write(root / ("batch-child-" + std::to_string(i) + ".rfcxs"));
+        children.push_back(child);
+    }
+    const auto first_motifs = children.at(0).at("result").at("result");
+    const auto repeated_motifs = children.at(3).at("result").at("result");
+    const auto missing_fields = children.at(1).at("result").at("result");
+    check(first_motifs.source_namespace() != repeated_motifs.source_namespace() &&
+              first_motifs.at("possible_counts").integer() == repeated_motifs.at("possible_counts").integer() &&
+              field(first_motifs, first_motifs.at("possible_counts")).tensor.state(2).value() == 0 &&
+              field(missing_fields, missing_fields.at("tensors").at("lower")).tensor.support().count() == 0,
+          "independent equal keys, supported zero and missing support were collapsed");
+    rfc::storage::NativeAccessionRequest selected;
+    selected.subject = first_motifs.at("possible_counts").integer().get_ui();
+    const auto pin = children.at(0).access(selected);
+    check(pin.source_namespace() == children.at(0).source_namespace() &&
+              pin.sequence() == children.at(0).endpoint()->sequence &&
+              pin.tensor().get() == &field(first_motifs, first_motifs.at("possible_counts")).tensor &&
+              children.at(3).access(selected).source_namespace() != pin.source_namespace(),
+          "child field accession used another source or prefix");
+    refuse([&] { batched.access(selected); });
+    refuse([&] { children.at(0).historical_publication(children.at(0).endpoint()->sequence + 1); });
+    auto reversed = Json::parse(batch.dump());
+    auto reverse_jobs = Json::array();
+    for (std::size_t i = batch_jobs.size(); i > 0; --i) reverse_jobs.push(batch.at("queries").at(i - 1));
+    reversed.set("queries", reverse_jobs);
+    const auto reversed_view = assay_detail::query_batch(*workspace, reversed, cpu);
+    for (std::size_t i = 0; i < batch_jobs.size(); ++i)
+        check(reversed_view.at("results").at(i).at("id").text() == batch_jobs[batch_jobs.size() - i - 1].first &&
+                  reversed_view.at("results").at(i).at("answer").at("result").dump() ==
+                      batch_view.at("results").at(batch_jobs.size() - i - 1).at("answer").at("result").dump(),
+              "reordered batch changed source results or publication order");
+    auto invalid_batch = Json::parse(batch.dump());
+    invalid_batch.at("queries").at(1).set("id", Json::string("motifs"));
+    refuse([&] { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); });
+    invalid_batch = Json::parse(batch.dump());
+    invalid_batch.at("queries").at(0).set("query", batch);
+    refuse([&] { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); });
+    invalid_batch = Json::parse(batch.dump()); invalid_batch.set("concurrent_jobs", Json::integer(0));
+    refuse([&] { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); });
+    invalid_batch.set("concurrent_jobs", Json::integer(3));
+    refuse([&] { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); });
+    invalid_batch = Json::parse(batch.dump()); invalid_batch.set("queries", Json::array());
+    refuse([&] { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); });
+    invalid_batch = Json::parse(batch.dump());
+    invalid_batch.at("queries").at(0).at("query").set("workers", Json::integer(0));
+    refuse([&] { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); });
+    invalid_batch.at("queries").at(0).at("query").set("workers", Json::integer(3));
+    refuse([&] { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); });
+    invalid_batch = Json::parse(batch.dump());
+    invalid_batch.at("queries").at(2).at("query").set("operation", Json::string("unknown"));
+    refuse([&] { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); });
+    const auto unconverted = Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"reference_sequence_matches","query_resource":"reads","reference_resource":"reference","strands":["+"],"ambiguity":"literal","maximum_mismatches":0,"junctions":[],"minimum_overhang":1,"evidence":"Original exact placements"})");
+    check(!AssayWorkspace::supports_native_publication("reference_sequence_matches") &&
+              workspace->execute(unconverted).at("result").at("matches").size() == 2,
+          "unconverted-child refusal fixture is not an otherwise valid query");
+    invalid_batch = Json::parse(batch.dump());
+    invalid_batch.at("queries").at(batch_jobs.size() - 1).set("query", unconverted);
+    bool unconverted_refused = false;
+    try { assay_detail::query_batch_record(*workspace, admit_record_view(invalid_batch), cpu); }
+    catch (const std::invalid_argument &error) {
+        unconverted_refused = std::string(error.what()) ==
+                              "scientific study: source query child has no native publisher";
+    }
+    check(unconverted_refused, "mixed batch admitted an unconverted mathematical child");
+    auto small_policy = policy; small_policy.declared_buffer_byte_limit = sizeof(std::size_t) - 1;
+    const auto small_cpu = std::make_shared<CpuResources>(hardware, small_policy, [hardware] { return hardware; });
+    refuse([&] { assay_detail::query_batch_record(*workspace, batch_request, small_cpu); });
+    std::atomic_size_t observations{};
+    const auto cancelled_cpu = std::make_shared<CpuResources>(hardware, policy, [&] {
+        if (++observations > 1) throw rfc::runtime::ExecutionCancelled{};
+        return hardware;
+    });
+    bool cancelled = false;
+    try { assay_detail::query_batch_record(*workspace, batch_request, cancelled_cpu); }
+    catch (const rfc::runtime::ExecutionCancelled &) { cancelled = true; }
+    check(cancelled, "native child cancellation was converted to a published partial batch");
+    { auto recovered = cancelled_cpu->coordinator().reserve(2); }
+    { auto recovered = cpu->coordinator().reserve(2); }
+    batched.write(root / "batch.rfcxs");
     auto invalid = Json::parse(R"({"schema":"gadget.assays.materialize.v1","id":"invalid","source_namespace":"730020","channel":"observation","design":{},"recipe":{}})");
     invalid.set("design", spec.at("design")); invalid.set("recipe", impossible);
     refuse([&] {workspace->materialize_workspace(admit_record_view(invalid), root / "invalid");});
     fs::rename(root / "input", root / "input-away"); workspace.reset();
+    const auto relocated_batch = NativeRecord::read(root / "batch.rfcxs");
+    check(relocated_batch.encode() == batched.encode() &&
+              render_record_view(relocated_batch.at("result").at("result")).dump() == batch_view.dump(),
+          "batch native roundtrip or relocated retained view changed");
+    NativeRecord::decode(relocated_batch.at("result").at("workspace_publication").bytes())
+        .write(root / "batch-workspace.rfcxs");
+    const AssayWorkspace batch_workspace(root / "batch-workspace.rfcxs");
+    const auto replayed = batch_workspace.execute_record(
+        NativeRecord::decode(relocated_batch.at("request_publication").bytes()), cpu);
+    for (std::size_t i = 0; i < batch_jobs.size(); ++i) {
+        const auto child = NativeRecord::decode(
+            replayed.at("result").at("result").at("results").at(i).at("child_publication").bytes());
+        const auto before = children.at(i).endpoint(), after = child.endpoint();
+        check(before->tensors.size() == after->tensors.size(), "batch replay changed the field family");
+        for (std::size_t t = 0; t < before->tensors.size(); ++t)
+            check(rfc::storage::temporal_endpoint_detail::tensor_equal(before->tensors.at(t), after->tensors.at(t)),
+                  "batch replay changed field values, support, roles or carriers");
+        check(render_record_view(child.at("result")).at("result").dump() ==
+                  batch_view.at("results").at(i).at("answer").at("result").dump(),
+              "batch replay depends on the former intake paths");
+    }
     const auto relocated_motifs = NativeRecord::read(root / "motifs.rfcxs");
     check(render_record_view(relocated_motifs.at("result")).at("result").dump() ==
               motif_view.at("result").dump(), "motif view depends on original intake paths");

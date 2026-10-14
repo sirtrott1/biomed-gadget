@@ -36,6 +36,8 @@ def main():
         result = subprocess.run([str(binary), *map(str, args)], capture_output=True, text=True)
         if fail:
             check(result.returncode != 0, 'Invalid source declaration rejected')
+            if isinstance(fail, str):
+                check(fail in result.stderr, 'Native publisher refusal names the admission boundary')
             return
         if result.returncode:
             raise RuntimeError(str(args) + ': ' + result.stderr)
@@ -130,16 +132,22 @@ def main():
                  assay='large', query=dict(operation='field_summary', field='all.' + ['g0','g1',f'g{n-1}'][i % 3],
                                           support='reported_only'))) for i in range(17)]
     batch = dict(schema='gadget.assays.query.v1', operation='query_batch', queries=queries, concurrent_jobs=concurrency)
-    answer = run('assay-query', '--workspace', ws, '--request', save('batch.json', batch))['result']
-    check(answer['dispatcher'] == 'rfc::runtime::WorkGraph', 'Canonical dispatcher owns jobs')
-    for i, entry in enumerate(answer['results']):
-        check(entry['id'] == f'job{i}', 'Declared publication order')
-        result = entry['answer']['result']['answers'][0]['certificate']['result']
-        check(result == summaries[['g0','g1',f'g{n-1}'][i % 3]], 'Complete batch result equals direct result')
+    native_children = 'native_query' in capabilities['native_publication_methods']
+    if native_children:
+        answer = run('assay-query', '--workspace', ws, '--request', save('batch.json', batch))['result']
+        check(answer['dispatcher'] == 'rfc::runtime::WorkGraph', 'Canonical dispatcher owns jobs')
+        for i, entry in enumerate(answer['results']):
+            check(entry['id'] == f'job{i}', 'Declared publication order')
+            result = entry['answer']['result']['answers'][0]['certificate']['result']
+            check(result == summaries[['g0','g1',f'g{n-1}'][i % 3]], 'Complete batch result equals direct result')
+    else:
+        run('assay-query', '--workspace', ws, '--request', save('batch.json', batch),
+            fail='source query child has no native publisher')
     invalid = copy.deepcopy(batch)
     invalid['queries'][1]['id'] = 'job0'
     run('assay-query', '--workspace', ws, '--request', save('invalid-batch.json', invalid), fail=True)
-    cases.append(dict(case='joined_source_queries', jobs=17, requested_concurrency=concurrency, capacity=capacity))
+    cases.append(dict(case='joined_source_queries', jobs=17, requested_concurrency=concurrency,
+                      capacity=capacity, native_children_admitted=native_children))
 
     # Partition selection follows the actual source, including researcher order.
     partition_cells = 129

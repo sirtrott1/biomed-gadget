@@ -236,6 +236,8 @@ Json render_record_view(const NativeRecord &record) {
                 return assay_detail::annotation_fields_view(record);
             if (schema == "gadget.sequence.motifs.fields.v1")
                 return assay_detail::motif_fields_view(record);
+            if (schema == "gadget.assay.batch.fields.v1")
+                return assay_detail::query_batch_fields_view(record);
             if (schema == "gadget.sections.fields.v1" || schema == "gadget.sections.selected.v1")
                 return assay_detail::section_fields_view(record);
         }
