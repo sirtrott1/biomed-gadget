@@ -1,4 +1,5 @@
 #include "pipeline_answers.hpp"
+#include "scientific_result_fields.hpp"
 #include <algorithm>
 #include <chrono>
 #include <gadget/pipeline.hpp>
@@ -568,7 +569,8 @@ Json pipeline_model_catalog(const AssayWorkspace &workspace) {
 }
 namespace {
 struct RecipeIntent {
-    RetainedRecord declaration, defaults, catalog;
+    RetainedRecord declaration, defaults;
+    Json catalog;
     std::vector<std::string> names;
     std::map<std::string, std::size_t> indices;
     std::vector<std::vector<std::size_t>> dependencies;
@@ -805,9 +807,9 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
     const RetainedRecord native_plan=original_request?RetainedRecord(*original_request):RetainedRecord(pipeline);
     const auto admitted = static_cast<Json>(native_plan);
     validate(admitted, workspace->digest());
-    std::optional<RetainedRecord> planning_record;
+    std::optional<Json> planning_record;
     if (planning) {
-        planning_record = original_planning?RetainedRecord(*original_planning):RetainedRecord(Json::parse(planning->dump()));
+        planning_record = Json::parse(planning->dump());
         require(planning_record->at("status").text() == "admitted" &&
                     planning_record->at("source_digest").text() == workspace->digest() &&
                     planning_record->at("pipeline").dump() == admitted.dump() &&
@@ -1040,9 +1042,9 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                 receipt.set("input", node.at("input"));
                 receipt.set("source_digest", Json::string(source->digest()));
                 receipt.set("request", Json::string(node.at("id").text() + "/request.rfcxs"));
-                receipt.set("request_sha256", Json::string("sha256:" + sha256(read_text(job/"request.rfcxs"))));
+                receipt.set("request_sha256", Json::string("sha256:" + sha256_file(job/"request.rfcxs")));
                 receipt.set("result", Json::string(node.at("id").text() + "/result.rfcxs"));
-                receipt.set("result_sha256", Json::string("sha256:" + sha256(read_text(job/"result.rfcxs"))));
+                receipt.set("result_sha256", Json::string("sha256:" + sha256_file(job/"result.rfcxs")));
                 if (produced) {
                     receipt.set("workspace",
                                 Json::string(node.at("id").text() + "/workspace/workspace.rfcxs"));
@@ -1085,13 +1087,35 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
             write_text(stage / "answers.json", answer_bytes);
             retain_operation(workspace->native_publication(),native_plan.native(),import_record_view(answers)).write(stage/"answers.rfcxs");
             index.set("answers", Json::string("answers.rfcxs"));
-            index.set("answers_sha256", Json::string("sha256:" + sha256(read_text(stage/"answers.rfcxs"))));
+            index.set("answers_sha256", Json::string("sha256:" + sha256_file(stage/"answers.rfcxs")));
         }
         const auto bytes = planning_record->dump();
         write_text(stage / "planning.json", bytes);
-        retain_operation(workspace->native_publication(),native_plan.native(),import_record_view(static_cast<Json>(*planning_record))).write(stage/"planning.rfcxs");
+        // Revalidate original declarations with the native finite provider. The
+        // retained child publications own their obligation carriers and charts;
+        // the planning display is never admitted as their numerical source.
+        const auto intent = static_cast<Json>(planning_record->at("intent"));
+        const auto catalog = recipe_model_catalog(*workspace, intent);
+        const auto selected = static_cast<Json>(planning_record->at("included_goals"));
+        const auto question = planning_record->at("question").text();
+        const auto available = pipeline_detail::answer_admission_record(intent, catalog, nullptr, &question);
+        const auto scientific = pipeline_detail::answer_admission_record(intent, catalog, &selected, &question);
+        auto controls = static_cast<Json>(*planning_record);
+        json_object_object_del(controls.raw(), "scientific_admission");
+        json_object_object_del(controls.raw(), "available_answers");
+        scientific_detail::ResultFields fields(workspace->native_publication());
+        auto view = scientific_detail::ResultValue(controls);
+        view.set("scientific_admission", fields.publication(scientific));
+        view.set("available_answers", fields.publication(available));
+        if (original_planning) {
+            auto binding = scientific_detail::ResultValue::object();
+            binding.set("original_planning", fields.publication(original_planning->owning_publication()));
+            fields.bind(std::move(binding));
+        }
+        const auto native_planning = fields.finish(std::move(view));
+        retain_operation(native_planning, native_plan.native(), native_planning.unbound_value()).write(stage/"planning.rfcxs");
         index.set("planning", Json::string("planning.rfcxs"));
-        index.set("planning_sha256", Json::string("sha256:" + sha256(read_text(stage/"planning.rfcxs"))));
+        index.set("planning_sha256", Json::string("sha256:" + sha256_file(stage/"planning.rfcxs")));
     }
     index = sealed(index, "result_sha256");
     write_text(stage / "pipeline.json", index.dump());
