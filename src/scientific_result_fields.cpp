@@ -220,6 +220,10 @@ Json result_fields_view(const NativeRecord &record) {
                             selected = selected.at(index.get_ui());
                         }
                     }
+                    if (selected.kind() == NativeRecordKind::Object && selected.has("schema") &&
+                        selected.at("schema").kind() == NativeRecordKind::Text &&
+                        selected.at("schema").text() == "gadget.scientific.result.fields.v1")
+                        return render_record_view(selected);
                     return self(self, selected);
                 }
                 if (schema == "gadget.scientific.view.overlay.v1") {

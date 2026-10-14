@@ -51,30 +51,40 @@ Json ScientificStudy::State::referenced(const Json &metadata) const {
     }
     return Json::parse(item.dump());
 }
-Json ScientificStudy::source_index() const {
+NativeRecord ScientificStudy::source_index_record() const {
+    using N = NativeRecordValue;
     const auto &s = *state_;
     const auto endpoint = s.directory->pin_snapshot();
-    auto result = Json::object(), counts = Json::object();
-    result.set("schema", Json::string("gadget.scientific.source.index.v1"));
-    result.set("study_id", s.declaration.at("id"));
-    result.set("source_digest", Json::string(s.digest));
-    result.set("source_sequence", Json::string(std::to_string(endpoint->sequence)));
-    result.set("declaration_sha256", Json::string(s.declaration_digest));
-    result.set("native_sha256", Json::string(s.native_digest));
-    result.set("design", s.declaration.at("design"));
-    counts.set("fields", cardinality(s.fields.size()));
-    counts.set("cells", cardinality(s.cell_count()));
-    counts.set("occurrences", cardinality(s.occurrence_count()));
-    counts.set("contexts", cardinality(s.contexts.size()));
-    counts.set("operators", cardinality(s.operators.size()));
-    counts.set("carriers", cardinality(endpoint->carriers.size()));
-    counts.set("documents", cardinality(s.documents.size()));
-    counts.set("field_sets", cardinality(s.field_sets.size()));
-    counts.set("publications", cardinality(s.publications.size()));
-    result.set("catalog_sections", counts);
-    result.set("read_schema", Json::string("gadget.scientific.source.read.v1"));
-    result.set("evidence_profile", Json::string("document-bound-byte-spans-v1"));
-    return seal(result, "index_sha256");
+    const auto count = [](std::size_t n) { return N(rfc::numeric::Integer(std::to_string(n))); };
+    N::Object sections;
+    sections.members.emplace_back("fields", count(s.fields.size()));
+    sections.members.emplace_back("cells", count(s.cell_count()));
+    sections.members.emplace_back("occurrences", count(s.occurrence_count()));
+    sections.members.emplace_back("contexts", count(s.contexts.size()));
+    sections.members.emplace_back("operators", count(s.operators.size()));
+    sections.members.emplace_back("carriers", count(endpoint->carriers.size()));
+    sections.members.emplace_back("documents", count(s.documents.size()));
+    sections.members.emplace_back("field_sets", count(s.field_sets.size()));
+    sections.members.emplace_back("publications", count(s.publications.size()));
+    N value(N::Object{{
+        {"schema", N(std::string("gadget.scientific.source.index.v1"))},
+        {"study_id", s.declaration.native().at("id").unbound_value()},
+        {"source_digest", N(s.digest)},
+        {"source_sequence", N(std::to_string(endpoint->sequence))},
+        {"declaration_sha256", N(s.declaration_digest)},
+        {"native_sha256", N(s.native_digest)},
+        {"design", s.declaration.native().at("design").unbound_value()},
+        {"catalog_sections", N(std::move(sections))},
+        {"read_schema", N(std::string("gadget.scientific.source.read.v1"))},
+        {"evidence_profile", N(std::string("document-bound-byte-spans-v1"))}
+    }});
+    const auto retained = native_publication().derive(value);
+    auto &members = std::get<N::Object>(value.data).members;
+    members.emplace_back("index_sha256", N(std::string("sha256:") + sha256(render_record_view(retained).dump())));
+    return native_publication().derive(std::move(value));
+}
+Json ScientificStudy::source_index() const {
+    return render_record_view(source_index_record());
 }
 Json ScientificStudy::read_source(const Json &request) const {
     return read_source(request, source_execution_lease("scientific-source-read-v1"));

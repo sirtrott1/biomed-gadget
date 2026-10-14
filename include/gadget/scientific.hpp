@@ -58,6 +58,7 @@ class ScientificStudy {
     // A compact inventory plus complete, independently addressed source pages.
     // Offsets select presentation only; mathematics retains the original owner.
     Json source_index() const;
+    NativeRecord source_index_record() const;
     Json read_source(const Json &request) const;
     Json read_source(const Json &request, rfc::runtime::ExecutionLease lease) const;
     Json declaration() const;
