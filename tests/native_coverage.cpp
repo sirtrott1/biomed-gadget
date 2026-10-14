@@ -100,5 +100,65 @@ int main(int argc, char **argv) {
           "segment memberships conflated");
     check(view.at("contrasts").at(0).at("source_action_exact").boolean(),
           "display source certificate");
+    const auto interval_request = Json::parse(
+        R"({"schema":"gadget.assays.query.v1","operation":"interval_coverage","resource":"treated","thresholds":["0","1","4"],"strand_policy":"separate"})");
+    auto interval_source = interval_fields_source(images.at("treated"), interval_request);
+    const auto intervals = NativeRecord::create_from_endpoint(
+        std::move(interval_source.declaration), 740001, std::move(interval_source.sources),
+        std::move(interval_source.endpoint));
+    check(intervals.endpoint()->source.grade({0}).cell_count() == 3 &&
+              intervals.endpoint()->source.grade({1}).incidence_count() == 3,
+          "interval publication replaced original membership");
+    check(field(intervals, key(intervals.at("coverage"))).values().dense() == Vector({3, 0, 2}) &&
+              field(intervals, key(intervals.at("coverage"))).support().count() == 3,
+          "interval supported zero changed");
+    check(intervals.at("coverage_integral").rational() == 20 &&
+              intervals.at("threshold_components").at(0).at("retained_length").rational() == 12 &&
+              intervals.at("threshold_components").at(1).at("regions").size() == 2 &&
+              intervals.at("threshold_components").at(2).at("regions").size() == 0,
+          "interval exact integral or physical threshold components changed");
+    const auto interval_view = render_record_view(intervals);
+    check(interval_view.at("segments").at(1).at("coverage").text() == "0" &&
+              interval_view.at("threshold_components").at(0).at("retained_atoms").integer() == 3,
+          "interval native view omitted support");
+    intervals.write(root / "interval.rfcxs");
+    const auto interval_restored = NativeRecord::read(root / "interval.rfcxs");
+    check(interval_restored.encode() == intervals.encode() &&
+              render_record_view(interval_restored).dump() == interval_view.dump(),
+          "interval source/value roundtrip differs");
+    const auto original = interval_restored.at("source_bytes").bytes();
+    check(std::string(reinterpret_cast<const char *>(original.data()), original.size()) ==
+              images.at("treated").bytes &&
+              interval_restored.at("original_records").at(1).at("bytes").bytes().size() ==
+                  std::string("chr\t4\t8\tzero\t0\t+").size(),
+          "interval original bytes or span changed");
+    auto gff_declaration = Json::parse(declaration.dump());
+    gff_declaration.set("format", Json::string("gff3"));
+    const ResourceImage annotation{gff_declaration,
+        "##gff-version 3\nchr\tfixture\texon\t1\t4\t.\t+\t.\tID=e1;Parent=F1,F2\n"
+        "chr\tfixture\texon\t3\t6\t.\t+\t.\tID=e2;Parent=F1\n"
+        "chr\tfixture\tgene\t1\t12\t.\t+\t.\tID=F1\n", {}};
+    const auto annotation_request = Json::parse(
+        R"({"schema":"gadget.assays.query.v1","operation":"annotation_features","resource":"annotation","feature_type":"exon","group_attribute":"Parent"})");
+    auto annotation_source = annotation_fields_source(annotation, annotation_request);
+    const auto features = NativeRecord::create_from_endpoint(
+        std::move(annotation_source.declaration), 740002, std::move(annotation_source.sources),
+        std::move(annotation_source.endpoint));
+    check(features.endpoint()->source.grade({0}).cell_count() == 3 &&
+              features.endpoint()->source.grade({1}).cell_count() == 2 &&
+              features.endpoint()->source.grade({1}).incidence_count() == 3,
+          "annotation filtered/repeated group source occurrences changed");
+    const auto feature_view = render_record_view(features).at("features");
+    check(feature_view.at(0).at("source_record_indices").size() == 2 &&
+              feature_view.at(1).at("source_record_indices").at(0).integer() == 0 &&
+              feature_view.at(0).at("union_intervals").at(0).at(1).integer() == 6 &&
+              feature_view.at(1).at("union_intervals").at(0).at(1).integer() == 4,
+          "annotation physical union or original group order changed");
+    check(field(features, key(features.at("record_start"))).values().dense() == Vector({0, 2, 0}) &&
+              field(features, key(features.at("record_start"))).support().count() == 3,
+          "annotation original coordinates or supported zero changed");
+    features.write(root / "annotation.rfcxs");
+    check(NativeRecord::read(root / "annotation.rfcxs").encode() == features.encode(),
+          "annotation original owner roundtrip differs");
     std::cout << "Native coverage ownership, fields, support, original bytes and replay PASS\n";
 }

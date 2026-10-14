@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
     fs::remove_all(root); fs::create_directories(root);
     const std::string reads = ">q0\r\nAC\r\n>q1\nAAA\n", reference = ">r0\nAC\n>r1\nAC\n";
     auto resources = Json::array();
-    for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}}) {
+    for (const auto &[id, bytes] : std::vector<std::pair<std::string, std::string>>{{"reads", reads}, {"reference", reference}, {"ambiguous", ">a\nAN\n>b\nTA\n"}}) {
         write_text(root / (id + ".fa"), bytes);
         auto resource = Json::parse(R"({"id":"","format":"fasta","source":{"path":"","sha256":""},"method":"Authored source fixture"})");
         resource.set("id", Json::string(id)); resource.at("source").set("path", Json::string(id + ".fa"));
@@ -53,6 +53,46 @@ int main(int argc, char **argv) {
     auto assembly = Json::parse(R"({"schema":"gadget.assays.query.v1","operation":"sequence_assembly_graph","resource":"reads","k":2,"ambiguity":"literal_tokens","evidence":"All supplied reads","route":{"start":"A","end":"C","objective":"fewest_steps"}})");
     const auto assembled = workspace->execute_record(admit_record_view(assembly));
     const auto assembly_fields = assembled.at("result").at("result");
+    const auto motif_request = Json::parse(
+        R"({"schema":"gadget.assays.query.v1","operation":"sequence_motifs","resource":"reads","motifs":[{"id":"AC","pattern":"AC"},{"id":"GT","pattern":"GT"},{"id":"long","pattern":"CCCC"},{"id":"any","pattern":"N"}],"strands":"both"})");
+    const auto motif_publication = workspace->execute_record(admit_record_view(motif_request));
+    const auto motif_fields = motif_publication.at("result").at("result");
+    check(motif_fields.at("schema").text() == "gadget.sequence.motifs.fields.v1" &&
+              motif_publication.endpoint()->source.grade({0}).cell_count() == 6 &&
+              motif_publication.endpoint()->source.grade({1}).cell_count() == 12 &&
+              motif_publication.endpoint()->source.grade({1}).incidence_count() == 24,
+          "motif original sequence/pattern/hit occurrences changed");
+    const auto possible_key = motif_fields.at("possible_counts");
+    const auto &possible = field(motif_fields, possible_key);
+    check(possible.output == motif_fields.at("summary_carrier").integer().get_ui() &&
+              possible.tensor.values().dense() == Vector({1, 1, 0, 4, 0, 0, 0, 6}) &&
+              possible.tensor.support().count() == 8,
+          "motif complete summary carrier or supported zero changed");
+    const auto motif_view = render_record_view(motif_publication.at("result"));
+    check(motif_view.at("result").at("hits").at(1).at("strand").text() == "-" &&
+              motif_view.at("result").at("hits").at(1).at("motif").text() == "GT" &&
+              motif_view.at("result").at("summaries").at(2).at("possible_occurrences").integer() == 0,
+          "motif hit order/orientation/zero view changed");
+    check(workspace->execute(motif_request).at("result").dump() ==
+              motif_view.at("result").dump(), "motif display/native producers differ");
+    motif_publication.write(root / "motifs.rfcxs");
+    check(NativeRecord::read(root / "motifs.rfcxs").encode() == motif_publication.encode(),
+          "motif native roundtrip changed");
+    auto ambiguous_request = Json::parse(motif_request.dump());
+    ambiguous_request.set("resource", Json::string("ambiguous"));
+    const auto ambiguous_publication = workspace->execute_record(admit_record_view(ambiguous_request));
+    const auto ambiguous_fields = ambiguous_publication.at("result").at("result");
+    check(field(ambiguous_fields, ambiguous_fields.at("possible_counts")).tensor.values().dense() ==
+              Vector({1, 1, 0, 4, 0, 0, 0, 4}) &&
+              field(ambiguous_fields, ambiguous_fields.at("definite_counts")).tensor.values().dense() ==
+              Vector({0, 0, 0, 4, 0, 0, 0, 4}),
+          "ambiguous motif choices were replaced by a literal base or joint extrema");
+    auto invalid_motif = Json::parse(motif_request.dump());
+    invalid_motif.at("motifs").at(1).set("id", Json::string("AC"));
+    refuse([&] { workspace->execute_record(admit_record_view(invalid_motif)); });
+    invalid_motif = Json::parse(motif_request.dump());
+    invalid_motif.at("motifs").at(0).set("pattern", Json::string("?"));
+    refuse([&] { workspace->execute_record(admit_record_view(invalid_motif)); });
     check(assembled.endpoint()->source.grade({1}).cell_count() == 2 &&
           assembled.endpoint()->source.grade({1}).incidence_count() == 4,
           "repeated self-loop boundary occurrences were discarded");
@@ -112,6 +152,9 @@ int main(int argc, char **argv) {
     invalid.set("design", spec.at("design")); invalid.set("recipe", impossible);
     refuse([&] {workspace->materialize_workspace(admit_record_view(invalid), root / "invalid");});
     fs::rename(root / "input", root / "input-away"); workspace.reset();
+    const auto relocated_motifs = NativeRecord::read(root / "motifs.rfcxs");
+    check(render_record_view(relocated_motifs.at("result")).at("result").dump() ==
+              motif_view.at("result").dump(), "motif view depends on original intake paths");
     for (std::size_t i = 0; i < results.size(); ++i)
         check(results[i]->replay_derivation(recipes[i].first, root / (recipes[i].first + "-replay")).at("status").text() == "PASS",
               "native replay depends on the former input directory");
