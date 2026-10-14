@@ -99,6 +99,28 @@ def qualify(binary, root):
         answer = run('assay-query', '--workspace', case/'workspace/workspace.rfcxs',
                      '--request', save(case/'request.json', request))['result']
         save(case/'result.json', answer)
+        defaults = dict(schema='gadget.pipeline.default.v1', profile='sequence',
+                        question=spec['design']['question'],
+                        goals=[dict(id='consensus', method='read_edit_consensus',
+                                    parameters={k: v for k, v in request.items()
+                                                if k not in ('schema', 'operation')})])
+        plan = run('pipeline-prepare', '--workspace', case/'workspace/workspace.rfcxs',
+                   '--request', save(case/'default.json', defaults))
+        check(len(plan['steps']) == 1 and plan['steps'][0]['request'] == request,
+              'default consensus preserves every declared scientific parameter')
+        index_result = run('pipeline', '--workspace', case/'workspace/workspace.rfcxs',
+                           '--request', save(case/'plan.json', plan), '--out', case/'pipeline')
+        check(index_result['status'] == 'complete' and len(index_result['results']) == 1,
+              'default consensus executes through the existing pipeline dispatcher')
+        receipt = index_result['results'][0]
+        for member in ('request', 'result'):
+            archive = case/'pipeline'/receipt[member]
+            check(receipt[member + '_sha256'] == 'sha256:' + hashlib.sha256(archive.read_bytes()).hexdigest(),
+                  'pipeline receipt identifies the complete native archive')
+        retained = run('record-view', '--input', case/'pipeline'/receipt['result'],
+                       '--member', 'result')
+        check(retained['result'] == answer,
+              'default pipeline retains every independently verified consensus family')
         expected = expectations(reads, request)
         observed = []
         for family in answer['families']:

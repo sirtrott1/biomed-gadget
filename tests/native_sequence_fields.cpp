@@ -1,4 +1,5 @@
 #include <gadget/assay.hpp>
+#include <gadget/pipeline.hpp>
 #include "../src/genomic_detail.hpp"
 #include <gadget/record_view.hpp>
 #include <atomic>
@@ -462,6 +463,27 @@ int main(int argc, char **argv) {
     consensus_publication.write(root / "consensus.rfcxs");
     check(NativeRecord::read(root / "consensus.rfcxs").encode() == consensus_publication.encode(),
           "complete consensus archive changed during I/O");
+    auto consensus_defaults = Json::parse(R"({"schema":"gadget.pipeline.default.v1","profile":"sequence","question":"Every joint source alignment","goals":[{"id":"consensus","method":"read_edit_consensus","parameters":{}}]})");
+    auto consensus_parameters = Json::object();
+    json_object_object_foreach(consensus_request.raw(), key, value) {
+        (void)value;
+        if (std::string_view(key) != "schema" && std::string_view(key) != "operation")
+            consensus_parameters.set(key, consensus_request.at(key));
+    }
+    consensus_defaults.at("goals").at(0).set("parameters", consensus_parameters);
+    const auto consensus_plan = admit_record_view(default_pipeline(*workspace, consensus_defaults));
+    const auto consensus_pipeline = execute_pipeline_record(workspace, consensus_plan,
+        root / "consensus-pipeline", {}, cpu);
+    check(consensus_pipeline.at("result").at("status").text() == "complete",
+          "default consensus pipeline did not execute");
+    const auto consensus_artifact = NativeRecord::read(root / "consensus-pipeline/consensus/result.rfcxs");
+    check(source_bytes_equal(consensus_artifact.at("result").at("result").at("source_bytes"), consensus_reads) &&
+              render_record_view(consensus_artifact.at("result").at("result")).dump() ==
+                  render_record_view(consensus_fields).dump(),
+          "pipeline changed original consensus bytes or minimizing families");
+    consensus_artifact.write(root / "consensus-pipeline-roundtrip.rfcxs");
+    check(NativeRecord::read(root / "consensus-pipeline-roundtrip.rfcxs").encode() == consensus_artifact.encode(),
+          "pipeline consensus changed complete native owners during archive I/O");
     for (std::size_t i = 0; i < searches.size(); ++i) {
         const auto publication = workspace->execute_record(admit_record_view(searches[i]), cpu);
         const auto result = publication.at("result").at("result");
@@ -531,6 +553,20 @@ int main(int argc, char **argv) {
         NativeRecord::decode(consensus_publication.at("request_publication").bytes()), cpu);
     check(render_record_view(consensus_replay.at("result").at("result")).dump() == render_record_view(consensus_fields).dump(),
           "consensus native replay depends on original intake paths");
+    NativeRecord::decode(consensus_artifact.at("result").at("workspace_publication").bytes())
+        .write(root / "pipeline-consensus-workspace.rfcxs");
+    const AssayWorkspace pipeline_consensus_workspace(root / "pipeline-consensus-workspace.rfcxs");
+    const auto pipeline_consensus_replay = pipeline_consensus_workspace.execute_record(
+        NativeRecord::decode(consensus_artifact.at("request_publication").bytes()), cpu);
+    const auto before_consensus = consensus_artifact.endpoint(), after_consensus = pipeline_consensus_replay.endpoint();
+    check(before_consensus->tensors.size() == after_consensus->tensors.size(),
+          "pipeline consensus replay changed its native field family");
+    for (std::size_t t = 0; t < before_consensus->tensors.size(); ++t)
+        check(rfc::storage::temporal_endpoint_detail::tensor_equal(before_consensus->tensors.at(t), after_consensus->tensors.at(t)),
+              "pipeline consensus replay changed values, support, roles or carriers");
+    check(source_bytes_equal(pipeline_consensus_replay.at("result").at("result").at("source_bytes"), consensus_reads) &&
+              render_record_view(pipeline_consensus_replay.at("result").at("result")).dump() == render_record_view(consensus_fields).dump(),
+          "pipeline consensus source/request replay depends on former intake paths");
     NativeRecord::decode(edited_publication.at("result").at("workspace_publication").bytes())
         .write(root / "edited-splice-workspace.rfcxs");
     const AssayWorkspace edited_workspace(root / "edited-splice-workspace.rfcxs");
