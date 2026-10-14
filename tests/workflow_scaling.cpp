@@ -180,12 +180,36 @@ int main(int argc, char **argv) {
         changed = Json::parse(native_claims.dump());
         changed.set("items", Json::array());
         rejects([&] { (void)check_certificate_claims_record(model, admit_record_view(changed)); });
-        const auto legacy = session.execute_record(admit_record_view(Json::parse(
+        const auto coverage = session.execute_record(admit_record_view(Json::parse(
             R"({"operation":"coverage","field":"baseline.G"})")));
-        changed = Json::parse(native_claims.dump());
-        changed.set("source_namespace", Json::string(std::to_string(legacy.source_namespace())));
-        changed.set("cutoff", Json::integer(static_cast<std::int64_t>(legacy.publication_history()->last_sequence())));
-        rejects([&] { (void)check_certificate_claims_record(legacy, admit_record_view(changed)); });
+        auto coverage_claims = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[
+            {"path":["coordinates"],"value_type":"count","comparison":"equal","value":3},
+            {"path":["observations",1,"value"],"coordinate":1,"value_type":"rational","comparison":"equal","value":"0"}
+        ]})");
+        coverage_claims.set("source_namespace", Json::string(std::to_string(coverage.source_namespace())));
+        coverage_claims.set("cutoff", Json::integer(static_cast<std::int64_t>(coverage.publication_history()->last_sequence())));
+        const auto coverage_checked = check_certificate_claims_record(coverage, admit_record_view(coverage_claims));
+        check(coverage_checked.at("result").at("matched").integer() == 2);
+        const auto coverage_observation = coverage_checked.at("result").at("checks").at(1);
+        check(coverage_observation.at("observed").rational() == 0 &&
+              coverage_observation.at("binding").at("supported").boolean());
+        const auto original_coverage_pin = study->field_accession("baseline.G");
+        const auto coverage_binding = coverage.at("result").at("fields").at("bindings").at(0);
+        check(coverage_binding.at("source_namespace").text() ==
+              std::to_string(original_coverage_pin.source_namespace()) &&
+              coverage_binding.at("cutoff").integer() == original_coverage_pin.sequence());
+        const auto coverage_value = coverage.at("result").at("fields").at("view")
+                                        .at("observations").at(1).at("value");
+        const auto coverage_field = coverage_value.encoded_tensor(coverage_value.at("tensor").integer().get_ui());
+        check(coverage_field.has_value());
+        check(coverage_observation.at("binding").at("source_namespace").text() ==
+              std::to_string(coverage_field->publication().source_namespace()) &&
+              coverage_observation.at("binding").at("cutoff").integer() == coverage_field->publication().sequence());
+        coverage_checked.write(root / "coverage-claims.rfcxs");
+        const auto coverage_reopened = NativeRecord::read(root / "coverage-claims.rfcxs");
+        check(NativeRecord::decode(coverage_reopened.at("result").at("source_publication").bytes()).encode() ==
+              coverage.encode());
+        check(replay_scientific_record(coverage).at("result").at("fields").at("view").at("reported").integer() == 3);
         auto native_leaf = [&](const std::string &id) {
             auto node = Json::object();
             node.set("id", Json::string(id)); node.set("type", Json::string("query"));
@@ -253,8 +277,25 @@ int main(int argc, char **argv) {
         const auto missing_operation = execute_workflow_record(study, admit_record_view(coordinate_workflow));
         check(missing_operation.at("result").at("status").text() == "failed" &&
             missing_operation.at("result").at("error").text().find("missing") != std::string::npos);
-        const auto unsupported_untaken = Json::parse(
-            R"({"id":"unsupported-untaken","type":"query","query":{"operation":"coverage","field":"baseline.G"}})");
+        const auto coverage_branch = Json::parse(
+            R"({"id":"coverage-branch","type":"query","query":{"operation":"coverage","field":"baseline.G"}})");
+        auto condition = coordinate_workflow.at("entry").at("steps").at(1).at("condition");
+        condition.set("coordinate", Json::integer(1));
+        coordinate_workflow.at("entry").at("steps").at(1).set("on_false", coverage_branch);
+        check(execute_workflow_record(study, admit_record_view(coordinate_workflow))
+              .at("result").at("status").text() == "complete");
+        condition.set("coordinate", Json::integer(0));
+        const auto coverage_workflow_request = admit_record_view(coordinate_workflow);
+        const auto coverage_workflow = execute_workflow_record(study, coverage_workflow_request);
+        check(coverage_workflow.at("result").at("status").text() == "complete");
+        const auto coverage_leaf = NativeRecord::decode(coverage_workflow.at("result").at("result").at("publication").bytes());
+        check(coverage_leaf.at("request").at("operation").text() == "coverage");
+        check(coverage_leaf.at("result").at("fields").at("view").at("reported").integer() == 3);
+        check(NativeRecord::decode(coverage_leaf.at("request_publication").bytes()).encode() ==
+              coverage_workflow_request.encode());
+        auto unsupported_untaken = Json::parse(coverage_branch.dump());
+        unsupported_untaken.at("query").set("operation", Json::string("unknown_operation"));
+        condition.set("coordinate", Json::integer(1));
         coordinate_workflow.at("entry").at("steps").at(1).set("on_false", unsupported_untaken);
         rejects([&] { (void)execute_workflow_record(study, admit_record_view(coordinate_workflow)); });
         auto model_node = Json::parse(R"({"id":"native-reader","type":"model","role":"native-reader","prompt":"Read the retained native tool result"})");

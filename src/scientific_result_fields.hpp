@@ -243,6 +243,24 @@ class ResultFields {
                          "vector", coordinates);
     }
     void bind(ResultValue binding) {bindings_.push(std::move(binding));}
+    void retain_sources(std::vector<RawByteSource> sources) {
+        const auto original = source_.raw_sources();
+        for (auto &bytes : sources) {
+            const auto found = std::find_if(original.begin(), original.end(),
+                [&](const auto &item) { return item.key() == bytes.key(); });
+            if (found != original.end()) {
+                if (!found->shares_owner(bytes)) throw std::invalid_argument("scientific source byte identity collision");
+                continue;
+            }
+            const auto retained = std::find_if(publications_.begin(), publications_.end(),
+                [&](const auto &item) { return item.key() == bytes.key(); });
+            if (retained != publications_.end()) {
+                if (!retained->shares_owner(bytes)) throw std::invalid_argument("scientific retained byte identity collision");
+            } else {
+                publications_.push_back(std::move(bytes));
+            }
+        }
+    }
     NativeRecord finish(ResultValue view) {
         view = ResultValue(consume_staged(std::move(view).release()));
         bindings_ = ResultValue(consume_staged(std::move(bindings_).release()));

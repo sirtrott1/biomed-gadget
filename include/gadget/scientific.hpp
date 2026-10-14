@@ -95,6 +95,7 @@ class ScientificSession {
     ScientificSession(const ScientificSession &) = delete;
     ScientificSession &operator=(const ScientificSession &) = delete;
     Json execute(const Json &query);
+    Json execute_source(const Json &query, rfc::runtime::ExecutionLease lease);
     NativeRecord execute_record(const NativeRecord &query);
     Json read_source(const Json &request) const;
     // Explicit current host limits and cancellation for declared native responses.

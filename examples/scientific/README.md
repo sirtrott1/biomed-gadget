@@ -5,6 +5,19 @@ admitted assay study. One `ScientificSession` retains the source field pins and
 prepared context operations across requests. The output retains the source
 publication, complete request bytes and every result certificate in RFCXS.
 
+`inspect`, `coverage` and `provenance` publish native source results through
+`ScientificSession::execute_record`. Coverage references the original tensor
+and preserves every coordinate, including supported zero and missing support.
+Provenance retains touching occurrences in source order with their exact
+coefficients, independent aspect flags and original evidence. Catalog values
+retain the admitted declarations and byte owners of independent publications.
+The JSON view reads these retained results.
+
+`ScientificSession::execute_source` accepts an explicit execution lease for
+these three operations. Declared record and work budgets and cancellation are
+checked while constructing complete source output; they do not select a
+smaller scientific population.
+
 Build with `GADGET_BUILD_EXAMPLES=ON` or `BUILD_TESTING=ON`:
 
 ```sh

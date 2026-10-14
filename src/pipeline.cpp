@@ -1009,12 +1009,18 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                                 "pipeline workflow source mismatch");
                     bound.set("source_digest", Json::string(study->digest()));
                     request = bound;
-                    certificate =
-                        execute_workflow(study, request, models, assigned_resources, {}, evidence);
+                    const auto native_request = admit_record_view(request);
+                    native_request.write(job / "request.rfcxs");
+                    direct_result = execute_workflow_record(study, native_request, models,
+                                                            assigned_resources, {}, evidence);
+                    certificate = workflow_record_view(*direct_result);
                     require(certificate.at("status").text() == "complete",
                             "pipeline workflow did not complete");
                 } else if (request.at("operation").text() == "native_query") {
-                    certificate = source->run(request, job / "results", assigned_resources);
+                    const auto native_request = admit_record_view(request);
+                    native_request.write(job / "request.rfcxs");
+                    direct_result = source->run_record(native_request, job / "results", assigned_resources);
+                    certificate = render_record_view(direct_result->at("result"));
                 } else {
                     write_record(job / "request.rfcxs", request);
                     const auto typed_request = read_record(job / "request.rfcxs");

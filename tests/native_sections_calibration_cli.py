@@ -83,10 +83,24 @@ def main(binary, consumer, root):
         display = subprocess.run(command, capture_output=True, text=True, timeout=300)
         assert display.returncode == 0, display.stderr
         assert json.loads(display.stdout)['result']['result']['reported'] > 0
-        target = results / 'unconverted-workflow.rfcxs'
-        refused = subprocess.run([*command, '--out', str(target)], capture_output=True, text=True)
+        target = results / 'coverage-workflow.rfcxs'
+        retained = subprocess.run([*command, '--out', str(target)], capture_output=True, text=True)
+        assert retained.returncode == 0, retained.stderr
+        assert json.loads(retained.stdout)['result'] == json.loads(display.stdout)['result']
+        native = subprocess.run([str(binary), 'record-view', '--input', str(target), '--member', 'result'],
+                                capture_output=True, text=True, check=True)
+        assert json.loads(native.stdout)['native_execution'] is True and target.is_file()
+        unsupported = copy.deepcopy(legacy)
+        unsupported['entry']['query'] = dict(operation='unknown')
+        unsupported_path = results / 'unsupported-workflow.json'
+        unsupported_path.write_text(json.dumps(unsupported))
+        unsupported_target = results / 'unsupported-workflow.rfcxs'
+        refused = subprocess.run([str(binary), 'workflow', '--workspace',
+                                  str(case / 'workspace.moved/workspace.rfcxs'), '--assay', 'measurements',
+                                  '--request', str(unsupported_path), '--out', str(unsupported_target)],
+                                 capture_output=True, text=True)
         assert refused.returncode != 0 and 'native result publisher' in refused.stderr
-        assert not target.exists()
+        assert not unsupported_target.exists()
 
     verify(structural, queries, 'structural')
     sections = root / 'sections'
