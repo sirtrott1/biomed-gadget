@@ -124,6 +124,9 @@ Json splice_search(const ResourceImages &images, const Json &request);
 Json read_reconstruction(const ResourceImage &resource, const Json &request);
 Json query_batch(const AssayWorkspace &workspace, const Json &request,
                  const std::shared_ptr<CpuResources> &resources);
+NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRecord &request,
+                               const std::shared_ptr<CpuResources> &resources);
+Json query_batch_fields_view(const NativeRecord &record);
 Json constrained_allocations(const Json &request,
                              std::optional<AssayFieldsSource> *retained = nullptr);
 Json constraint_fields_view(const NativeRecord &record);
