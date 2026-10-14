@@ -114,6 +114,8 @@ class ScientificSession {
     void validate(const Json &query);
     Json execute_plan(const Json &plan);
     NativeRecord execute_plan_record(const NativeRecord &plan);
+    // Query and plan proposals retain their original request and actual results.
+    NativeRecord apply_proposal_record(const NativeRecord &proposal);
     Json propose_annotations(const Json &annotations);
     Json native_cache_statistics() const;
     // Counts source-bound preparations separately from immutable certificates.

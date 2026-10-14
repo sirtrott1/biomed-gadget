@@ -54,6 +54,30 @@ def main(binary, consumer, root):
         checks += len(actual["occurrences"])+1
     control = root/"queries.json"
     control.write_text(json.dumps(queries))
+    (root/"native").mkdir()
+    for name, query in queries.items():
+        request = root/("proposal-"+name+".json")
+        request.write_text(json.dumps(dict(schema="gadget.scientific.agent.proposal.v1", action="query", query=query)))
+        native = root/"native"/("cli-"+name+".rfcxs")
+        process = subprocess.run([str(binary), "proposal", "--study", str(study), "--request", str(request), "--out", str(native)],
+                                 check=True, capture_output=True, text=True)
+        answer = json.loads(process.stdout)
+        assert answer["status"] == "executed" and answer["certificate"]["result"] == execute(query) and native.is_file()
+        checks += 3
+    source = subprocess.run([str(binary), "source-index", "--study", str(study)],
+                            check=True, capture_output=True, text=True)
+    plan = dict(schema="gadget.scientific.plan.v1", id="proposal-source-plan", question="Retain every source result",
+                source_digest=json.loads(source.stdout)["source_digest"],
+                steps=[dict(id=name, query=query) for name, query in queries.items()])
+    request = root/"proposal-plan.json"
+    request.write_text(json.dumps(dict(schema="gadget.scientific.agent.proposal.v1", action="plan", plan=plan)))
+    native = root/"native/cli-plan.rfcxs"
+    process = subprocess.run([str(binary), "proposal", "--study", str(study), "--request", str(request), "--out", str(native)],
+                             check=True, capture_output=True, text=True)
+    answer = json.loads(process.stdout)
+    assert answer["status"] == "executed" and native.is_file()
+    assert [step["id"] for step in answer["certificate"]["steps"]] == list(queries)
+    checks += 3
     process = subprocess.run([str(consumer), str(study), str(control), str(root/"native"), "study"],
                              capture_output=True, text=True)
     assert process.returncode == 0, (process.stdout, process.stderr)

@@ -337,4 +337,5 @@ Json result_tensor_view(const NativeRecord &record);
 Json result_fields_view(const NativeRecord &record);
 NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeRecord &plan,
     const std::string &source_digest, const std::vector<std::pair<std::string, NativeRecord>> &steps);
+NativeRecord retain_scientific_proposal(const NativeRecord &execution, const NativeRecord &proposal);
 } // namespace gadget::scientific_detail

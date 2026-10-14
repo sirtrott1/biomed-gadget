@@ -13,6 +13,19 @@ coefficients, independent aspect flags and original evidence. Catalog values
 retain the admitted declarations and byte owners of independent publications.
 The JSON view reads these retained results.
 
+`ScientificSession::apply_proposal_record` executes query and plan proposals
+while retaining the original proposal owner and actual native certificates.
+The public `proposal` command can write the same owning result:
+
+```sh
+gadget proposal --study study.json --request proposal.json --out response.rfcxs
+```
+
+The request uses `gadget.scientific.agent.proposal.v1`, with `action: "query"`
+and a `query` member, or `action: "plan"` and a `plan` member. The output path
+must be new. `replay_scientific_record` recomputes the retained query or ordered
+plan from its original source and verifies its complete fields and support.
+
 `ScientificSession::execute_source` accepts an explicit execution lease for
 these three operations. Declared record and work budgets and cancellation are
 checked while constructing complete source output; they do not select a

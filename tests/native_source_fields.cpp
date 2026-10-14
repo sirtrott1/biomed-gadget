@@ -144,6 +144,75 @@ int main(int argc, char **argv) try {
     retained.write(output/"plan.rfcxs");
     const auto replayed = replay_scientific_record(NativeRecord::read(output/"plan.rfcxs"));
     check(replayed.at("result").at("steps").size() == queries.size(), "source plan lost ordered children");
+    using N = NativeRecordValue;
+    const auto verify_proposal = [&](const NativeRecord &publication, const NativeRecord &query,
+                                      const ScientificStudy &original) {
+        check(publication.at("result").at("status").text() == "executed",
+              "native proposal did not execute");
+        const auto inner = retain_operation(publication, query,
+            publication.at("result").at("certificate").unbound_value());
+        verify(inner, original, query);
+    };
+    for (const auto &name : queries.names()) {
+        const auto proposal = N(N::Object{{{"schema", N(std::string("gadget.scientific.agent.proposal.v1"))},
+            {"action", N(std::string("query"))}, {"query", queries.at(name).unbound_value()}}});
+        const auto enclosing = NativeRecord::annotate(N(N::Object{{
+            {"unrelated", N(std::string("Original enclosing request context"))},
+            {"selected", proposal}}}), queries.owning_publication());
+        const auto selected = enclosing.at("selected");
+        const auto applied = session.apply_proposal_record(selected);
+        verify_proposal(applied, selected.at("query"), *study);
+        check(NativeRecord::decode(applied.at("request_publication").bytes()).encode() == enclosing.encode(),
+              "proposal lost its whole original selected request owner");
+        applied.write(output/("apply-"+name+".rfcxs"));
+        const auto reopened = NativeRecord::read(output/("apply-"+name+".rfcxs"));
+        const auto repeated = replay_scientific_record(reopened);
+        verify_proposal(repeated, selected.at("query"), *study);
+        verify_proposal(replay_scientific_record(repeated), selected.at("query"), *study);
+        check(std::ranges::equal(applied.at("request_publication").bytes(), repeated.at("request_publication").bytes()) &&
+                  applied.raw_sources().size() == repeated.raw_sources().size(),
+              "proposal replay changed original request bytes or accumulated owners");
+        auto forged = reopened.unbound_value();
+        check(mutate_value(forged, "cutoff", N(rfc::numeric::Integer(999999))),
+              "proposal cutoff mutation was not exercised");
+        bool refused = false;
+        try { (void)replay_scientific_record(reopened.derive(std::move(forged))); }
+        catch (const std::exception &) { refused = true; }
+        check(refused, "proposal replay admitted a changed mathematical cutoff");
+        if (fs::exists(output/("cli-"+name+".rfcxs"))) {
+            const auto cli = replay_scientific_record(NativeRecord::read(output/("cli-"+name+".rfcxs")));
+            const ScientificStudy original_cli(NativeRecord::decode(cli.at("result").at("certificate").at("source_study_publication").bytes()));
+            check(original_cli.digest() == study->digest() &&
+                      encode_rfcx(original_cli.endpoint()->source).bytes == encode_rfcx(study->endpoint()->source).bytes,
+                  "CLI proposal changed the original declared source");
+            verify_proposal(cli, queries.at(name), original_cli);
+        }
+    }
+    const auto plan_proposal = admit_record_view(Json::parse(
+        "{\"schema\":\"gadget.scientific.agent.proposal.v1\",\"action\":\"plan\",\"plan\":"+plan.dump()+"}"));
+    const auto applied_plan = session.apply_proposal_record(plan_proposal);
+    applied_plan.write(output/"apply-plan.rfcxs");
+    const auto repeated_plan = replay_scientific_record(NativeRecord::read(output/"apply-plan.rfcxs"));
+    check(repeated_plan.at("result").at("certificate").at("steps").size() == queries.size() &&
+              repeated_plan.raw_sources().size() == applied_plan.raw_sources().size() &&
+              std::ranges::equal(applied_plan.at("request_publication").bytes(), repeated_plan.at("request_publication").bytes()),
+          "proposal plan replay lost ordered mathematical children or original owner");
+    if (fs::exists(output/"cli-plan.rfcxs"))
+        check(replay_scientific_record(NativeRecord::read(output/"cli-plan.rfcxs")).at("result").at("certificate").at("steps").size() == queries.size(),
+              "CLI proposal plan export lost native ordered children");
+    auto invalid_proposal = render_record_view(plan_proposal);
+    invalid_proposal.set("code", Json::string("Unadmitted model program"));
+    const auto before_rejection = session.preparation_count();
+    const auto rejected_proposal = session.apply_proposal_record(admit_record_view(invalid_proposal));
+    check(rejected_proposal.at("result").at("status").text() == "rejected" &&
+              !rejected_proposal.at("result").has("certificate") &&
+              rejected_proposal.endpoint()->tensors.size() == study->endpoint()->tensors.size() &&
+              session.preparation_count() == before_rejection,
+          "rejected model proposal fabricated a mathematical result or prepared its plan");
+    bool rejected_replay = false;
+    try { (void)replay_scientific_record(rejected_proposal); }
+    catch (const std::exception &) { rejected_replay = true; }
+    check(rejected_replay, "rejected model proposal was treated as executed during replay");
     const auto maximum = std::numeric_limits<std::size_t>::max();
     const auto coverage = render_record_view(queries.at("coverage_A"));
     for (std::size_t scenario = 0; scenario < 4; ++scenario) {

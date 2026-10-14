@@ -368,6 +368,14 @@ NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeReco
     const auto retained = source.derive(std::move(value), std::move(sources));
     return retain_operation(retained, plan, retained.unbound_value());
 }
+NativeRecord retain_scientific_proposal(const NativeRecord &execution, const NativeRecord &proposal) {
+    using N = NativeRecordValue;
+    N value(N::Object{{{"schema", N(std::string("gadget.agent.response.v1"))},
+        {"proposal", import_record_view(render_record_view(proposal))},
+        {"certificate", execution.at("result").unbound_value()},
+        {"status", N(std::string("executed"))}}});
+    return retain_operation(execution, proposal, std::move(value));
+}
 } // namespace gadget::scientific_detail
 
 namespace gadget {
@@ -534,6 +542,21 @@ NativeRecord replay_scientific_record(const NativeRecord &publication,
     const auto result = publication.at("result");
     const auto schema = result.at("schema").text();
     const auto request = retained_request(publication);
+    if (schema == "gadget.agent.response.v1") {
+        scientific_detail::require(result.at("status").text() == "executed" &&
+            request.at("schema").text() == "gadget.scientific.agent.proposal.v1",
+            "scientific replay requires an executed query or plan proposal");
+        const auto action = request.at("action").text();
+        scientific_detail::require(action == "query" || action == "plan",
+                                   "scientific replay proposal action is not supported");
+        scientific_detail::members(render_record_view(request), {"schema", "action", action});
+        scientific_detail::require(render_record_view(request).dump() ==
+            render_record_view(result.at("proposal")).dump(), "scientific proposal view differs from its request");
+        const auto child = retain_operation(publication, request.at(action),
+                                            result.at("certificate").unbound_value());
+        const auto replayed = replay_scientific_record(child, std::move(resources));
+        return scientific_detail::retain_scientific_proposal(replayed, request);
+    }
     if (schema == "gadget.scientific.plan.fields.v1") {
         scientific_detail::require(result.at("steps").size() > 0, "scientific replay plan is empty");
         std::optional<NativeRecord> original;

@@ -3649,7 +3649,36 @@ Json ScientificSession::read_source(const Json &request) const {
     auto worker = state_->cpu().reserve(1);
     return state_->owner->read_source(request);
 }
+NativeRecord ScientificSession::apply_proposal_record(const NativeRecord &proposal) {
+    using N = NativeRecordValue;
+    const auto admitted = render_record_view(proposal);
+    const auto rejected = [&](const char *status, const std::exception &error) {
+        N value(N::Object{{{"schema", N(std::string("gadget.agent.response.v1"))},
+            {"proposal", import_record_view(admitted)}, {"status", N(std::string(status))},
+            {"error", N(std::string(error.what()))}}});
+        return retain_operation(state_->owner->native_publication(), proposal, std::move(value));
+    };
+    try {
+        require(admitted.at("schema").text() == "gadget.scientific.agent.proposal.v1",
+                "unsupported agent proposal schema");
+        const auto action = admitted.at("action").text();
+        require(action == "query" || action == "plan", "native proposal requires query or plan");
+        members(admitted, {"schema", "action", action});
+        const auto execution = action == "query" ? execute_record(proposal.at(action))
+                                                   : execute_plan_record(proposal.at(action));
+        return scientific_detail::retain_scientific_proposal(execution, proposal);
+    } catch (const rfc::runtime::CpuResourceBusy &error) {
+        return rejected("busy", error);
+    } catch (const rfc::runtime::ExecutionLimitExceeded &error) {
+        return rejected("rejected", error);
+    } catch (const std::invalid_argument &error) {
+        return rejected("rejected", error);
+    }
+}
 Json apply_scientific_proposal(ScientificSession &session, const Json &proposal) {
+    if (proposal.has("action") && json_object_is_type(proposal.at("action").raw(), json_type_string) &&
+        (proposal.at("action").text() == "query" || proposal.at("action").text() == "plan"))
+        return render_record_view(session.apply_proposal_record(admit_record_view(proposal)).at("result"));
     auto result = Json::object();
     result.set("schema", Json::string("gadget.agent.response.v1"));
     result.set("proposal", Json::parse(proposal.dump()));
@@ -3665,15 +3694,12 @@ Json apply_scientific_proposal(ScientificSession &session, const Json &proposal)
             members(proposal, {"schema", "action", "read"});
             result.set("certificate", session.read_source(proposal.at("read")));
             result.set("status", Json::string("retrieved"));
-        } else if (action == "query" || action == "plan" || action == "annotate") {
-            const std::string member = action == "annotate" ? "annotations" : action;
+        } else if (action == "annotate") {
+            const std::string member = "annotations";
             members(proposal, {"schema", "action", member});
             result.set("certificate",
-                       action == "query"
-                           ? session.execute(proposal.at(member))
-                           : (action == "plan" ? session.execute_plan(proposal.at(member))
-                                               : session.propose_annotations(proposal.at(member))));
-            result.set("status", Json::string(action == "annotate" ? "prospective" : "executed"));
+                       session.propose_annotations(proposal.at(member)));
+            result.set("status", Json::string("prospective"));
         } else
             throw std::invalid_argument("unsupported scientific model action");
     } catch (const rfc::runtime::CpuResourceBusy &error) {

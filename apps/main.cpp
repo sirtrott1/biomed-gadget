@@ -826,6 +826,13 @@ int main(int argc, char **argv) {
                     const auto publication=session.execute_plan_record(request.native());
                     if(options.contains("--out"))publication.write(required("--out"));
                     result=gadget::render_record_view(publication.at("result"));
+                } else if (command == "proposal" && request.native().has("action") &&
+                           request.native().at("action").kind() == gadget::NativeRecordKind::Text &&
+                           (request.native().at("action").text() == "query" ||
+                            request.native().at("action").text() == "plan")) {
+                    const auto publication = session.apply_proposal_record(request.native());
+                    if (options.contains("--out")) publication.write(required("--out"));
+                    result = gadget::render_record_view(publication.at("result"));
                 } else {
                     result=command=="annotate"
                         ?session.propose_annotations(static_cast<gadget::Json>(request))
