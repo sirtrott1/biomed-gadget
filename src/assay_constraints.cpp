@@ -275,19 +275,19 @@ allocation_detail::Result allocation_detail::solve_fields(const Problem &p) {
         if (search.optimum) item.members.emplace_back("objective_contribution", N(*search.optimum));
         blocks.elements.emplace_back(std::move(item));
     }
-    auto summary = Json::object();
-    summary.set("status", Json::string(feasible != 0 ? "feasible" : "infeasible"));
-    summary.set("domain", request.at("domain"));
-    summary.set("equality_rank", cardinality(f.equality_rank));
-    if (f.consistent) summary.set("affine_dimension", cardinality(f.kernel.cols()));
-    summary.set("independent_blocks", cardinality(f.blocks.size()));
-    summary.set("constraint_carrier", f.carrier);
-    summary.set("complete", Json::boolean(true));
-    summary.set("witness_representation", Json::string(factorized ? "factorized" : "explicit"));
-    summary.set("optimizer_semantics", Json::string(p.domain == "bounded_integer"
+    N::Object summary;
+    summary.members.emplace_back("status", N(std::string(feasible != 0 ? "feasible" : "infeasible")));
+    summary.members.emplace_back("domain", N(p.domain));
+    summary.members.emplace_back("equality_rank", count(Integer(std::to_string(f.equality_rank))));
+    if (f.consistent) summary.members.emplace_back("affine_dimension", count(Integer(std::to_string(f.kernel.cols()))));
+    summary.members.emplace_back("independent_blocks", count(Integer(std::to_string(f.blocks.size()))));
+    summary.members.emplace_back("constraint_carrier", import_record_view(f.carrier));
+    summary.members.emplace_back("complete", N(true));
+    summary.members.emplace_back("witness_representation", N(std::string(factorized ? "factorized" : "explicit")));
+    summary.members.emplace_back("optimizer_semantics", N(std::string(p.domain == "bounded_integer"
         ? "All optimal integer points, reconstructed from the Cartesian product of complete block tuples"
-        : "All optimal vertices, reconstructed from complete block tuples; their convex hull is the complete optimal face"));
-    summary.set("certificate_method", Json::string("Native exact affine kernel and support-indicator factors; complete local finite search and original constraint residuals"));
+        : "All optimal vertices, reconstructed from complete block tuples; their convex hull is the complete optimal face")));
+    summary.members.emplace_back("certificate_method", N(std::string("Native exact affine kernel and support-indicator factors; complete local finite search and original constraint residuals")));
     N::Array senses, reduced_senses;
     for (const auto &sense : p.senses) senses.elements.emplace_back(sense);
     for (const auto &sense : f.senses) reduced_senses.elements.emplace_back(sense);
@@ -297,7 +297,7 @@ allocation_detail::Result allocation_detail::solve_fields(const Problem &p) {
     N declaration(N::Object{{{"schema", N(std::string("gadget.constraints.fields.v1"))},
         {"fields", N(std::move(declarations))}, {"tensors", N(std::move(tensors))},
         {"variables", import_record_view(p.names)}, {"protocol", import_record_view(request)},
-        {"summary", import_record_view(summary)}, {"consistent", N(f.consistent)},
+        {"summary", N(std::move(summary))}, {"consistent", N(f.consistent)},
         {"factor_certificate", N(certificate)}, {"senses", N(std::move(senses))},
         {"reduced_senses", N(std::move(reduced_senses))},
         {"equality_origins", import_record_view(f.equality_origins)},

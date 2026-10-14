@@ -1648,7 +1648,8 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
                                     request.at("operation").text() == "indexed_sequence_alignment" ||
                                     request.at("operation").text() == "reference_sequence_matches" ||
                                     request.at("operation").text() == "sequence_splice_discovery" ||
-                                    request.at("operation").text() == "read_overlap_reconstruction"))
+                                    request.at("operation").text() == "read_overlap_reconstruction" ||
+                                    request.at("operation").text() == "read_edit_consensus"))
         return render_record_view(execute_record(admit_record_view(request),
                                                 std::move(resources)).at("result"));
     members(request, {"schema", "operation"},
@@ -2949,7 +2950,7 @@ bool AssayWorkspace::supports_native_publication(std::string_view operation) noe
            operation == "native_query" || operation == "relational_persistence" ||
            operation == "indexed_sequence_alignment" ||
            operation == "reference_sequence_matches" || operation == "sequence_splice_discovery" ||
-           operation == "read_overlap_reconstruction";
+           operation == "read_overlap_reconstruction" || operation == "read_edit_consensus";
 }
 NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
                                             std::shared_ptr<CpuResources> resources) const {
@@ -3076,7 +3077,8 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
     if (query.has("operation") && (query.at("operation").text() == "indexed_sequence_alignment" ||
                                    query.at("operation").text() == "reference_sequence_matches" ||
                                    query.at("operation").text() == "sequence_splice_discovery" ||
-                                   query.at("operation").text() == "read_overlap_reconstruction")) {
+                                   query.at("operation").text() == "read_overlap_reconstruction" ||
+                                   query.at("operation").text() == "read_edit_consensus")) {
         using N = NativeRecordValue;
         require(query.at("schema").text() == "gadget.assays.query.v1", "assay query schema");
         if (!resources) resources = CpuResources::local();
@@ -3095,6 +3097,7 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
         auto fields = operation == "indexed_sequence_alignment" ? indexed_alignment_fields_source(images, query)
                     : operation == "reference_sequence_matches" ? reference_match_fields_source(images, query)
                     : operation == "sequence_splice_discovery" ? splice_search_fields_source(images, query)
+                    : operation == "read_edit_consensus" ? read_consensus_fields_source(images, query)
                     : read_reconstruction_fields_source(images.at(query.at("resource").text()), query);
         const auto key = rfc::machine::checked_size_add(fields.sources.size(), 1);
         auto workspace = native_publication().archive_source(key); const auto bytes = workspace.bytes().size();
@@ -3386,7 +3389,7 @@ Json bioinformatics_capabilities() {
           "spatial_relations", "aggregate_assay", "design_aggregation", "exact_sequence_alignment",
           "reference_sequence_matches", "sequence_assembly_graph", "constrained_allocations",
           "relational_persistence", "indexed_sequence_alignment", "sequence_splice_discovery",
-          "read_overlap_reconstruction", "expression_allocations", "relational_gluing", "query_batch"})
+          "read_overlap_reconstruction", "read_edit_consensus", "expression_allocations", "relational_gluing", "query_batch"})
         result.at("workspace_methods").push(Json::string(op));
 #if GADGET_HAS_HTSLIB
     for (const auto *format : {"sam", "bam", "cram", "vcf", "bcf"})
@@ -3437,6 +3440,8 @@ Json bioinformatics_capabilities() {
         "composite_sequence_execution",
         Json::parse(
             R"({"splice":"Complete exon extensions from intrinsic-sized literal seeds; exact gap interval joins and heap-based complete chain enumeration","read_cover":"Native impossible-start reachability witnesses, source-sized PackedBits subset keys, complete reachable prefix carrier and certified native suffix pruning","gluing":"Native categorical complete-overlap gluing and every original read restriction","comparison":"Native inherited Gram on every distinct-spelling representative; exact common endpoint certificates","assembly":"Complete original observed k-mer occurrence map, source walks and native boundary rank","shape":"Declared source/output counts and checked intrinsic native cell, identity and codec domains; no dataset/result policy ceilings"})"));
+    result.at("sequence_profiles").set("read_edit_consensus", Json::string(
+        "Every minimum-length complete-read consensus then minimum total unit edits, with explicit paired source support, original orientations and all joint alignment histories"));
     result.set(
         "expression_allocation_execution",
         Json::parse(
@@ -3470,6 +3475,7 @@ Json bioinformatics_capabilities() {
         .at("splicing_evidence")
         .push(Json::string("sequence_splice_discovery"));
     result.at("assay_routes").at("assembly").push(Json::string("read_overlap_reconstruction"));
+    result.at("assay_routes").at("assembly").push(Json::string("read_edit_consensus"));
 #if !GADGET_HAS_HTSLIB
     result.at("assay_routes")
         .set("splicing_evidence", Json::parse("[\"annotation_features\",\"reference_sequence_"

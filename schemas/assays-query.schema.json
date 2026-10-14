@@ -3277,6 +3277,64 @@
         "protocol"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "const": "gadget.assays.query.v1"
+        },
+        "operation": {
+          "const": "read_edit_consensus"
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "strands": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "+",
+              "-"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
+        },
+        "maximum_edits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimum_paired_bases": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "objective": {
+          "const": "minimum_length_then_total_unit_edits"
+        },
+        "ambiguity": {
+          "const": "literal_ACGT"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema",
+        "operation",
+        "resource",
+        "strands",
+        "maximum_edits",
+        "minimum_paired_bases",
+        "objective",
+        "ambiguity",
+        "evidence"
+      ],
+      "additionalProperties": false
     }
   ]
 }

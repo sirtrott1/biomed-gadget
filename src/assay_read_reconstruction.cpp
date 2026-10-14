@@ -1,4 +1,5 @@
 #include "sequence_route_witnesses.hpp"
+#include "sequence_consensus.hpp"
 #include <rfc/local/section.hpp>
 
 namespace gadget::assay_detail {
