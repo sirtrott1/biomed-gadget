@@ -233,7 +233,22 @@ int main(int argc,char **argv) {
         const auto decoded=typed.decode_raw_span(34,span,type(6),encoded.bit_count);
         check(composite::declared_value_equal(value,decoded.value),"custom raw composite payload differs");
         check(decoded.source.declaration().declared_owner()->occurrence.has_value(),"raw decoded value lost occurrence owner");
+        const auto cached_layout = typed.compiled_layout(type(6));
+        const auto alias = typed;
+        check(cached_layout == typed.compiled_layout(type(6)) &&
+                  cached_layout == alias.compiled_layout(type(6)),
+              "study aliases recompiled the same immutable layout");
+        check(&cached_layout->declarations() == &decoded.layout.declarations(),
+              "raw decoding bypassed the study declaration owner");
+        refuses([&] { (void)typed.compiled_layout(type(999)); },
+                "unknown layout declaration accepted");
         NativeStudy concurrent(endpoint,701,{RawByteSource(84,encoded.bytes)});
+        auto first_layout = std::async(std::launch::async,
+            [&] { return concurrent.compiled_layout(type(6)); });
+        auto second_layout = std::async(std::launch::async,
+            [&] { return concurrent.compiled_layout(type(6)); });
+        check(first_layout.get() == second_layout.get(),
+              "concurrent callers published different compiled layout owners");
         auto first_decode=std::async(std::launch::async,[&]{return concurrent.decode_raw_span(34,span,type(6),encoded.bit_count);});
         auto second_decode=std::async(std::launch::async,[&]{return concurrent.decode_raw_span(34,span,type(6),encoded.bit_count);});
         const auto first_value=first_decode.get();
@@ -245,6 +260,24 @@ int main(int argc,char **argv) {
               "repeated raw decoding copied the same endpoint registry");
         check(&decoded.layout.declarations()!=&first_value.layout.declarations(),
               "independent study owners shared a declaration registry");
+        auto limited_endpoint = endpoint;
+        ++limited_endpoint.sequence;
+        limited_endpoint.declarations->resource_limits.max_integer_bits = 64;
+        NativeStudy limited(limited_endpoint,701,{RawByteSource(84,encoded.bytes)});
+        const auto limited_layout = limited.compiled_layout(type(6));
+        check(limited_layout != cached_layout && limited_layout->limits().max_integer_bits == 64,
+              "another publication reused a broader cached declaration profile");
+        refuses([&] { (void)limited.decode_raw_span(34,span,type(6),encoded.bit_count); },
+                "raw decoding bypassed its actual source integer limit");
+        check(limited_layout == limited.compiled_layout(type(6)),
+              "failed value admission changed its immutable cached layout");
+        const auto retained_layout = [&] {
+            NativeStudy temporary(endpoint,701,{RawByteSource(84,encoded.bytes)});
+            return temporary.compiled_layout(type(6));
+        }();
+        check(composite::declared_value_equal(
+                  storage::decode_declared_bits(*retained_layout,encoded.bytes,encoded.bit_count), value),
+              "compiled layout lost its registry after study destruction");
         const auto retained_decode=[&]{
             NativeStudy temporary(endpoint,702,{RawByteSource(84,encoded.bytes)});
             return temporary.decode_raw_span(34,span,type(6),encoded.bit_count);

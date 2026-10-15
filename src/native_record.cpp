@@ -2,7 +2,6 @@
 #include <cstring>
 #include <gadget/native_record.hpp>
 #include <iterator>
-#include <mutex>
 #include <rfc/core/builder.hpp>
 #include <rfc/runtime/hardware_inventory.hpp>
 #include <rfc/storage/file_io.hpp>
@@ -326,9 +325,6 @@ struct NativeRecord::State {
     std::map<std::uint64_t, const storage::TemporalDeclaredValue *> values;
     std::map<const V *, const storage::TemporalDeclaredValue *> owners;
     using PackedAddress = std::tuple<ID, std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t>;
-    mutable std::mutex layout_mutex;
-    mutable std::optional<composite::PreparedLayoutRegistry> packed_registry;
-    mutable std::map<ID, std::shared_ptr<const composite::CompiledLayout>> packed_layouts;
     static PackedAddress packed_address(const V &value) {
         const auto &p = parts(value);
         return {{unsigned_value(p.at(3)), unsigned_value(p.at(4)), unsigned_value(p.at(5))},
@@ -337,17 +333,7 @@ struct NativeRecord::State {
     std::pair<ID, std::shared_ptr<const V>> unpack(const V &value) const {
         const auto &[type, source, offset, length, bits] = packed_address(value);
         (void)source; (void)offset; (void)length;
-        const auto &declarations = *publication.declarations;
-        std::shared_ptr<const composite::CompiledLayout> layout;
-        {
-            std::lock_guard lock(layout_mutex);
-            if (!packed_registry)
-                packed_registry.emplace(declarations.registry, declarations.resource_limits);
-            if (!packed_layouts.contains(type))
-                packed_layouts.emplace(type, std::make_shared<const composite::CompiledLayout>(
-                    *packed_registry, type, declarations.profile));
-            layout = packed_layouts.at(type);
-        }
+        const auto layout = study.compiled_layout(type);
         const auto bytes = span(value);
         return {type, std::make_shared<const V>(storage::decode_declared_bits(
             *layout, bytes, machine::checked_size(bits)))};
