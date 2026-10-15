@@ -90,7 +90,7 @@ NativeRecord claim_request(const NativeRecord &owner, const Json &items) {
 struct WorkflowArchives {
     std::uint64_t next{1};
     std::vector<RawByteSource> sources;
-    std::map<std::shared_ptr<const void>, std::uint64_t, std::owner_less<std::shared_ptr<const void>>> owners;
+    std::map<std::weak_ptr<const void>, std::uint64_t, std::owner_less<>> owners;
     explicit WorkflowArchives(const NativeRecord &source) {
         for (const auto &bytes : source.raw_sources())
             next = std::max(next, rfc::machine::checked_size_add(bytes.key(), 1));
@@ -947,37 +947,41 @@ NativeRecord run_workflow(std::shared_ptr<const ScientificStudy> study, const Na
     receipt.set("workflow_sha256", ResultValue::string("sha256:" + sha256(admitted.dump())));
     receipt.set("native_execution", ResultValue::boolean(strict_native));
     Environment env;
+    std::optional<WorkflowValue> result;
     try {
-        const auto result = runner.run(workflow.at("entry"), env, session, "entry", 0, false);
-        receipt.set("result", archives.retain(result));
+        result = runner.run(workflow.at("entry"), env, session, "entry", 0, false);
         receipt.set("status", ResultValue::string("complete"));
     } catch (const std::exception &e) {
         receipt.set("status", ResultValue::string("failed"));
         receipt.set("error", ResultValue::string(e.what()));
     }
+    env.clear();
+    session.reset();
+    if (result) receipt.set("result", archives.retain(*result));
+    result.reset();
     auto trace = ResultValue::array();
-    for (const auto &[path, event] : runner.trace) {
+    for (auto &[path, event] : runner.trace) {
         (void)path;
         auto retained = ResultValue(event.control);
         if (event.output) retained.set("result", archives.retain(*event.output));
         if (event.comparison) retained.set("comparison", archives.retain(WorkflowValue(*event.comparison)));
         if (event.observation) retained.set("observation", archives.retain(*event.observation));
         trace.push(std::move(retained));
+        event.output.reset();
+        event.comparison.reset();
+        event.observation.reset();
     }
     receipt.set("trace", std::move(trace));
     // Complete archived bytes now own every result and observation.
     // Release decoded intermediates before constructing the outer publication.
-    env.clear();
     runner.trace.clear();
     archives.owners.clear();
-    session.reset();
     receipt.set("scope", ResultValue::string(
         "bounded application control flow; canonical P6 WorkGraph jobs and delegated "
         "caller-inclusive budgets; actual native results retained independently; one control "
         "thread outside arithmetic accounting; no chronology inferred from readiness"));
-    if (!archives.sources.empty())
-        source = source.derive(source.materialize_value(), std::move(archives.sources));
-    return retain_operation(source, workflow, std::move(receipt).release());
+    return retain_operation(source, std::move(archives.sources), workflow,
+                            std::move(receipt).release());
 }
 Json retained_workflow_value(const NativeRecord &value) {
     if (value.kind() == NativeRecordKind::Array) {
