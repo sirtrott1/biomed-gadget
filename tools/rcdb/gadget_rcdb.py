@@ -385,8 +385,6 @@ def execute_publication(workspace, request, *, gadget):
         output = Path(folder)/"result.rfcxs"
         workspace_path.write_bytes(workspace)
         request_path.write_bytes(request)
-        _validate_publication_file(workspace_path, gadget=binary, expected=workspace)
-        _validate_publication_file(request_path, gadget=binary, expected=request)
         process = subprocess.run([binary, "assay-query", "--workspace", str(workspace_path),
                                   "--request", str(request_path), "--out-record", str(output)],
                                  capture_output=True)
@@ -407,7 +405,6 @@ def replay_publication(publication, *, gadget):
         source = Path(folder)/"operation.rfcxs"
         output = Path(folder)/"replay.rfcxs"
         source.write_bytes(publication)
-        _validate_publication_file(source, gadget=binary, expected=publication)
         process = subprocess.run([binary, "replay-scientific", "--record", str(source),
                                   "--out-record", str(output)], capture_output=True)
         if process.returncode:
@@ -524,8 +521,6 @@ def select_publication_field(publication, request, *, selector, gadget):
         output = Path(folder) / "selection.rfcxs"
         source.write_bytes(publication)
         control.write_bytes(request)
-        _validate_publication_file(source, gadget=gadget, expected=publication)
-        _validate_publication_file(control, gadget=gadget, expected=request)
         process = subprocess.run([binary, "--input", str(source), "--request", str(control),
                                   "--out", str(output)], capture_output=True)
         if process.returncode:

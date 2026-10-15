@@ -407,11 +407,19 @@ budget refusals and exact native/compressed reads. It requires a native archive,
 the GADGET executable and its `gadget_publish_file` sibling, or an explicit
 `--publisher` executable, with a fresh output directory.
 
-Execution stages each complete input once. Canonical admission compares its
-re-encoding with the supplied immutable byte buffer. Output and file-format
+Execution stages each complete input once. The selected native execution command
+admits its original inputs through the canonical reader; the bridge avoids a
+separate input validation and re-encoding process. Output and file-format
 admission compare the canonical file with the captured complete byte buffer
 without staging another archive copy. Every byte is checked in bounded transfer
 buffers; native admission and complete result ownership remain unchanged.
+
+Record operators remain observable reads. Repeated expressions select their
+records again and retain each selected version and state digest in the trace.
+They do not opt into query local memoization or persistent result reuse: current
+versions and source policies can change, and native execution has filesystem
+effects. RCQL's existing result cache refuses these store-bound operations.
+Explicit historical versions remain available after a newer publication.
 
 To run the adapter contracts in an environment with RCDB and RCQL installed:
 

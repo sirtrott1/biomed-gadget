@@ -91,6 +91,9 @@ struct NativeStudy::State {
     mutable std::mutex accession_mutex;
     mutable std::once_flag declaration_once;
     mutable std::unique_ptr<composite::PreparedLayoutRegistry> declarations;
+    mutable std::mutex layout_mutex;
+    mutable std::map<composite::DeclarationId,
+                     std::shared_ptr<const composite::CompiledLayout>> layouts;
     std::map<std::uint64_t, RawByteSource> sources;
     std::unique_ptr<field::ExactExecutionTower> tower;
     State(const storage::TemporalEndpoint &endpoint, std::uint64_t ns,
@@ -130,9 +133,20 @@ struct NativeStudy::State {
             const auto endpoint = snapshot();
             require(endpoint->declarations.has_value(), "native source has no declarations");
             declarations = std::make_unique<composite::PreparedLayoutRegistry>(
-                endpoint->declarations->registry, native_data_limits().temporal.declarations);
+                endpoint->declarations->registry, endpoint->declarations->resource_limits);
         });
         return *declarations;
+    }
+    std::shared_ptr<const composite::CompiledLayout> prepare_layout(
+        composite::DeclarationId type) const {
+        const auto &registry = prepare_declarations();
+        const std::lock_guard lock(layout_mutex);
+        if (const auto found = layouts.find(type); found != layouts.end())
+            return found->second;
+        const auto layout = std::make_shared<const composite::CompiledLayout>(
+            registry, type, snapshot()->declarations->profile);
+        layouts.emplace(type, layout);
+        return layout;
     }
     std::shared_ptr<const storage::TemporalEndpoint> snapshot() const {
         if (publication)
@@ -199,6 +213,10 @@ std::shared_ptr<const storage::TemporalEndpoint> NativeStudy::endpoint() const {
 }
 std::shared_ptr<const storage::NativeAccessionDirectory> NativeStudy::accession_directory() const {
     return {state_,&state_->prepare_accessions()};
+}
+std::shared_ptr<const composite::CompiledLayout> NativeStudy::compiled_layout(
+    composite::DeclarationId type) const {
+    return state_->prepare_layout(type);
 }
 const core::RelationalComplex &NativeStudy::source() const { return endpoint()->source; }
 const field::ExactExecutionTower &NativeStudy::tower() const {
@@ -272,10 +290,8 @@ storage::PreparedNativeSourceProgram NativeStudy::program(
 DeclaredByteValue NativeStudy::decode_raw_span(std::uint64_t value,
     const RawSpanDeclaration &span, composite::DeclarationId type, std::size_t bit_count) const {
     auto source = raw_span(value, span);
-    const auto endpoint = source.declaration().endpoint();
-    composite::CompiledLayout layout(state_->prepare_declarations(), type,
-        endpoint->declarations->profile);
-    auto decoded = storage::decode_declared_bits(layout, source.bytes(), bit_count);
-    return {std::move(source), std::move(layout), std::move(decoded)};
+    const auto layout = compiled_layout(type);
+    auto decoded = storage::decode_declared_bits(*layout, source.bytes(), bit_count);
+    return {std::move(source), *layout, std::move(decoded)};
 }
 } // namespace gadget

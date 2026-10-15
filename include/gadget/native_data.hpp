@@ -99,6 +99,10 @@ class NativeStudy {
                             rfc::storage::NativeSeriesLimits limits = native_data_limits());
     std::shared_ptr<const rfc::storage::TemporalEndpoint> endpoint() const;
     std::shared_ptr<const rfc::storage::NativeAccessionDirectory> accession_directory() const;
+    // Reuse an immutable layout under this publication's declaration profile
+    // and resource limits. The returned owner survives the study.
+    std::shared_ptr<const rfc::composite::CompiledLayout> compiled_layout(
+        rfc::composite::DeclarationId type) const;
     const rfc::core::RelationalComplex &source() const;
     const rfc::field::ExactExecutionTower &tower() const;
     rfc::field::ExactHodgeOperator hodge(rfc::core::Grade grade) const;
