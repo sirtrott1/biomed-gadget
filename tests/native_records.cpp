@@ -96,6 +96,97 @@ void equal_value(const NativeRecord &a, const NativeRecord &b) {
         break;
     }
 }
+void added_source_operations(const NativeRecord &source) {
+    using N = NativeRecordValue;
+    const auto before = source.encode();
+    const auto original_sources = source.raw_sources();
+    std::uint64_t added_key = 1;
+    while (std::ranges::any_of(original_sources,
+                              [&](const auto &raw) { return raw.key() == added_key; }))
+        ++added_key;
+    const std::vector<std::byte> extra{std::byte{0}, std::byte{255}, std::byte{13},
+                                     std::byte{10}, std::byte{0}, std::byte{0}};
+    const std::vector<std::byte> request_bytes{std::byte{9}, std::byte{0}, std::byte{3}};
+    const auto enclosing = NativeRecord::create(
+        N(N::Object{{{"unselected", N(std::string("original request context"))},
+                     {"selected", N(N::Object{{{"operation", N(std::string("authored"))},
+                         {"evidence", N(N::ByteSpan{added_key, 0, request_bytes.size(), false})}}})}}}),
+        new_native_record_namespace(), {RawByteSource(added_key, request_bytes)});
+    const auto request = enclosing.at("selected");
+    const auto result = [&] {
+        return N(N::Object{{{"archive", N(N::ByteSpan{added_key, 0, extra.size(), false})}}});
+    };
+    const auto legacy = retain_operation(source, request, N(std::string("legacy observer")), {});
+    check(legacy.at("result").text() == "legacy observer", "existing observer overload changed");
+    std::size_t freezes = 0;
+    const auto out = retain_operation(source, {RawByteSource(added_key, extra)}, request, result(),
+        [&](std::string_view stage) { if (stage == "native_freeze") ++freezes; });
+    check(freezes == 1, "operation observer did not see one native publication");
+    check(source.encode() == before, "operation mutated its original source");
+    check(out.publication_history()->last_sequence() == source.publication_history()->last_sequence() + 1,
+          "operation introduced an intermediate publication");
+    const auto verify = [&](const NativeRecord &record) {
+        check(record.historical_publication(source.endpoint()->sequence).encode() == before,
+              "operation changed the original complete prefix");
+        check(NativeRecord::decode(record.at("request_publication").bytes()).encode() == enclosing.encode(),
+              "selected request lost its whole original owner");
+        check(std::ranges::equal(record.at("request").at("evidence").bytes(), request_bytes),
+              "request byte remapping collided with an added source");
+        check(std::ranges::equal(record.at("result").at("archive").bytes(), extra),
+              "operation changed complete added bytes");
+        const auto retained = record.raw_sources();
+        for (const auto &raw : original_sources) {
+            const auto found = std::ranges::find_if(retained,
+                [&](const auto &candidate) { return candidate.key() == raw.key(); });
+            check(found != retained.end() && std::ranges::equal(found->bytes(), raw.bytes()),
+                  "operation changed an original byte owner");
+        }
+        check(storage::encode_rfcx(record.endpoint()->source).bytes ==
+                  storage::encode_rfcx(source.endpoint()->source).bytes &&
+                  record.endpoint()->carriers == source.endpoint()->carriers &&
+                  record.endpoint()->tensors.size() == source.endpoint()->tensors.size(),
+              "operation changed its original complex, carriers or fields");
+        for (std::size_t i = 0; i < source.endpoint()->tensors.size(); ++i)
+            check(storage::temporal_endpoint_detail::tensor_equal(
+                      record.endpoint()->tensors[i], source.endpoint()->tensors[i]),
+                  "operation changed complete field support or coefficients");
+    };
+    verify(out);
+    const auto restarted = NativeRecord::decode(out.encode());
+    verify(restarted);
+    check(restarted.encode() == out.encode(), "operation changed on complete replay");
+    rejects([&] {
+        (void)retain_operation(source, {RawByteSource(original_sources.front().key(), extra)}, request, result());
+    });
+    rejects([&] {
+        (void)retain_operation(source, {RawByteSource(added_key, extra), RawByteSource(added_key, extra)},
+                               request, result());
+    });
+    rejects([&] { (void)retain_operation(source, std::vector<RawByteSource>{}, request, result()); });
+    const auto aliased = [&] { return N(N::ByteSpan{added_key, 0, 1, false}); };
+    rejects([&] { (void)retain_operation(source, request, aliased()); });
+    rejects([&] {
+        (void)retain_operation(*source.endpoint(), new_native_record_namespace(),
+                               source.raw_sources(), request, aliased());
+    });
+    rejects([&] {
+        auto endpoint = *source.endpoint();
+        (void)retain_operation(std::move(endpoint), new_native_record_namespace(),
+                               source.raw_sources(), request, aliased());
+    });
+    rejects([&] {
+        (void)retain_operation(source, std::vector<RawByteSource>{}, request,
+            N(N::Owned{0, {}, {}, std::make_shared<const N>(aliased())}));
+    });
+    std::size_t supplied = 0;
+    rejects([&] {
+        (void)retain_operation(source, std::vector<RawByteSource>{}, request,
+            N(N::PackedArray{1, [&](const auto &emit) { ++supplied; emit(aliased()); }}));
+    });
+    check(supplied == 1, "operation ownership check replayed a packed producer");
+    check(source.encode() == before, "failed operation mutated its original source");
+}
+
 void named_views() {
     using N = NativeRecordValue;
     N::Object input;
@@ -276,6 +367,7 @@ int main(int argc,char **argv) {
           "derived record discarded ordered history or parent values");
     check(NativeRecord::decode(annotated_derived.encode()).encode()==annotated_derived.encode(),
           "derived ordered history changed after restart");
+    added_source_operations(annotated_restart);
     check(storage::encode_rfcx(record.endpoint()->source).bytes==original,"complex changed by record admission");
     check(record.at("cell").at("value").rational()==numeric::Rational{"2/7"},"exact rational recoded");
     const auto owned=record.accession_directory()->cell({core::Grade{1},77}).declared_values();

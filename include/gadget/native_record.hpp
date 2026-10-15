@@ -146,8 +146,15 @@ class NativeRecord {
 // Host allocation of a new application publication identity; content equality
 // does not identify sources. Persisted records keep their admitted namespace.
 std::uint64_t new_native_record_namespace();
+// Result byte spans refer to the source or explicitly added byte owners.
+// Request bytes retain their separate remapped identities.
 NativeRecord retain_operation(const NativeRecord &source,const NativeRecord &request,
                               NativeRecordValue result, const NativeRecordObserver &observer = {});
+// Retain added immutable bytes and the operation through one derivation.
+// Existing source identity and history admission rules remain in force.
+NativeRecord retain_operation(const NativeRecord &source, std::vector<RawByteSource> added,
+    const NativeRecord &request, NativeRecordValue result,
+    const NativeRecordObserver &observer = {});
 // Publish a newly constructed mathematical source and result together.
 NativeRecord retain_operation(const rfc::storage::TemporalEndpoint &source,
     std::uint64_t source_namespace, std::vector<RawByteSource> sources,
