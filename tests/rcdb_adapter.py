@@ -7,10 +7,11 @@ from pathlib import Path
 import subprocess
 import sys
 
-from rcdb import LocalStore, VALUE_CODEC, VersionConflictError
+from rcdb import LocalStore, MemoryStore, VALUE_CODEC, VersionConflictError
 from rcdb.header import DEFAULT_RECORD_CODECS
 from rcql import BoundSource, SourcePolicy, call, query, run, source
 from rcql.result_codec import pack_result, unpack_result
+from rcql.query_cache import QueryCache
 
 module_path = Path(__file__).resolve().parents[1]/"tools"/"rcdb"/"gadget_rcdb.py"
 spec = importlib.util.spec_from_file_location("gadget_rcdb", module_path)
@@ -32,7 +33,8 @@ def rejects(action):
 if len(sys.argv) > 4 and sys.argv[4] == "--reopen":
     with closing(LocalStore(root/"native.rcdb")) as store:
         assert adapter.read_publication(store, "coverage", version=1).value == raw
-        assert adapter.read_publication(store, "coverage").record.version == 2
+        assert adapter.read_publication(store, "coverage").record.version == 3
+        assert adapter.read_publication(store, "coverage").value == (root/"replacement.rfcxs").read_bytes()
     print("Fresh-process native RCDB replay PASS")
     sys.exit(0)
 
@@ -129,6 +131,31 @@ with closing(LocalStore(root/"native.rcdb", record_codecs=(*DEFAULT_RECORD_CODEC
     rejects(lambda: run(declaration, sources={"db": BoundSource(store, SourcePolicy.allow("records"))}))
     current = run(query(source("db"), call("GADGET_PUBLICATION_BYTES", "coverage")), sources={"db": store})
     assert current.execution[0]["methods"][0]["record_version"] == 2
+
+    repeated = query(source("db"), call("GADGET_PUBLICATION_BYTES", "coverage", 1),
+                     call("GADGET_PUBLICATION_BYTES", "coverage", 1))
+    with patch.object(store, "read_record", wraps=store.read_record) as reads:
+        duplicated = run(repeated, sources={"db": store})
+    assert reads.call_count == 2 and duplicated.values == (raw, raw)
+    assert sum(len(item["methods"]) for item in duplicated.execution) == 2
+    replacement_control = root/"replacement.json"
+    replacement_control.write_text('{"purpose":"different current publication"}')
+    replacement = root/"replacement.rfcxs"
+    subprocess.run([str(binary), "native-record", "--input", str(replacement_control),
+                    "--out", str(replacement)], check=True, capture_output=True)
+    changed = replacement.read_bytes()
+    assert changed != raw
+    adapter.put_publication(store, "coverage", replacement, expected_version=2, tx_time=30.0)
+    newer = run(query(source("db"), call("GADGET_PUBLICATION_BYTES", "coverage")), sources={"db": store})
+    assert newer.values == (changed,) and newer.execution[0]["methods"][0]["record_version"] == 3
+    assert adapter.read_publication(store, "coverage", version=1).value == raw
+    assert current.values == (raw,) and current.execution[0]["methods"][0]["record_version"] == 2
+    with closing(MemoryStore()) as cache_store:
+        cache = QueryCache(cache_store)
+        before = cache_store.state_digest()
+        rejects(lambda: run(repeated, sources={"db": store}, cache=cache))
+        assert cache_store.state_digest() == before
+    rejects(lambda: run(repeated, sources={"db": BoundSource(store, SourcePolicy.allow("records"))}))
 
 process = subprocess.run([sys.executable, __file__, str(binary), str(publication), str(root), "--reopen"],
                          capture_output=True, text=True,

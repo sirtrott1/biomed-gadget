@@ -56,7 +56,11 @@ control.write_text('{"purpose":"native bytes without scientific replay sources"}
 unsupported = root/"control.rfcxs"
 subprocess.run([str(binary), "native-record", "--input", str(control), "--out", str(unsupported)], check=True)
 refuses(lambda: adapter.replay_publication(unsupported.read_bytes(), gadget=binary))
-verify(original, adapter.replay_publication(raw, gadget=binary))
+with patch.object(subprocess, "run", wraps=subprocess.run) as dispatched:
+    replayed = adapter.replay_publication(raw, gadget=binary)
+assert [Path(c.args[0][c.args[0].index("--input")+1]).name
+        for c in dispatched.call_args_list if c.args[0][1] == "native-record"] == ["replay.rfcxs"]
+verify(original, replayed)
 ordinary_run = subprocess.run
 replacements = []
 

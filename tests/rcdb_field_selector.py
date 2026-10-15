@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+from unittest.mock import patch
 
 from rcdb import LocalStore, RecordCodec
 from rcdb.header import DEFAULT_RECORD_CODECS
@@ -41,7 +42,12 @@ with closing(LocalStore(root / "fields.rcdb", record_codecs=(*DEFAULT_RECORD_COD
     else:
         raise AssertionError("Field selection admitted a missing execution capability")
     admitted = BoundSource(store, SourcePolicy.allow("identity", "records", "files", "gadget_field_select"))
-    result = run(declaration, sources={"db": admitted})
+    with patch.object(subprocess, "run", wraps=subprocess.run) as dispatched:
+        result = run(declaration, sources={"db": admitted})
+    admitted_files = [Path(c.args[0][c.args[0].index("--input")+1]).name
+                      for c in dispatched.call_args_list if c.args[0][1] == "native-record"]
+    assert "source.rfcxs" not in admitted_files and "request.rfcxs" not in admitted_files
+    assert admitted_files.count("selection.rfcxs") == 1
     assert type(result.values[0]) is bytes
     method = result.execution[0]["methods"][0]
     assert method["method"] == "gadget-native-field-selection"

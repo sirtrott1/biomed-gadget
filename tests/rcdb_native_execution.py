@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import subprocess
 import sys
+from unittest.mock import patch
 
 from rcdb import LocalStore, RecordCodec
 from rcdb.header import BlobCodecSpec, DEFAULT_RECORD_CODECS
@@ -31,6 +32,11 @@ def rejects(action):
 for invalid in (b"invalid", bytearray(request_bytes), request_bytes[:-1]):
     rejects(lambda: adapter.execute_publication(workspace_bytes, invalid, gadget=binary))
     rejects(lambda: adapter.execute_publication(invalid, request_bytes, gadget=binary))
+
+with patch.object(subprocess, "run", wraps=subprocess.run) as dispatched:
+    adapter.execute_publication(workspace_bytes, request_bytes, gadget=binary)
+assert [Path(c.args[0][c.args[0].index("--input")+1]).name
+        for c in dispatched.call_args_list if c.args[0][1] == "native-record"] == ["result.rfcxs"]
 
 # A canonical file replacement must not change the already captured query answer.
 original_run = subprocess.run
