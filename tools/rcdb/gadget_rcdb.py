@@ -79,9 +79,11 @@ def _open_regular_file(path, *, max_bytes=None, resource="publication"):
 def _read_regular_file(path, *, max_bytes=None, resource="publication"):
     """Capture one opened file within its measured size and declared budget."""
     with _open_regular_file(path, max_bytes=max_bytes, resource=resource) as (stream, size):
+        before = _file_state(os.fstat(stream.fileno()))
         raw = stream.read(size)
-        if (len(raw) != size or stream.read(1) or os.fstat(stream.fileno()).st_size != size):
-            raise ValueError(resource + " changed size while reading")
+        if (len(raw) != size or stream.read(1)
+                or before != _file_state(os.fstat(stream.fileno()))):
+            raise ValueError(resource + " changed while reading")
         return raw
 
 
@@ -287,7 +289,11 @@ def validate_publication(raw, *, gadget):
 def install_codec(*, gadget, max_bytes, replace=False):
     """Install an RFCXS provider under the caller's declared RCDB byte budget."""
     from rcdb import CodecRef, RecordCodec, register_record_codec
+    from rcdb.codecs import available_record_codecs, record_codec
     binary = str(Path(gadget).resolve(strict=True))
+    if type(replace) is not bool:
+        raise TypeError("record codec replacement requires a boolean")
+    binding = ("gadget.native-publication.v1", binary, max_bytes)
 
     def encode(raw):
         if type(raw) is not bytes or not raw.startswith(_MAGIC):
@@ -297,9 +303,19 @@ def install_codec(*, gadget, max_bytes, replace=False):
     def decode(raw):
         return validate_publication(raw, gadget=binary)
 
+    encode._gadget_codec_binding = decode._gadget_codec_binding = binding
     reference = CodecRef(_CODEC_NAME, 1)
-    return register_record_codec(RecordCodec(reference, "GadgetNativePublication", encode,
-                                             decode, max_bytes=max_bytes), replace=replace)
+    provider = RecordCodec(reference, "GadgetNativePublication", encode, decode,
+                           max_bytes=max_bytes)
+    if not replace and reference in available_record_codecs():
+        installed = record_codec(reference)
+        if (installed.object_type != provider.object_type or installed.max_bytes != max_bytes
+                or installed.admission is not None
+                or any(getattr(fn, "_gadget_codec_binding", None) != binding
+                       for fn in (installed.encode, installed.decode))):
+            raise ValueError("GADGET record codec already has a different provider binding")
+        return reference
+    return register_record_codec(provider, replace=replace)
 
 
 def put_publication(store, record_id, path, *, expected_version, **selectors):

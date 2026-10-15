@@ -54,6 +54,33 @@ sealed in the store header; reopening never chooses a different codec implicitly
 Existing stores must already declare the publication codec in their immutable headers.
 Every process reading these records must explicitly install the provider.
 
+Repeated codec setup with the same resolved executable and byte budget reuses
+the installed provider, including after reloading the adapter. A different
+executable, budget, object type or admission capability refuses without changing
+the occupied codec. `replace=True` explicitly replaces that process capability;
+it does not change a store's immutable header. Initialize providers before
+concurrent use.
+
+The native record bridge uses the existing MemoryStore, LocalStore, SQLite
+SQLStore and NativeObjectStore file and memory providers. Legacy FileStore
+refuses generic native records. The backend contract checks complete bytes,
+literal record identities, historical and valid time selection, tombstones,
+conditional writers, the canonical copy boundary, typed RCQL results and
+checkpoint/reopen behavior:
+
+```sh
+python -I tests/rcdb_codec_registration.py /path/to/gadget coverage.rfcxs
+python -I tests/rcdb_backends.py /path/to/gadget coverage.rfcxs new-backend-tests
+```
+
+The backend test requires SQLAlchemy, fsspec and Zstandard. Select
+`--compression none` or `--compression zlib` to exercise those declared profiles.
+Repeated `--backend` arguments select providers. Memory providers retain state
+within the process; file, local and SQLite histories are also reopened in a
+fresh process. Remote object providers require their own publication capability.
+`--result-max-bytes` declares a portable RCQL result budget when testing an
+archive larger than the result codec's default profile.
+
 For a whole native file, including one outside the RCDB record size profile,
 copy it through the installed exclusive file writer:
 
@@ -483,8 +510,10 @@ before reading; compressed admission checks the caller's encoded byte budget.
 Growth and truncation during capture refuse before store publication or native
 admission. Nonregular inputs refuse, including FIFOs without a writer on POSIX.
 The captured bytes still undergo the existing complete native validation.
-These checks do not provide an atomic snapshot of concurrent edits of the same
-size; inputs must remain immutable during admission.
+Record and compressed byte capture also check the opened file's identity, size
+and modification metadata across the read, including changes of the same size.
+These checks do not provide an atomic filesystem snapshot; inputs must remain
+immutable during admission.
 
 `install_compressed_format(gadget=..., max_encoded_bytes=...,
 max_output_bytes=...)` registers `.rcblob` files with RexGraph's format registry.
