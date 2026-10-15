@@ -694,10 +694,12 @@ struct Runner {
                     const auto name = node.at("claims_from").text();
                     require(env.contains(name), "claims dependency missing");
                     const auto &producer = env.at(name);
-                    if (strict_native) {
-                        const auto supplied = producer.publication ? producer.publication->at("claims") :
-                            admit_record_view(producer.view().at("claims"));
-                        output = check_certificate_claims_record(*dependency.publication, supplied);
+                    const auto native_claims = strict_native
+                        ? std::optional<NativeRecord>(producer.publication ? producer.publication->at("claims") :
+                            admit_record_view(producer.view().at("claims"))) : std::nullopt;
+                    if (strict_native && native_claims && native_claims->kind() == NativeRecordKind::Object &&
+                        native_claims->has("schema") && native_claims->at("schema").text() == "gadget.claims.native.v1") {
+                        output = check_certificate_claims_record(*dependency.publication, *native_claims);
                     } else {
                         const auto supplied = producer.view().at("claims");
                         members(supplied, {"source_digest", "certificate_sha256", "items"});

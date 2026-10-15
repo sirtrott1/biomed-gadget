@@ -29,7 +29,7 @@ NativeRecord check_certificate_claims_record(const NativeRecord &certificate,
 // Prospective, typed model claims; numerical agreement is checked separately.
 Json admit_certificate_claims(const Json &proposal, const std::string &source_digest);
 using WorkflowModels = std::map<std::string, WorkflowModel>;
-// Biomedical control flow only. Each numerical leaf delegates to ScientificSession.
+// Biomedical control flow delegates numerical leaves to owning native providers.
 Json execute_workflow(std::shared_ptr<const ScientificStudy> study, const Json &workflow,
                       const WorkflowModels &models = {},
                       std::shared_ptr<CpuResources> resources = {}, ComputeOptions compute = {},
