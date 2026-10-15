@@ -237,6 +237,17 @@ void validate(const Json &plan, const std::string &digest) {
                                              : request.at("operation").text();
             require(op != "query_batch",
                     "use pipeline dependencies and concurrency for query batches");
+            if (type == "derive") {
+                require(AssayWorkspace::supports_native_materialization(op),
+                        "pipeline recipe has no native materialization producer");
+            } else {
+                require(AssayWorkspace::supports_native_publication(op),
+                        "pipeline query has no native result publisher");
+                if (op == "native_query")
+                    require(has_native_scientific_publisher(
+                                request.at("query").at("operation").text()),
+                            "pipeline scientific query has no native result publisher");
+            }
             const auto &allowed = profiles.at(plan.at("profile").text());
             require(allowed.empty() ||
                         std::find(allowed.begin(), allowed.end(), op) != allowed.end(),
@@ -303,6 +314,9 @@ Json pipeline_profiles() {
         choice.set("materializable", Json::boolean(recipe.materializable));
         choice.set("native_materialization", Json::boolean(
             AssayWorkspace::supports_native_materialization(recipe.operation)));
+        choice.set("native_publication", Json::boolean(
+            recipe.binding || (recipe.native ? has_native_scientific_publisher(recipe.operation)
+                                             : AssayWorkspace::supports_native_publication(recipe.operation))));
         choice.set("workspace_binding", Json::boolean(recipe.binding));
         choice.set("parameters_schema",
                    Json::string(recipe.binding  ? "assays-bindings.schema.json"
@@ -987,19 +1001,12 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                     certificate = produced->catalog();
                     direct_result = produced->native_publication();
                 } else if (node.at("type").text() == "derive") {
-                    if (AssayWorkspace::supports_native_materialization(
-                            admit_record_view(request.at("recipe")))) {
-                        const auto native_request = admit_record_view(request);
-                        native_request.write(job / "request.rfcxs");
-                        produced = source->materialize_workspace(
-                            native_request, job / "workspace", assigned_resources);
-                        certificate = produced->catalog();
-                        direct_result = produced->study(request.at("id").text())->producer_publication();
-                    } else {
-                        certificate = source->materialize(request, job / "workspace", assigned_resources);
-                        produced = std::make_shared<const AssayWorkspace>(job / "workspace" /
-                                                                          "workspace.rfcxs");
-                    }
+                    const auto native_request = admit_record_view(request);
+                    native_request.write(job / "request.rfcxs");
+                    produced = source->materialize_workspace(
+                        native_request, job / "workspace", assigned_resources);
+                    certificate = produced->catalog();
+                    direct_result = produced->study(request.at("id").text())->producer_publication();
                 } else if (node.at("type").text() == "workflow") {
                     const auto partition =
                         node.has("partition") ? node.at("partition").integer() : 0;
@@ -1030,11 +1037,8 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                     direct_result = source->execute_record(typed_request.native(), assigned_resources);
                     certificate = render_record_view(direct_result->at("result"));
                 }
-                if (!direct_result) write_record(job / "request.rfcxs",request);
-                const auto native_request=read_record(job/"request.rfcxs");
-                const auto native_result=direct_result ? std::move(*direct_result) :
-                    retain_operation(source->native_publication(),native_request.native(),import_record_view(certificate));
-                native_result.write(job/"result.rfcxs");
+                require(direct_result.has_value(), "pipeline step lost its native result owner");
+                direct_result->write(job / "result.rfcxs");
                 write_text(job / "request.json", request.dump());
                 write_text(job / "result.json", certificate.dump());
                 auto receipt = Json::object();

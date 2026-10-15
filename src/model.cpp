@@ -1,4 +1,5 @@
 #include <chat.h>
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <gadget/agent_schema.hpp>
@@ -864,10 +865,25 @@ Json LocalAgent::ask(const std::string &prompt, const std::vector<fs::path> &ima
 }
 Json LocalAgent::ask_assigned(const std::string &prompt, const std::vector<fs::path> &images,
                               std::shared_ptr<CpuResources> assigned) {
+    return ask_assigned_impl(prompt, images, std::move(assigned), nullptr);
+}
+NativeRecord LocalAgent::ask_record(const std::string &prompt, const std::vector<fs::path> &images) {
+    return ask_assigned_record(prompt, images, {});
+}
+NativeRecord LocalAgent::ask_assigned_record(const std::string &prompt,
+    const std::vector<fs::path> &images, std::shared_ptr<CpuResources> assigned) {
+    std::optional<NativeRecord> response;
+    (void)ask_assigned_impl(prompt, images, std::move(assigned), &response);
+    return std::move(response.value());
+}
+Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<fs::path> &images,
+    std::shared_ptr<CpuResources> assigned, std::optional<NativeRecord> *native_response) {
     state_->process();
     if (prompt.empty() || prompt.find('\0') != std::string::npos)
         throw std::invalid_argument("local prompt must be nonempty without NUL");
     std::lock_guard lock(state_->mutex);
+    if (native_response && !state_->scientific)
+        throw std::invalid_argument("native local responses require a scientific study owner");
     if ((state_->options.task == "source_annotator" || state_->options.task == "fact_reader" ||
          state_->options.task == "evidence_planner") &&
         prompt != state_->pipeline_catalog.at("question").text())
@@ -1266,6 +1282,15 @@ Json LocalAgent::ask_assigned(const std::string &prompt, const std::vector<fs::p
                 result.set("proposal", proposed);
                 result.set("certificate", render_record_view(admitted.at("result")));
                 state_->evidence_proposal = std::move(admitted);
+            } else if (state_->scientific && !catalog_task(state_->options.task) &&
+                       state_->options.task != "claim_reader" && state_->options.task != "observer") {
+                const auto proposed = Json::parse(generated);
+                const auto action = proposed.has("action") ? proposed.at("action").text() : "";
+                if (native_response && (action == "query" || action == "plan")) {
+                    native_response->emplace(scientific_queries->apply_proposal_record(admit_record_view(proposed)));
+                    result.set("status", render_record_view(native_response->value().at("result").at("status")));
+                    result.set("proposal", proposed);
+                } else result = apply_scientific_proposal(*scientific_queries, proposed);
             } else result =
                 state_->options.task == "fact_reader" ? state_->facts->check(Json::parse(generated))
                 : state_->options.task == "source_annotator"
@@ -1338,6 +1363,23 @@ Json LocalAgent::ask_assigned(const std::string &prompt, const std::vector<fs::p
                                                        : state_->queries->preparation_count()));
     result.set("performance", performance);
     result.set("response_sha256", Json::string("sha256:" + sha256(result.dump())));
+    if (native_response) {
+        if (*native_response) {
+            auto value = native_response->value().unbound_value();
+            auto &root = std::get<NativeRecordValue::Object>(value.data).members;
+            auto &body = std::get<NativeRecordValue::Object>(
+                std::find_if(root.begin(), root.end(), [](const auto &entry) {
+                    return entry.first == "result";
+                })->second.data).members;
+            // These are model and execution receipts. The certificate already
+            // references the actual retained mathematical publication.
+            for (const auto *name : {"prompt", "model", "media", "model_context", "source_digest", "performance"})
+                if (result.has(name)) body.emplace_back(name, import_record_view(result.at(name)));
+            *native_response = native_response->value().derive(std::move(value));
+        } else {
+            native_response->emplace(state_->scientific->native_publication().derive(import_record_view(result)));
+        }
+    }
     return result;
 }
 } // namespace gadget

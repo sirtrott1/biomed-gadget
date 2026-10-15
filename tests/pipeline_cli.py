@@ -13,10 +13,12 @@ shutil.rmtree(root, ignore_errors=True)
 root.mkdir(parents=True)
 checks = 0
 
-def run(*args, fail=False):
+def run(*args, fail=False, error=None):
     global checks
     p = subprocess.run([str(binary), *map(str, args)], text=True, capture_output=True, timeout=180)
     assert bool(p.returncode) == fail, (args, p.stdout, p.stderr)
+    if error is not None:
+        assert error in p.stderr, (args, p.stderr, error)
     checks += 1
     return None if fail else json.loads(p.stdout)
 
@@ -49,6 +51,7 @@ recipe_schemas=json.loads((schema_root/'pipeline-default.schema.json').read_text
 recipe_schemas={entry['properties']['method']['const']:entry for entry in recipe_schemas}
 assert set(recipe_schemas)=={recipe['method'] for recipe in profiles['recipes']}
 for recipe in profiles['recipes']:
+    assert recipe['native_publication'], recipe
     assert recipe['native_materialization'] == (recipe['operation'] in ['controlled_coverage','spatial_relations','feature_counts','expression_allocations','aggregate_assay','design_aggregation','variant_genotypes','chromatin_contrast','assay_sections','constrained_allocations','exact_sequence_alignment','sequence_assembly_graph'])
     parameters=recipe_schemas[recipe['method']]['properties']['parameters']
     refs=[value['$ref'] for value in parameters.get('properties',{}).values() if '$ref' in value]
@@ -143,6 +146,29 @@ assert not (root/'runtime-failure').exists() and not list(root.glob('.gadget-pip
 bad=copy.deepcopy(custom);bad['profile']='rna_seq'
 run('pipeline','--workspace',manifest,'--request',save('wrong-profile.json',bad),'--out',root/'wrong-profile',fail=True)
 assert not (root/'wrong-profile').exists()
+
+# An unsupported later producer must refuse before an earlier calculation runs.
+# The first leaf would fail on its field if execution started before admission.
+for name, kind, unsupported, error in [
+    ('unknown-query', 'query', request('unregistered_operation'),
+     'pipeline query has no native result publisher'),
+    ('unknown-derive', 'derive', dict(schema='gadget.assays.materialize.v1',
+         id='unregistered', source_namespace='883200', design=design,
+         recipe=request('unregistered_operation'), channel='E'),
+     'pipeline recipe has no native materialization producer'),
+    ('unknown-scientific', 'query', request('native_query', assay='counts',
+         query=dict(operation='unregistered_operation')),
+     'pipeline scientific query has no native result publisher'),
+]:
+    bad=dict(schema='gadget.pipeline.v1', source_digest=plan['source_digest'],
+        profile='custom', question='Admit all native producers before executing',
+        steps=[dict(id='first', type='query', input='source',
+            request=request('native_query', assay='counts',
+                query=dict(operation='field_summary', field='all.unknown', support='reported_only'))),
+            dict(id='unsupported', type=kind, input='source', request=unsupported)])
+    run('pipeline', '--workspace', manifest, '--request', save(name+'.json', bad),
+        '--out', root/name, fail=True, error=error)
+    assert not (root/name).exists() and not list(root.glob('.gadget-pipeline-*'))
 
 # No arbitrary mathematical carrier cap: the source only has isolated measured
 # coordinates, so its native exact Green action must return the complete input.

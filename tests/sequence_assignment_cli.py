@@ -101,7 +101,7 @@ def main():
         timings[name] = elapsed
         return req, answer['result']
 
-    def verify_factors(req, result, full_rank=True):
+    def verify_factors(req, result, full_rank=True, allocation_occurrence_count=None):
         cert = result['kernel_certificate']
         check(cert['target_coordinate_order'] == req['targets'], 'common target coordinate order')
         offset = column = 0
@@ -131,7 +131,8 @@ def main():
             check(observed == expected, 'native target image equals independently aggregated kernel')
             images.append((k, observed))
             offset += len(c['candidates']); column += k
-        check(offset == result['native_occurrence_count'] and column == result['allocation_nullity'], 'complete source factors')
+        expected_occurrences=result['native_occurrence_count'] if allocation_occurrence_count is None else allocation_occurrence_count
+        check(offset == expected_occurrences and column == result['allocation_nullity'], 'complete source factors')
         check(result['constraint_rank'] == len(req['classes']) and result['kernel_residual_zero'], 'full retained constraint rank/residual')
         if full_rank:
             rows = [[] for _ in req['targets']]
@@ -198,8 +199,11 @@ def main():
 
     names=['t'+str(i) for i in range(5001)]
     targets=[dict(id='all',candidates=names),dict(id='even',candidates=names[::2])]
-    req,result=allocation('wide-class',names,[dict(id='wide',candidates=names)],[17],targets)
+    wide_request,wide_result=allocation('wide-class',names,[dict(id='wide',candidates=names)],[17],targets)
+    req,result=wide_request,wide_result
     verify_factors(req,result,full_rank=False)
+    check(result['native_occurrence_count']==sum(len(c['candidates']) for c in wide_request['classes']),
+          'standalone class source retains every original allocation occurrence')
     check(result['allocation_nullity']==5000 and result['target_ambiguity_rank']==1,'large class native kernel and target rank')
     check([(Q(b['lower']),Q(b['upper'])) for b in result['samples'][0]['bounds']]==[(17,17),(0,17)],'wide-class sharp bounds')
     samples=[dict(id='s'+str(i),counts=[str(i)],scale='1/2',scale_provenance='Declared half-unit scale') for i in range(131)]
@@ -378,7 +382,18 @@ def main():
         dict(schema='gadget.assays.query.v1',operation='inspect',
              execution=dict(read_partition_records=1,reference_block_bases=1))),fail=True)
     result=query('wide-salmon',operation='allocation_bounds',resource='classes',targets=targets,candidate_search=req['candidate_search'],scale='1',scale_provenance='raw',kernel_certificate=True)
-    check(result['native_occurrence_count']==5001 and result['allocation_nullity']==5000 and result['target_ambiguity_rank']==1,'workspace Salmon adapter shares exact factor method')
+    class_occurrences=sum(len(c['candidates']) for c in wide_request['classes'])
+    aggregate_targets=[t for t in wide_request['targets'] if len(t['candidates'])!=1]
+    target_occurrences=sum(1+len(t['candidates']) for t in aggregate_targets)
+    check(result['native_occurrence_count']==class_occurrences+target_occurrences and
+          result['native_relation_count']==len(wide_request['classes'])+len(aggregate_targets),
+          'native Salmon diagram retains class and complete declared aggregate target occurrences')
+    check(result['allocation_nullity']==5000 and result['target_ambiguity_rank']==1,
+          'workspace Salmon adapter preserves the original exact allocation family')
+    salmon_request={**wide_request,'classes':[dict(id='class:0',candidates=wide_request['classes'][0]['candidates'])]}
+    verify_factors(salmon_request,result,full_rank=False,allocation_occurrence_count=class_occurrences)
+    check(result['samples'][0]['bounds']==wide_result['samples'][0]['bounds'],
+          'native Salmon bounds agree completely with the original unweighted class source')
     # The source hypothesis e<m remains necessary; arbitrary budget ceilings do not.
     run('assay-query','--workspace',workspace,'--request',save('invalid-edit.json',dict(schema='gadget.assays.query.v1',**dict(base,maximum_edits=10))),fail=True)
     invalid=dict(req);invalid['kernel_certificate']='true'

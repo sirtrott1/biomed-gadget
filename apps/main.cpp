@@ -581,7 +581,7 @@ int main(int argc, char **argv) {
                                           [agent = agents.at(role).get(),
                                            images](const std::string &prompt,
                                                    std::shared_ptr<gadget::CpuResources> assigned) {
-                                              return agent->ask_assigned(prompt, images, assigned);
+                                              return agent->ask_assigned_record(prompt, images, assigned);
                                           }));
                 }
             }
