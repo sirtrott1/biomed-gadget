@@ -6,6 +6,7 @@
 #include <chrono>
 #include <gadget/biomedical.hpp>
 #include <gadget/workflow.hpp>
+#include <gadget/native_pattern.hpp>
 #include <limits>
 #include <set>
 #include <rfc/runtime/work_graph.hpp>
@@ -21,6 +22,7 @@ Json publication_view(const NativeRecord &owner) {
         return render_record_view(owner);
     const auto result = owner.at("result");
     const auto schema = result.at("schema").text();
+    if (schema == "gadget.pattern.result.fields.v1") return pattern_record_view(owner);
     if (schema == "gadget.claims.native.receipt.v1") {
         auto out = Json::object(), checks = Json::array();
         const auto original = publication_view(NativeRecord::decode(result.at("source_publication").bytes()));
@@ -64,7 +66,7 @@ struct WorkflowValue {
     bool native_comparisons() const {
         if (!publication || publication->at("schema").text() != "gadget.operation.native.v1") return false;
         const auto schema = publication->at("result").at("schema").text();
-        return schema == "gadget.scientific.result.fields.v1" || schema == "gadget.biomedical.certificate.v1" ||
+        return schema == "gadget.pattern.result.fields.v1" || schema == "gadget.scientific.result.fields.v1" || schema == "gadget.biomedical.certificate.v1" ||
             schema == "gadget.claims.native.receipt.v1";
     }
 };
@@ -357,14 +359,14 @@ struct Runner {
             view.set("scope", certificate.at("scope"));
             return view;
         }
-        require((schema == "gadget.scientific.certificate.v1" &&
+        require(((schema == "gadget.scientific.certificate.v1" || schema == "gadget.pattern.certificate.v1") &&
                  certificate.at("source_digest").text() == study->digest()) ||
                     (schema == "gadget.biomedical.certificate.v1" && evidence &&
                      certificate.at("source_digest").text() == evidence->digest()),
                 "model context requires an explicitly bound source certificate");
         auto view = Json::object();
-        for (const auto &name : {"schema", "source_digest", "certificate_sha256", "arithmetic"})
-            view.set(name, certificate.at(name));
+        for (const auto &name : {"schema", "source_digest", "certificate_sha256", "arithmetic", "model_sha256"})
+            if (certificate.has(name)) view.set(name, certificate.at(name));
         const auto declared_query = certificate.at("query");
         view.set("query_sha256", Json::string("sha256:" + sha256(declared_query.dump())));
         view.set("query", declared_query);
@@ -381,7 +383,19 @@ struct Runner {
                 "workflow mathematical output requires an actual root operation owner");
         const auto result = owner.at("result");
         const auto schema = result.at("schema").text();
-        if (schema == "gadget.scientific.result.fields.v1") {
+        if (schema == "gadget.pattern.result.fields.v1") {
+            require(result.at("source_digest").text() == study->digest() &&
+                        result.at("fields").at("schema").text() == "gadget.scientific.fields.v1",
+                    "workflow pattern output source/field binding mismatch");
+            const auto original = study->native_publication().archive_source(1);
+            require(std::ranges::equal(original.bytes(),result.at("source_study_publication").bytes()),
+                    "workflow pattern output belongs to another original native owner");
+            const NativePatternModel model(NativeRecord::decode(result.at("model_publication").bytes()));
+            require(model.digest() == result.at("model_sha256").text() &&
+                        owner.at("request").at("model_sha256").text() == model.digest() &&
+                        owner.at("request").at("source_digest").text() == study->digest(),
+                    "workflow pattern model/request binding mismatch");
+        } else if (schema == "gadget.scientific.result.fields.v1") {
             require(result.at("certificate").at("source_digest").text() == study->digest() &&
                         result.at("fields").at("schema").text() == "gadget.scientific.fields.v1",
                     "workflow scientific output source/field binding mismatch");

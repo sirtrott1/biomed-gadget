@@ -51,10 +51,11 @@ def endpoints(binary,root,source=None):
     columns=list(rows[0]);raw=','.join(columns)+'\n'+''.join(','.join(row[c] for c in columns)+'\n' for row in rows)
     save(inputs/'observations.csv',raw);save(inputs/'dictionary.txt',dictionary)
     descriptions=[]
+    source_units={'age':'year','meal.cal':'recorded_calorie','wt.loss':'lb'} if source else {}
     for c in columns:
         is_flag=c in ('lower_closed','upper_closed','upper_finite',*strata)
         categorical=c in ('status','sex','inst','ph.ecog','source_row','group')
-        descriptions.append(dict(id=c,channel='observation',quantity='event_time' if c in ('lower','upper') else c,units='day' if c in ('lower','upper','time') else 'dimensionless',value_type='indicator' if is_flag else ('categorical' if categorical else 'quantitative'),dictionary_start=0,dictionary_end=len(dictionary.encode())))
+        descriptions.append(dict(id=c,channel='observation',quantity='event_time' if c in ('lower','upper') else c,units='day' if c in ('lower','upper','time') else source_units.get(c,'dimensionless'),value_type='indicator' if is_flag else ('categorical' if categorical else 'quantitative'),dictionary_start=0,dictionary_end=len(dictionary.encode())))
     # A category membership relation is an explicit comparison population, not
     # an assertion of a biological mechanism. No event time is supplied for NA.
     spec=dict(schema='gadget.table.import.v1',id='interval-observed-endpoints',source_namespace='995801',source=dict(path='observations.csv',sha256=digest(inputs/'observations.csv'),delimiter=',',header=True),dictionary=dict(path='dictionary.txt',sha256=digest(inputs/'dictionary.txt')),columns=descriptions,missing_tokens=['NA'],relation_columns=['sex' if source else 'group'],identity_column='source_row',question='What event and restricted-time bounds are determined by the reported observations?',population=population,selection='Every original row',limitations=['Bounds condition on recorded event intervals and independent admissible completions'],source_url=source_url,attribution=attribution,license=license_name)

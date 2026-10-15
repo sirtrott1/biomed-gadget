@@ -250,14 +250,15 @@ NativeRecord check_certificate_claims_record(const NativeRecord &certificate, co
     require(cutoff == history->last_sequence(), "native claims publication cutoff mismatch");
     const auto result = certificate.at("result");
     const auto schema = result.at("schema").text();
-    require(schema == "gadget.scientific.result.fields.v1" || schema == "gadget.biomedical.certificate.v1" ||
+    require(schema == "gadget.pattern.result.fields.v1" || schema == "gadget.scientific.result.fields.v1" || schema == "gadget.biomedical.certificate.v1" ||
                 schema == "gadget.claims.native.receipt.v1",
             "native claims refuse an unmigrated numerical certificate");
+    const bool pattern = schema == "gadget.pattern.result.fields.v1";
     const bool scientific = schema == "gadget.scientific.result.fields.v1";
     const auto metadata = scientific ? result.at("certificate") : result;
-    const auto values = scientific ? result.at("fields").at("view") :
+    const auto values = (scientific || pattern) ? result.at("fields").at("view") :
         schema == "gadget.claims.native.receipt.v1" ? result : result.at("result");
-    if (scientific)
+    if (scientific || pattern)
         require(result.at("fields").at("schema").text() == "gadget.scientific.fields.v1",
                 "native claims require actual scientific fields");
     const auto items = request.at("items");

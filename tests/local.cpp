@@ -1,4 +1,6 @@
 #include "../examples/scientific/fixture.hpp"
+#include <algorithm>
+#include <gadget/assay.hpp>
 #include <gadget/model.hpp>
 #include <gadget/biomedical.hpp>
 #include <gadget/record_view.hpp>
@@ -141,9 +143,75 @@ void native_workflow_role(const fs::path &model, const fs::path &destination) {
     check(trace.encode() == response->encode(), "native workflow lost the exact original model response");
     std::cout << "PASS: real local model query, native workflow ownership, original support and model-disabled relocated replay\n";
 }
+void native_image_role(const fs::path &model, const fs::path &projector, const fs::path &image,
+                       const fs::path &workspace_path, const std::string &assay,
+                       const fs::path &destination) {
+    fs::create_directories(destination);
+    const auto root = private_directory(destination, "native-image-");
+    const AssayWorkspace workspace(workspace_path);
+    const auto study = workspace.study(assay);
+    const auto original = read_text(image, 16u * 1024u * 1024u);
+    const auto image_digest = "sha256:" + sha256(original);
+    const auto catalog = workspace.catalog(); bool declared_image = false, retained_image = false;
+    for (std::size_t i = 0; i < catalog.at("assays").size(); ++i) {
+        const auto declaration = catalog.at("assays").at(i).at("declaration");
+        if (declaration.at("id").text() != assay || !declaration.has("provenance")) continue;
+        const auto provenance = declaration.at("provenance");
+        for (std::size_t j = 0; j < provenance.size(); ++j)
+            declared_image = declared_image || provenance.at(j).at("sha256").text() == image_digest;
+    }
+    for (const auto &source : workspace.native_publication().raw_sources()) {
+        const auto bytes = source.bytes();
+        retained_image = retained_image || (bytes.size() == original.size() &&
+            std::equal(bytes.begin(),bytes.end(),reinterpret_cast<const std::byte *>(original.data())));
+    }
+    check(declared_image && retained_image,"image is not an original retained source of the selected assay");
+    write_text(root / "original.png", original);
+    LocalModelOptions options;
+    options.model = model; options.projector = projector; options.task = "observer";
+    options.context_tokens = 8192; options.output_tokens = 512;
+    options.threads = 2; options.prompt_cache_mib = 64;
+    LocalAgent observer(study, options);
+    const auto response = observer.ask_record(
+        "Describe one visible staining region in image 0. Include region "
+        "[left,top,right,bottom] in original pixel edge coordinates. "
+        "Do not infer diagnosis, cell type or gene expression.", {root / "original.png"});
+    response.write(root / "response.rfcxs");
+    check(response.at("status").text() == "prospective", "source image observer did not admit its proposal");
+    check(response.at("media_sources").size() == 1 &&
+              response.at("media_sources").at(0).at("image_index").integer() == 0,
+          "source image occurrence was lost");
+    const auto bytes = response.at("media_sources").at(0).at("bytes").bytes();
+    check(bytes.size() == original.size() &&
+              std::equal(bytes.begin(), bytes.end(), reinterpret_cast<const std::byte *>(original.data())),
+          "native image input bytes changed or were replaced by a digest");
+    const auto claims = response.at("certificate").at("claims");
+    bool region = false;
+    for (std::size_t i = 0; i < claims.size(); ++i) {
+        check(claims.at(i).at("status").text() == "prospective_unverified_model_statement",
+              "visual model statement became a measurement");
+        if (claims.at(i).has("region") && claims.at(i).at("region").kind() != NativeRecordKind::Null) {
+            check(claims.at(i).at("region_space").text() == "original_image_pixel_edges" &&
+                      claims.at(i).at("image_sha256").text() == "sha256:" + sha256(original),
+                  "visual region lost its original source image");
+            region = true;
+        }
+    }
+    check(region, "source image question did not retain a requested region");
+    fs::rename(root / "original.png", root / "moved-original.png");
+    const auto reopened = NativeRecord::read(root / "response.rfcxs");
+    check(reopened.encode() == response.encode() &&
+              std::ranges::equal(reopened.at("media_sources").at(0).at("bytes").bytes(), bytes),
+          "relocated image response lost its original byte owner");
+    std::cout << "PASS: real original source image, native input byte owner, original region and relocated replay; visual content remains unverified\n";
+}
 } // namespace
 int main(int argc, char **argv) {
     try {
+        if (argc == 8 && std::string(argv[1]) == "--native-image") {
+            native_image_role(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]);
+            return 0;
+        }
         if (argc == 4 && std::string(argv[1]) == "--native-workflow") {
             native_workflow_role(argv[2], argv[3]);
             return 0;
