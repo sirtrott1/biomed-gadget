@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.pattern.model.declaration.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.pattern.model.declaration.v1"
+    },
+    "scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "frames": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "quantity": {
+            "type": "string",
+            "minLength": 1
+          },
+          "units": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "frame",
+          "quantity",
+          "units"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "schema",
+    "scope",
+    "frames"
+  ],
+  "additionalProperties": false
+}

@@ -4,6 +4,7 @@
 #include <gadget/execution.hpp>
 #include <gadget/facts.hpp>
 #include <gadget/model.hpp>
+#include <gadget/native_pattern.hpp>
 #include <gadget/pipeline.hpp>
 #include <gadget/resources.hpp>
 #include <gadget/store.hpp>
@@ -39,6 +40,8 @@ int main(int argc, char **argv) {
                    "       native-record --input FILE --out FILE.rfcxs\n"
                    "       record-view --input FILE\n"
                    "       replay-scientific --record FILE.rfcxs --out-record FILE.rfcxs\n"
+                   "       pattern-query --study FILE --model FILE.rfcxs --request FILE --out FILE.rfcxs\n"
+                   "       replay-pattern --record FILE.rfcxs --out FILE.rfcxs\n"
                    "       native-study --study FILE --out FILE.rfcxs\n"
                    "       native-workspace --workspace FILE --out FILE.rfcxs\n"
                    "       [--measurements DECLARATION] (raw input only)\n"
@@ -78,7 +81,7 @@ int main(int argc, char **argv) {
                    "--prompt TEXT [--out NEW_DIRECTORY]\n"
                    "       workflow --workspace MANIFEST --assay ID [--partition 0] --request "
                    "FILE\n"
-                   "       workflow --study DECLARATION --request FILE [--models LOCAL_ROLES]\n"
+                   "       workflow --study DECLARATION --request FILE [--models LOCAL_ROLES] [--patterns PATTERN_ROLES]\n"
                    "       databases; database-request --request FILE\n"
                    "       fetch-databases --request FILE --out NEW_DIRECTORY\n"
                    "       import-evidence --snapshot DIRECTORY --out NEW_DIRECTORY\n"
@@ -149,13 +152,15 @@ int main(int argc, char **argv) {
             {"native-record", {"--input","--out"}},
             {"record-view", {"--input","--member","--format","--assay"}},
             {"replay-scientific", {"--record", "--out-record"}},
+            {"pattern-query", {"--study", "--model", "--request", "--out"}},
+            {"replay-pattern", {"--record", "--out"}},
             {"native-study", {"--study","--out"}},
             {"native-workspace", {"--workspace","--out"}},
             {"resources", {}},
             {"devices", {}},
             {"workflow",
              {"--study", "--workspace", "--assay", "--partition", "--request", "--models",
-              "--evidence", "--compute-device", "--allow-software-device","--out"}},
+              "--evidence", "--patterns", "--compute-device", "--allow-software-device","--out"}},
             {"audit", {"--input", "--snapshot", "--store", "--study", "--measurements"}},
             {"analyze", {"--input", "--snapshot", "--store", "--measurements", "--out"}},
             {"query", {"--input", "--snapshot", "--store", "--study", "--measurements", "--query","--out"}},
@@ -492,6 +497,18 @@ int main(int argc, char **argv) {
                 << '\n';
             return 0;
         }
+        if (command == "pattern-query" || command == "replay-pattern") {
+            const auto output = [&] {
+                if (command == "replay-pattern")
+                    return gadget::replay_pattern_record(gadget::NativeRecord::read(required("--record")));
+                const gadget::NativePatternModel model(gadget::NativeRecord::read(required("--model")));
+                return model.execute_record(std::make_shared<const gadget::ScientificStudy>(required("--study")),
+                    gadget::read_record(required("--request")).native());
+            }();
+            output.write(required("--out"));
+            std::cout << gadget::pattern_record_view(output).dump() << '\n';
+            return 0;
+        }
         if (command == "workflow") {
             std::shared_ptr<const gadget::ScientificStudy> study;
             if (options.contains("--workspace")) {
@@ -589,6 +606,33 @@ int main(int argc, char **argv) {
             if (options.contains("--models"))
                 throw std::invalid_argument("local llama.cpp support is disabled in this build");
 #endif
+            if (options.contains("--patterns")) {
+                const gadget::fs::path path(options.at("--patterns"));
+                const auto config = gadget::read_record(path).native();
+                const auto view = gadget::render_record_view(config);
+                object_keys(view,{"schema","roles"});
+                if (config.at("schema").text() != "gadget.pattern.roles.v1" ||
+                    config.at("roles").kind() != gadget::NativeRecordKind::Array)
+                    throw std::invalid_argument("pattern roles require gadget.pattern.roles.v1");
+                for (std::size_t i = 0; i < config.at("roles").size(); ++i) {
+                    const auto item = config.at("roles").at(i);
+                    object_keys(gadget::render_record_view(item),{"role","model","request"});
+                    const auto role = item.at("role").text();
+                    if (role.empty() || callbacks.contains(role))
+                        throw std::invalid_argument("pattern role is empty or already registered");
+                    const auto relative = [&](const char *member) {
+                        gadget::fs::path input(item.at(member).text());
+                        return input.is_relative() ? path.parent_path()/input : input;
+                    };
+                    auto model = std::make_shared<const gadget::NativePatternModel>(
+                        gadget::NativeRecord::read(relative("model")));
+                    const auto query = gadget::read_record(relative("request")).native();
+                    callbacks.emplace(role,gadget::WorkflowModel(1,
+                        [study,model,query](const std::string &,std::shared_ptr<gadget::CpuResources> assigned) {
+                            return model->execute_record(study,query,std::move(assigned));
+                        }));
+                }
+            }
             const auto request = gadget::read_record(required("--request"));
             std::unique_ptr<gadget::EvidenceStore> evidence;
             if (options.contains("--evidence"))

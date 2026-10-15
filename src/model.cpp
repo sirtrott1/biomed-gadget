@@ -899,6 +899,7 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
     std::optional<rfc::runtime::CpuResourceCoordinator::Reservation> neural_workers;
     neural_workers.emplace(resources->reserve(state_->options.threads));
     auto media = Json::array();
+    std::vector<RawByteSource> original_images;
 #if GADGET_HAS_MULTIMODAL
     if (!images.empty() && (!state_->scientific || !state_->projector))
         throw std::invalid_argument(
@@ -939,6 +940,8 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
                  Json::string(
                      "prospective visual model context; never a native measurement or relation"));
         media.push(item);
+        if (native_response)
+            original_images.emplace_back(1, std::as_bytes(std::span(bytes.data(), bytes.size())));
         pointers.push_back(bitmap.get());
         bitmaps.push_back(std::move(bitmap));
     }
@@ -1076,7 +1079,8 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
             "question directly using only the attached images or supplied text/certificates. "
             "Return JSON with schema gadget.model.observation.v1, observations "
             "[{statement: a short concrete observation, image_index: zero-based attached image "
-            "index or null for text}], and limitations: a short uncertainty statement. "
+            "index or null for text, optional region: [left, top, right, bottom] in original "
+            "image pixel edge coordinates}], and limitations: a short uncertainty statement. "
             "Read visible labels and locations when asked. Keep every statement concise. "
             "Avoid unrelated dataset comparisons or numerical planning. If a visual fact is "
             "unclear, say so. Model statements remain unverified; they cannot assert a native "
@@ -1092,8 +1096,12 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
     user.role = "user";
     user.content = prompt;
 #if GADGET_HAS_MULTIMODAL
-    for (std::size_t i = 0; i < images.size(); ++i)
-        user.content += std::string("\n") + mtmd_default_marker();
+    for (std::size_t i = 0; i < images.size(); ++i) {
+        user.content += "\nImage " + std::to_string(i) + " original dimensions: " +
+            std::to_string(media.at(i).at("width").integer()) + " by " +
+            std::to_string(media.at(i).at("height").integer()) + " pixels.\n" +
+            mtmd_default_marker();
+    }
 #endif
     input.messages = {std::move(system), std::move(user)};
     input.enable_thinking = false;
@@ -1378,6 +1386,31 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
             *native_response = native_response->value().derive(std::move(value));
         } else {
             native_response->emplace(state_->scientific->native_publication().derive(import_record_view(result)));
+        }
+        if (!original_images.empty()) {
+            auto value = native_response->value().unbound_value();
+            auto *body = &std::get<NativeRecordValue::Object>(value.data).members;
+            if (native_response->value().at("schema").text() == "gadget.operation.native.v1")
+                body = &std::get<NativeRecordValue::Object>(std::find_if(
+                    body->begin(), body->end(), [](const auto &entry) {
+                        return entry.first == "result";
+                    })->second.data).members;
+            std::uint64_t next = 1;
+            for (const auto &source : native_response->value().raw_sources())
+                next = std::max(next, rfc::machine::checked_size_add(source.key(), 1));
+            NativeRecordValue::Array retained;
+            for (std::size_t i = 0; i < original_images.size(); ++i) {
+                auto source = original_images[i].rekey(next);
+                retained.elements.emplace_back(NativeRecordValue::Object{{
+                    {"image_index", NativeRecordValue(rfc::numeric::Integer(std::to_string(i)))},
+                    {"mime_type", NativeRecordValue(std::string("image/png"))},
+                    {"bytes", NativeRecordValue(NativeRecordValue::ByteSpan{
+                        next, 0, source.bytes().size(), false})}}});
+                original_images[i] = std::move(source);
+                next = rfc::machine::checked_size_add(next, 1);
+            }
+            body->emplace_back("media_sources", NativeRecordValue(std::move(retained)));
+            *native_response = native_response->value().derive(std::move(value), std::move(original_images));
         }
     }
     return result;

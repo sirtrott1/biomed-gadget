@@ -1,0 +1,369 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.pattern.query.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.pattern.query.v1"
+    },
+    "operation": {
+      "enum": [
+        "sparse_candidates",
+        "sparse_program",
+        "sparse_gluing"
+      ]
+    },
+    "source_digest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "model_sha256": {
+      "type": "string",
+      "minLength": 1
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/input"
+      },
+      "minItems": 1
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      },
+      "minItems": 1
+    },
+    "comparisons": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/comparison"
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "schema",
+    "operation",
+    "source_digest",
+    "model_sha256"
+  ],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "operation": {
+          "const": "sparse_candidates"
+        }
+      },
+      "required": [
+        "inputs"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "nodes"
+            ]
+          },
+          {
+            "required": [
+              "comparisons"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "sparse_program"
+        }
+      },
+      "required": [
+        "nodes"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "inputs"
+            ]
+          },
+          {
+            "required": [
+              "comparisons"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "sparse_gluing"
+        }
+      },
+      "required": [
+        "inputs",
+        "comparisons"
+      ],
+      "not": {
+        "required": [
+          "nodes"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "map": {
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ],
+            "items": false,
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "rows",
+        "columns",
+        "entries"
+      ],
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frame": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "domain_quantity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "domain_units": {
+          "type": "string",
+          "minLength": 1
+        },
+        "codomain_quantity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "codomain_units": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "map": {
+          "$ref": "#/$defs/map"
+        }
+      },
+      "required": [
+        "pattern",
+        "frame",
+        "field",
+        "domain_quantity",
+        "domain_units",
+        "codomain_quantity",
+        "codomain_units",
+        "method",
+        "evidence",
+        "map"
+      ],
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "occurrence_key": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "target_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "map": {
+          "$ref": "#/$defs/map"
+        }
+      },
+      "required": [
+        "from",
+        "occurrence_key",
+        "source_frame",
+        "target_frame",
+        "method",
+        "evidence",
+        "map"
+      ],
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pattern": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "input": {
+          "$ref": "#/$defs/input"
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "pattern"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "input"
+          ],
+          "not": {
+            "required": [
+              "edges"
+            ]
+          }
+        },
+        {
+          "required": [
+            "edges"
+          ],
+          "not": {
+            "required": [
+              "input"
+            ]
+          }
+        }
+      ]
+    },
+    "comparison": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "left_occurrence_key": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "right_occurrence_key": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "left_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "right_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "interface_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "left_map": {
+          "$ref": "#/$defs/map"
+        },
+        "right_map": {
+          "$ref": "#/$defs/map"
+        }
+      },
+      "required": [
+        "name",
+        "left_occurrence_key",
+        "right_occurrence_key",
+        "left_frame",
+        "right_frame",
+        "interface_frame",
+        "method",
+        "evidence",
+        "left_map",
+        "right_map"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

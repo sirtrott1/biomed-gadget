@@ -70,6 +70,13 @@ def verify_endpoints(root):
     def check(value):
         nonlocal checks
         assert value;checks+=1
+    if (root/'source/lung.Rd').is_file():
+        documentation=(root/'source/lung.Rd').read_text()
+        check('Age in years' in documentation and 'Calories consumed at meals' in documentation and
+              'Weight loss in last six months (pounds)' in documentation)
+        fields={field['id']:field for field in json.loads((root/'study/study.json').read_text())['fields']}
+        for field,unit in [('age','year'),('meal.cal','recorded_calorie'),('wt.loss','lb'),('time','day')]:
+            check(fields['all.'+field]['units']==unit)
     check(len(rows)==len(r['observations']));groups=[list(range(len(rows)))]+[[i for i,row in enumerate(rows) if row[id.removeprefix('all.')]=='1'] for id in q['strata']];readout=matrix(r['readout']);check(readout==[[Q(int(i in group),len(group)) if group else Q(0) for i in range(len(rows))] for group in groups])
     for reading in r['readings']:
         s=Q(reading['time']);lower=[];upper=[];rmin=[];rmax=[]

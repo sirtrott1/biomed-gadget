@@ -491,6 +491,24 @@ int main() {
               "observation promoted or rejected");
         observation.at("observations").at(0).set("image_index", Json::integer(1));
         rejects([&] { admit_observation(observation, study->digest(), media); });
+        media.at(0).set("width", Json::integer(100));
+        media.at(0).set("height", Json::integer(80));
+        observation.at("observations").at(0).set("image_index", Json::integer(0));
+        observation.at("observations").at(0).set("region", parse("[0,10,100,80]"));
+        const auto regional = admit_observation(observation, study->digest(), media);
+        check(regional.at("certificate").at("claims").at(0).at("region").dump() ==
+                  parse("[0,10,100,80]").dump() &&
+                  regional.at("certificate").at("claims").at(0).at("region_space").text() ==
+                      "original_image_pixel_edges",
+              "image region lost original coordinates or became a measurement");
+        for (const auto *invalid : {"[0,0,101,80]", "[0,0,100,81]", "[10,0,10,20]",
+                                    "[20,0,10,20]", "[-1,0,10,20]", "[0,0,10.5,20]"}) {
+            observation.at("observations").at(0).set("region", parse(invalid));
+            rejects([&] { admit_observation(observation, study->digest(), media); });
+        }
+        observation.at("observations").at(0).set("region", parse("[0,0,10,20]"));
+        observation.at("observations").at(0).set("image_index", parse("null"));
+        rejects([&] { admit_observation(observation, study->digest(), media); });
         const auto before = store.execute(parse(R"({"operation":"coverage"})")).dump();
         coverage.set("missing", Json::integer(0));
         check(before == store.execute(parse(R"({"operation":"coverage"})")).dump(),
