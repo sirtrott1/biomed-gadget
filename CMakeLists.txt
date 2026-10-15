@@ -58,14 +58,18 @@ endif()
 file(GLOB_RECURSE rexgraph_headers CONFIGURE_DEPENDS "${REXGRAPH_SOURCE_DIR}/include/rfc/*.hpp")
 set(rexgraph_fingerprint "")
 set(rexgraph_inventory "{}")
+set(rexgraph_package_manifest "")
 foreach(header IN LISTS rexgraph_headers)
   file(SHA256 "${header}" digest)
   file(RELATIVE_PATH relative "${REXGRAPH_SOURCE_DIR}" "${header}")
   string(APPEND rexgraph_fingerprint "${relative}:${digest}\n")
+  string(REGEX REPLACE "^include/" "" installed_header "${relative}")
+  string(APPEND rexgraph_package_manifest "${digest}  ${installed_header}\n")
   string(JSON rexgraph_inventory SET "${rexgraph_inventory}" "${relative}" "\"${digest}\"")
 endforeach()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${rexgraph_headers})
 string(SHA256 rexgraph_fingerprint "${rexgraph_fingerprint}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/GADGETRFCHeaders.sha256" "${rexgraph_package_manifest}")
 include(cmake/RexGraph.lock.cmake)
 option(GADGET_ENFORCE_DEPENDENCY_LOCK "Require the recorded RexGraphCpp header fingerprint" OFF)
 if(GADGET_ENFORCE_DEPENDENCY_LOCK AND NOT rexgraph_fingerprint STREQUAL GADGET_QUALIFIED_REXGRAPH_HEADERS_SHA256)
@@ -793,6 +797,9 @@ install(TARGETS gadget_core gadget_native EXPORT GADGETTargets ARCHIVE DESTINATI
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY include/gadget DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(EXPORT GADGETTargets NAMESPACE gadget:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/GADGET)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GADGETRFCHeaders.sha256"
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GADGETVerifyRFC.cmake"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/GADGET)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GADGETConfig.cmake"
   "${CMAKE_CURRENT_BINARY_DIR}/GADGETConfigVersion.cmake"
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/GADGET)
