@@ -201,6 +201,15 @@ def main():
         for budget in [0,1,2,12]:
             req=matching_request(rule,budget,junctions,2)
             matching_oracle(reads,refs,req,query('matching-'+rule+'-'+str(budget),mws,req))
+    boundary_reads=dict(joined='AATT',contiguous='CCTT',short='AA',longer='AACCTTA')
+    boundary_refs=dict(joined='AACCTT',contiguous='AATT')
+    boundary_junctions=[dict(id='boundary-'+strand,contig='joined',donor=2,acceptor=4,
+        strand=strand,evidence='Both exon ends meet the source boundary') for strand in ['+','-']]
+    bws=workspace('matching-exon-boundaries',boundary_reads,boundary_refs)
+    for overhang in [1,2,3]:
+        req=matching_request('literal',0,boundary_junctions,overhang)
+        matching_oracle(boundary_reads,boundary_refs,req,
+            query('matching-exon-boundaries-'+str(overhang),bws,req))
     req=matching_request('definite',0);req['strands']=['+']
     aws=workspace('contained-mask',dict(q='R'),dict(r='R'))
     result=query('contained-mask',aws,req)
