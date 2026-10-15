@@ -827,8 +827,9 @@ NativeRecord NativeRecord::create_owned(NativeRecordValue value,std::uint64_t ns
         auto maps=base.endpoint().declarations
             ?composite::identity_declaration_maps(base.endpoint().declarations->registry)
             :std::vector<composite::DeclarationMap>{};
+        const auto target_hash=storage::temporal_endpoint_hash(endpoint);
         auto update=storage::make_temporal_declaration_update(base.endpoint().declarations,
-            endpoint.declarations,std::move(maps));
+            std::move(endpoint.declarations),std::move(maps));
         // This operation changes declarations only. Publish that operation
         // directly; a general target difference would compute field transport
         // and innovations for numerical channels that did not change.
@@ -838,7 +839,7 @@ NativeRecord NativeRecord::create_owned(NativeRecordValue value,std::uint64_t ns
         annotation.base_source_hash = storage::encode_rfcx(base.endpoint().source).stats.payload_hash;
         annotation.target_source_hash = annotation.base_source_hash;
         annotation.base_endpoint_hash = storage::temporal_endpoint_hash(base.endpoint());
-        annotation.target_endpoint_hash = storage::temporal_endpoint_hash(endpoint);
+        annotation.target_endpoint_hash = target_hash;
         annotation.source.target_grade_count =
             static_cast<std::uint32_t>(base.endpoint().source.grade_count());
         annotation.declarations = std::move(update);
