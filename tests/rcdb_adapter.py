@@ -89,6 +89,25 @@ with closing(LocalStore(root/"native.rcdb", record_codecs=(*DEFAULT_RECORD_CODEC
         assert attempts == [], "changed files must refuse before store publication"
         assert adapter.read_publication(store, "coverage").record.version == 2
         assert adapter.read_publication(store, "coverage", version=1).value == raw
+    changing.write_bytes(raw)
+    identity = changing.stat()
+    observed = []
+
+    def edit_during_capture(descriptor):
+        info = original_fstat(descriptor)
+        if (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino):
+            observed.append(info)
+            if len(observed) == 2:
+                with changing.open("r+b") as stream:
+                    stream.seek(len(raw)-1)
+                    stream.write(bytes([raw[-1] ^ 1]))
+        return info
+
+    with patch.object(os, "fstat", edit_during_capture):
+        rejects(lambda: adapter.put_publication(store, "coverage", changing,
+                                                 expected_version=2))
+    assert len(observed) >= 3 and attempts == []
+    assert adapter.read_publication(store, "coverage", version=1).value == raw
     rejects(lambda: adapter.put_publication(store, "coverage", root, expected_version=2))
     assert attempts == []
     store.put_record = original_put
