@@ -37,6 +37,22 @@ wheel installation allows imports to be checked from outside the source checkout
 .venv-rcdb/bin/python -I -c "import rexgraph, rexgraph_cpp, rcdb, rcql, agent, system; print(*(m.__file__ for m in (rexgraph, rexgraph_cpp, rcdb, rcql, agent, system)), sep='\n')"
 ```
 
+To require the Python native binding and GADGET to use the same SDK headers,
+check the selected environment against GADGET's recorded build inventory:
+
+```sh
+.venv-rcdb/bin/python -I tools/rcdb/check_native_stack.py \
+  --build-info build/presets/formats/build-info.json --report native-stack.json
+```
+
+This checks every compiled `rexgraph_cpp` module's SDK receipt, including storage
+and model providers. It refuses a different SDK snapshot even when package
+versions match or archive interoperability tests pass. It reports the actual
+project import paths and versions. It does not rebuild dependencies, change model
+engine receipts or establish compatibility with an older checkpoint. A retained
+Python runtime qualified against another SDK will refuse this same-SDK check;
+retain that runtime for its existing model records.
+
 These native publication contracts require the Python core and storage/query
 packages. Zstandard tests also require `zstandard`; zlib is built into Python.
 Agent services, native Python bindings, model backends and physical device
