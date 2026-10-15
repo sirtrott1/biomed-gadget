@@ -156,6 +156,10 @@ AssayFieldsSource reference_match_fields_source(const ResourceImages &images, co
         std::string contig, strand;
         std::size_t donor, acceptor;
     };
+    struct Splice {
+        const Junction &junction;
+        std::size_t split;
+    };
     std::vector<Junction> junctions;
     std::set<std::string> junction_ids;
     for (std::size_t i = 0; i < request.at("junctions").size(); ++i) {
@@ -257,12 +261,13 @@ AssayFieldsSource reference_match_fields_source(const ResourceImages &images, co
                             starts[hit.reference].insert(hit.offset - offset);
                     }
             const auto check = [&](const SequenceRecord &reference, std::size_t start,
-                                   std::optional<std::size_t> split, const Junction *junction) {
+                                   std::optional<Splice> splice) {
                 comparisons += Integer(std::to_string(q.bases.size()));
                 ++candidates;
                 for (std::size_t i = 0; i < sequence.size(); ++i) {
                     const auto position =
-                        split && i >= *split ? junction->acceptor + i - *split : start + i;
+                        splice && i >= splice->split
+                            ? splice->junction.acceptor + i - splice->split : start + i;
                     disagreement[i] = compatible(sequence[i], reference.bases[position]) ? 0 : 1;
                 }
                 const auto mismatch = count_map.apply(disagreement).at(0);
@@ -283,21 +288,24 @@ AssayFieldsSource reference_match_fields_source(const ResourceImages &images, co
                     element(p, integer(b));
                     element(blocks, p);
                 };
-                if (split) {
-                    block(start, junction->donor);
-                    block(junction->acceptor, junction->acceptor + sequence.size() - *split);
-                    member(m, "junction", import_record_view(junction->declaration));
-                    member(m, "query_split_in_reference_orientation", integer(*split));
+                if (splice) {
+                    const auto &junction = splice->junction;
+                    block(start, junction.donor);
+                    block(junction.acceptor, junction.acceptor + sequence.size() - splice->split);
+                    member(m, "junction", import_record_view(junction.declaration));
+                    member(m, "query_split_in_reference_orientation", integer(splice->split));
                 } else
                     block(start, start + sequence.size());
                 member(m, "blocks", blocks);
                 const auto reference_index = static_cast<std::size_t>(&reference - references.data());
-                const auto junction_index = junction ? std::optional<std::size_t>(static_cast<std::size_t>(junction - junctions.data())) : std::nullopt;
+                const auto junction_index = splice ? std::optional<std::size_t>(
+                    static_cast<std::size_t>(&splice->junction - junctions.data())) : std::nullopt;
                 PlacementSource placement{query_index, reference_index, junction_index,
                     query_index, native_comparisons.elements.size(), {}};
-                if (split) {
-                    placement.blocks.emplace_back(start, junction->donor);
-                    placement.blocks.emplace_back(junction->acceptor, junction->acceptor + sequence.size() - *split);
+                if (splice) {
+                    const auto &junction = splice->junction;
+                    placement.blocks.emplace_back(start, junction.donor);
+                    placement.blocks.emplace_back(junction.acceptor, junction.acceptor + sequence.size() - splice->split);
                 } else placement.blocks.emplace_back(start, start + sequence.size());
                 placements.push_back(std::move(placement));
                 collection_mismatches.push_back(mismatch);
@@ -306,7 +314,8 @@ AssayFieldsSource reference_match_fields_source(const ResourceImages &images, co
                     const auto original = strand == "+" ? i : q.bases.size() - 1 - i;
                     original_disagreement[original] = disagreement[i];
                     permutation[original] = Rational(std::to_string(i));
-                    positions[original] = Rational(std::to_string(split && i >= *split ? junction->acceptor + i - *split : start + i));
+                    positions[original] = Rational(std::to_string(splice && i >= splice->split
+                        ? splice->junction.acceptor + i - splice->split : start + i));
                 }
                 require(count_map.apply(original_disagreement).at(0) == mismatch,
                         "original coordinate mismatch-count action changed");
@@ -330,11 +339,11 @@ AssayFieldsSource reference_match_fields_source(const ResourceImages &images, co
                         const auto found = starts.find(r_index);
                         if (found != starts.end())
                             for (auto start : found->second)
-                                check(r, start, {}, nullptr);
+                                check(r, start, std::nullopt);
                     } else
                         for (std::size_t start = 0; start <= r.bases.size() - sequence.size();
                              ++start)
-                            check(r, start, {}, nullptr);
+                            check(r, start, std::nullopt);
                 }
                 for (const auto &j : junctions) {
                     if (j.contig != r.id || j.strand != strand || overhang > sequence.size() / 2)
@@ -343,7 +352,7 @@ AssayFieldsSource reference_match_fields_source(const ResourceImages &images, co
                         if (j.donor >= split &&
                             r.bases.size() - j.acceptor >= sequence.size() - split) {
                             ++junction_universe;
-                            check(r, j.donor - split, split, &j);
+                            check(r, j.donor - split, Splice{j, split});
                         }
                 }
             }
