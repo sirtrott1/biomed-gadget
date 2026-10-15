@@ -197,6 +197,52 @@ int main(int argc, char **argv) try {
               repeated_plan.raw_sources().size() == applied_plan.raw_sources().size() &&
               std::ranges::equal(applied_plan.at("request_publication").bytes(), repeated_plan.at("request_publication").bytes()),
           "proposal plan replay lost ordered mathematical children or original owner");
+    auto workflow = Json::object();
+    workflow.set("schema", Json::string("gadget.scientific.workflow.v1"));
+    workflow.set("id", Json::string("native-proposal-callback"));
+    workflow.set("source_digest", Json::string(study->digest()));
+    workflow.set("limits", Json::parse(R"({"depth":2,"nodes":4,"model_calls":1,"parallel_workers":1})"));
+    workflow.set("definitions", Json::array());
+    workflow.set("entry", Json::parse(R"({"id":"reader","type":"model","role":"reader","prompt":"Use the declared native request"})"));
+    const auto query_proposal = admit_record_view(Json::parse(
+        R"({"schema":"gadget.scientific.agent.proposal.v1","action":"query","query":{"operation":"inspect"}})"));
+    for (const auto &proposal : {query_proposal, plan_proposal}) {
+        std::optional<NativeRecord> generated;
+        WorkflowModels models{{"reader", WorkflowModel(1, WorkflowModel::NativeInvoke{
+            [&, proposal](const std::string &, std::shared_ptr<CpuResources> assigned) {
+                ScientificSession producer(study, std::move(assigned));
+                generated = producer.apply_proposal_record(proposal);
+                return *generated;
+            }})}};
+        const auto execution = execute_workflow_record(study, admit_record_view(workflow), models);
+        const auto receipt = execution.at("result");
+        check(receipt.at("status").text() == "complete", "native model proposal failed workflow adoption");
+        const auto original = NativeRecord::decode(receipt.at("trace").at(0).at("result").at("publication").bytes());
+        check(generated && original.encode() == generated->encode(),
+              "workflow trace discarded the original native proposal response");
+        const auto leaf = NativeRecord::decode(receipt.at("result").at("publication").bytes());
+        check((leaf.at("request").has("schema") &&
+               leaf.at("request").at("schema").text() == "gadget.scientific.plan.v1") ||
+                  leaf.at("request").at("operation").text() == "inspect",
+              "native proposal callback lost the selected mathematical request");
+        if (proposal.at("action").text() == "query") verify(leaf, *study, proposal.at("query"));
+        else check(leaf.at("result").at("steps").size() == queries.size(),
+                   "native proposal workflow lost complete ordered plan children");
+        check(replay_scientific_record(leaf).at("result").at("schema").text() == leaf.at("result").at("schema").text(),
+              "native proposal workflow leaf could not replay without the model");
+    }
+    auto forged_plan = render_record_view(plan_proposal);
+    forged_plan.at("plan").at("steps").at(0).set("query",
+        forged_plan.at("plan").at("steps").at(0).at("query").at("operation").text() == "inspect"
+            ? render_record_view(queries.at("coverage_A")) : Json::parse(R"({"operation":"inspect"})"));
+    const auto forged_response = retain_operation(applied_plan, admit_record_view(forged_plan),
+                                                  applied_plan.at("result").unbound_value());
+    WorkflowModels forged_model{{"reader", WorkflowModel(1, WorkflowModel::NativeInvoke{
+        [forged_response](const std::string &, std::shared_ptr<CpuResources>) { return forged_response; }})}};
+    const auto refused_workflow = execute_workflow_record(study, admit_record_view(workflow), forged_model);
+    check(refused_workflow.at("result").at("status").text() == "failed" &&
+              refused_workflow.at("result").at("error").text().find("child request mismatch") != std::string::npos,
+          "native model plan admitted a genuine child for a different declared query");
     if (fs::exists(output/"cli-plan.rfcxs"))
         check(replay_scientific_record(NativeRecord::read(output/"cli-plan.rfcxs")).at("result").at("certificate").at("steps").size() == queries.size(),
               "CLI proposal plan export lost native ordered children");

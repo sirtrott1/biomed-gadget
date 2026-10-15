@@ -88,7 +88,7 @@ NativeRecord claim_request(const NativeRecord &owner, const Json &items) {
 struct WorkflowArchives {
     std::uint64_t next{1};
     std::vector<RawByteSource> sources;
-    std::map<const rfc::storage::TemporalEndpoint *, std::uint64_t> owners;
+    std::map<std::shared_ptr<const void>, std::uint64_t, std::owner_less<std::shared_ptr<const void>>> owners;
     explicit WorkflowArchives(const NativeRecord &source) {
         for (const auto &bytes : source.raw_sources())
             next = std::max(next, rfc::machine::checked_size_add(bytes.key(), 1));
@@ -97,12 +97,13 @@ struct WorkflowArchives {
         if (value.publication) {
             const auto &owner = *value.publication;
             require(owner.is_root(), "workflow results require their actual root publication");
-            auto found = owners.find(owner.endpoint().get());
+            const auto identity = owner.publication_owner();
+            auto found = owners.find(identity);
             if (found == owners.end()) {
                 const auto key = next;
                 next = rfc::machine::checked_size_add(next, 1);
                 sources.push_back(owner.archive_source(key));
-                found = owners.emplace(owner.endpoint().get(), key).first;
+                found = owners.emplace(identity, key).first;
             }
             const auto bytes = std::find_if(sources.begin(), sources.end(),
                 [&](const auto &source) { return source.key() == found->second; });
@@ -387,6 +388,21 @@ struct Runner {
             const auto original = study->native_publication().archive_source(1);
             require(std::ranges::equal(original.bytes(), result.at("source_study_publication").bytes()),
                     "workflow scientific output belongs to another original native owner");
+        } else if (schema == "gadget.scientific.plan.fields.v1") {
+            require(result.at("source_digest").text() == study->digest() &&
+                        result.at("steps").size() == owner.at("request").at("steps").size(),
+                    "workflow scientific plan source/step binding mismatch");
+            for (std::size_t i = 0; i < result.at("steps").size(); ++i) {
+                const auto step = result.at("steps").at(i);
+                require(step.at("id").text() == owner.at("request").at("steps").at(i).at("id").text(),
+                        "workflow scientific plan step identity mismatch");
+                const auto child = NativeRecord::decode(step.at("publication").bytes());
+                const auto actual = render_record_view(child.at("request"));
+                const auto declared = render_record_view(owner.at("request").at("steps").at(i).at("query"));
+                require(json_object_equal(actual.raw(), declared.raw()),
+                        "workflow scientific plan child request mismatch");
+                bind_output(child);
+            }
         } else if (schema == "gadget.biomedical.certificate.v1") {
             require(evidence && result.at("source_digest").text() == evidence->digest() &&
                         owner.source_namespace() == evidence->native_publication().source_namespace(),
@@ -453,14 +469,36 @@ struct Runner {
                 if (model.invoke_native) {
                     output = model.invoke_native(prompt, scope);
                     captured = output;
-                    if (output.publication->at("schema").text() == "gadget.operation.native.v1")
+                    if (output.publication->at("schema").text() == "gadget.operation.native.v1") {
+                        const auto response = output.publication->at("result");
+                        if (response.at("schema").text() == "gadget.agent.response.v1") {
+                            require(response.at("status").text() == "executed",
+                                    "workflow native model proposal did not complete");
+                            const auto proposal = NativeRecord::decode(
+                                output.publication->at("request_publication").bytes());
+                            require(proposal.at("schema").text() == "gadget.scientific.agent.proposal.v1",
+                                    "workflow native model proposal schema mismatch");
+                            const auto action = proposal.at("action").text();
+                            require(action == "query" || action == "plan",
+                                    "workflow native model response requires a query or plan");
+                            const auto certificate = response.at("certificate");
+                            require(certificate.at("schema").text() ==
+                                        (action == "query" ? "gadget.scientific.result.fields.v1"
+                                                           : "gadget.scientific.plan.fields.v1"),
+                                    "workflow native model response has no mathematical certificate");
+                            output = retain_operation(*output.publication, proposal.at(action),
+                                                      certificate.unbound_value());
+                        }
                         bind_output(*output.publication);
+                    }
                 } else {
                     require(static_cast<bool>(model.invoke), "workflow model callback missing");
                     output = model.invoke(prompt, scope);
                     captured = output;
                 }
-                if (model.invoke_native && output.native_comparisons()) {
+                if (model.invoke_native && (output.native_comparisons() ||
+                    (output.publication->at("schema").text() == "gadget.operation.native.v1" &&
+                     output.publication->at("result").at("schema").text() == "gadget.scientific.plan.fields.v1"))) {
                     // An actual native tool result carries its own source and
                     // carriers. The callback's optional prose is not needed.
                 } else {
@@ -684,7 +722,7 @@ struct Runner {
             }
             env.insert_or_assign(node.at("id").text(), output);
             event.set("status", Json::string("complete"));
-            if (kind == "query" || kind == "model" || kind == "evidence" || kind == "check_claims")
+            if (!captured && (kind == "query" || kind == "model" || kind == "evidence" || kind == "check_claims"))
                 captured = output;
         } catch (const std::exception &e) {
             stopped.store(true);

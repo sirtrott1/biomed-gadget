@@ -17,23 +17,17 @@ RFCXS archive in `publication`. Repeated references to one actual owner reuse
 its archive. Model JSON replies remain immutable `view_json` presentation text.
 The workflow receipt preserves failed replies and completed source owners too.
 
-The current strict scientific profile admits native model comparison, finite
-reference calibration, Hodge decomposition, linear response observation,
-declared response transition, metric relative novelty, observed/constrained
-response models, relational field ensembles, structural reference calibration
-and local sections. `has_native_scientific_publisher` reports the implemented
-publisher inventory; the selected source and query still require admission.
-Biomedical leaves use native
-role/composite evidence operations. An unconverted scientific publisher is
-refused during admission, including in an untaken branch or unused definition.
-`execute_workflow` provides the existing compatibility display through the same
-Runner; legacy publisher output remains an explicit migration boundary.
+`has_native_scientific_publisher` reports the implemented scientific inventory;
+the selected source, carriers and query still require admission. Biomedical
+leaves use native role/composite evidence operations. A query without a native
+publisher refuses during admission, including in an untaken branch or unused
+definition. `execute_workflow` provides the compatibility display through the
+same Runner.
 `workflow_record_view` displays a saved native workflow without executing it.
 Generic record views expose the structural receipt and original archive refs.
 The CLI uses that strict route when `--out` requests a native archive. Without
 `--out`, the CLI displays the compatibility Runner result from the original
-typed declaration. Converted leaves still retain their actual native owners;
-unconverted leaves remain the explicit migration boundary described above.
+typed declaration. Mathematical leaves retain their actual native owners.
 
 A native branch or claim node reads actual typed values. A `condition` or claim
 item declares `path`, `value_type`, `comparison` and expected `value`. Paths start
@@ -48,6 +42,12 @@ Numerical agreement does not supply clinical or biological meaning.
 A local role can return prospective JSON controls or use
 `WorkflowModel::NativeInvoke` to return its actual native tool publication.
 Strict workflows refuse JSON replies labelled as executed mathematical results.
+`LocalAgent::ask_record` and `ask_assigned_record` retain scientific query and
+plan results directly, together with the original proposal and model receipts.
+The CLI's local roles use this native interface. A workflow forwards the actual
+query or complete ordered plan to dependent work and retains the original model
+response in its trace. Every plan child must match its declared query and original
+study owner. Replay of retained calculations requires no new model generation.
 The explicit workers/native callback constructor passes the assigned resource
 scope to the callback. A role's context is an optional display with
 `native_source_namespace` and `native_cutoff`; these identify the actual retained

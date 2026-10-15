@@ -3,6 +3,8 @@
 #include <gadget/biomedical.hpp>
 #include <gadget/record_view.hpp>
 #include <gadget/snapshot.hpp>
+#include <gadget/workflow.hpp>
+#include "../src/scientific_result_fields.hpp"
 #include <iostream>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -84,9 +86,68 @@ void evidence_role(const fs::path &model, const fs::path &evidence_path,
     std::cout << "PASS: real local evidence planning, native prospective owner, separate native "
                  "execution, complete model-disabled equality, original bytes and replay\n";
 }
+void native_workflow_role(const fs::path &model, const fs::path &destination) {
+    fs::create_directories(destination);
+    const auto root = private_directory(destination, "native-");
+    example::scientific_study(root / "input");
+    auto study = std::make_shared<const ScientificStudy>(root / "input/study.json");
+    LocalModelOptions options;
+    options.model = model;
+    options.context_tokens = 8192;
+    options.output_tokens = 384;
+    options.threads = 2;
+    options.prompt_cache_mib = 64;
+    LocalAgent agent(study, options);
+    const auto field = study->catalog().at("fields").at(0).at("id").text();
+    auto workflow = Json::object();
+    workflow.set("schema", Json::string("gadget.scientific.workflow.v1"));
+    workflow.set("id", Json::string("local-native-query"));
+    workflow.set("source_digest", Json::string(study->digest()));
+    workflow.set("limits", Json::parse(R"({"depth":2,"nodes":4,"model_calls":1,"parallel_workers":2})"));
+    workflow.set("definitions", Json::array());
+    auto entry = Json::object();
+    entry.set("id", Json::string("reader")); entry.set("type", Json::string("model"));
+    entry.set("role", Json::string("reader"));
+    entry.set("prompt", Json::string("Return action query with operation coverage and field " + field +
+        ". Do not add other arguments or compute values yourself."));
+    workflow.set("entry", entry);
+    std::optional<NativeRecord> response;
+    WorkflowModels models{{"reader", WorkflowModel(2, WorkflowModel::NativeInvoke{
+        [&](const std::string &prompt, std::shared_ptr<CpuResources> assigned) {
+            response = agent.ask_assigned_record(prompt, {}, std::move(assigned));
+            return *response;
+        }})}};
+    const auto result = execute_workflow_record(study, admit_record_view(workflow), models);
+    result.write(root / "workflow.rfcxs");
+    check(result.at("result").at("status").text() == "complete", "real local native workflow failed");
+    check(response && response->at("result").at("status").text() == "executed" &&
+              response->at("request").at("query").at("operation").text() == "coverage" &&
+              response->at("request").at("query").at("field").text() == field,
+          "real native local model substituted the requested source observation");
+    response->write(root / "response.rfcxs");
+    check(response->at("result").has("model") && response->at("result").has("performance"),
+          "native local response lost model identity or execution receipts");
+    const auto leaf = NativeRecord::decode(result.at("result").at("result").at("publication").bytes());
+    const auto view = leaf.at("result").at("fields").at("view");
+    const auto pin = study->field_accession(field);
+    check(view.at("reported").integer() == pin.tensor_declaration()->tensor.support().count(),
+          "native model coverage disagrees with original supported coordinates");
+    leaf.write(root / "leaf.rfcxs");
+    fs::rename(root / "input", root / "moved-input");
+    const auto replay = replay_scientific_record(NativeRecord::read(root / "leaf.rfcxs"));
+    check(replay.at("result").at("schema").text() == "gadget.scientific.result.fields.v1",
+          "model-disabled relocated replay did not retain native mathematical fields");
+    const auto trace = NativeRecord::decode(result.at("result").at("trace").at(0).at("result").at("publication").bytes());
+    check(trace.encode() == response->encode(), "native workflow lost the exact original model response");
+    std::cout << "PASS: real local model query, native workflow ownership, original support and model-disabled relocated replay\n";
+}
 } // namespace
 int main(int argc, char **argv) {
     try {
+        if (argc == 4 && std::string(argv[1]) == "--native-workflow") {
+            native_workflow_role(argv[2], argv[3]);
+            return 0;
+        }
         if (argc == 4) {
             evidence_role(argv[1], argv[2], argv[3]);
             return 0;

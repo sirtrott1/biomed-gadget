@@ -106,6 +106,8 @@ class NativeRecord {
     std::uint64_t format_version() const noexcept;
     // The root declaration shares this view's actual immutable publication.
     NativeRecord owning_publication() const;
+    // Retain the immutable declaration owner when composing publication archives.
+    std::shared_ptr<const void> publication_owner() const noexcept { return state_; }
     // Capture an actual ancestor; unchanged byte owners are validated and shared.
     NativeRecord historical_publication(std::uint64_t cutoff) const;
     NativeRecordKind kind() const;
