@@ -39,6 +39,8 @@ Json execute_workflow(std::shared_ptr<const ScientificStudy> study, const Native
                       const WorkflowModels &models = {},
                       std::shared_ptr<CpuResources> resources = {}, ComputeOptions compute = {},
                       const EvidenceStore *evidence = nullptr);
+// Model context can display explicit native literals while retaining the complete
+// mathematical producer. String references keep the complete result display.
 NativeRecord execute_workflow_record(std::shared_ptr<const ScientificStudy> study,
     const NativeRecord &workflow,const WorkflowModels &models = {},
     std::shared_ptr<CpuResources> resources = {},ComputeOptions compute = {},

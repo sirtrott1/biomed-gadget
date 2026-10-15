@@ -1,0 +1,15 @@
+# Biomedical response providers
+
+GADGET fetches explicitly requested records through five compiled provider profiles: BindingDB, ChEMBL, PubChem, UniProt and PDB. Enable `GADGET_ENABLE_PUBLIC_DATABASES` to acquire HTTPS responses. An installation without that option can import and query captured responses locally.
+
+A captured snapshot contains the exact request declaration, complete response body and headers, their hashes, receipt time, source documentation and data terms. Receipt time records acquisition and does not establish biological time or historical availability. Page limits and affinity cutoffs describe the requested selection; the connector does not claim a whole database survey.
+
+`plan_database_fetch` admits the provider, resource, identifier, predicates and caller transport resources. `fetch_databases` executes those admitted requests and captures the original bytes. `capture_database_snapshot` retains the unchanged files in a native publication. `import_evidence` uses the declared adapter version to interpret those bytes. `EvidenceStore` owns the resulting native assertions, their original rows and response references. Its mathematical operations use the canonical native providers.
+
+To add a provider, extend the request schema and URL admission together with its declared source interpretation. Include documentation and data terms in the provider declaration. The adapter must retain complete response and header bytes, resolve original source pointers and identifiers, declare measurement endpoint, relation and units, and preserve missing and censored tokens. A missing measurement is not a measured zero. A bound is not an equality point. Identifier correspondences remain assertions supported by the original source; matching labels or dimensions do not identify independent carriers.
+
+Qualify the new profile with a complete selected original response and its frozen local replay. Compare every interpreted assertion with its original row or context, every numeric token exactly, and the entire retained original byte content. Include malformed and altered sources, unknown resources, wrong units and foreign bindings. Add explicit typed field and native query cases where the profile exposes quantitative values. Use the existing stores, codecs, query providers and native field selectors rather than a second storage or mathematical implementation.
+
+The current URL and adapter dispatch are compiled profiles. A new provider requires reviewed application code and tests; an arbitrary URL or model statement cannot register one. Dataset preparation that is specific to a particular research input belongs in examples or tools.
+
+DrugBank acquisition and interpretation are not implemented. Its licensed access is separate from the supported public provider profiles. Do not label another provider's response as DrugBank or infer authorization from a local filename. A future licensed profile must use authorized original input and keep its source and distribution terms explicit.

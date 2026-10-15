@@ -123,7 +123,67 @@
             "context": {
               "type": "array",
               "items": {
-                "type": "string"
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "selections": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "array",
+                              "minItems": 1,
+                              "items": {
+                                "oneOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  }
+                                ]
+                              }
+                            },
+                            "value_type": {
+                              "enum": [
+                                "count",
+                                "integer",
+                                "rational",
+                                "text",
+                                "boolean"
+                              ]
+                            },
+                            "coordinate": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "value_type"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "selections"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
               }
             }
           },

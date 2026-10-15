@@ -53,9 +53,12 @@ scope to the callback. A role's context is an optional display with
 `native_source_namespace` and `native_cutoff`; these identify the actual retained
 producer, rather than a fresh record made from the display.
 
-For `claims_from`, a prospective role supplies `claims` using
-`gadget.claims.native.v1`: `source_namespace`, `cutoff` and `items`. The checker
-requires the exact producer pin before comparing any proposed literal. Wrong
+For `claims_from`, a prospective role can supply `claims` using
+`gadget.claims.native.v1`: `source_namespace`, `cutoff` and `items`. A local
+`claim_reader` can instead supply its admitted prospective `claims` with the
+original `source_digest`, `certificate_sha256` and `items`. The checker validates
+that complete certificate binding and resolves the actual native producer pin
+before comparing any proposed literal. Wrong
 units, paths or interpretation cannot be repaired by inventing a measurement.
 Scientific units and endpoint semantics must be selected from actual source
 metadata; no scalar or field dimension establishes them automatically.
@@ -66,3 +69,27 @@ producing operation. The outer workflow is orchestration metadata, with its
 original study and optional evidence publication; it does not merge independent
 mathematical carriers. Local models supply prospective controls and explanations,
 and native tools own the mathematical observations and results.
+
+A model context reference given as a string displays the complete mathematical
+result. To display only named native literals, use an explicit selection:
+
+```json
+{"from":"measured","selections":[{"path":["reported"],"value_type":"count"}]}
+```
+
+Use this object as an item in a model node's `context` array. The dependency must
+own a completed scientific field publication. A selection supports `count`,
+`integer`, `rational`, `text` or `boolean`. A tensor selection can declare an
+original flat `coordinate`; it must be supported in that original field.
+Supported zero remains zero, and a missing coordinate refuses the selection.
+Exact rational values use rational strings. Paths, types, coordinates and actual
+native bindings accompany every displayed value.
+
+The context marks `result_complete` false and supplies `selections` in place of
+`result`. Its certificate and result digests still identify the complete original
+result. Its native namespace and cutoff still name the actual producer. The
+workflow retains that complete publication independently of the display choice.
+Ask a reader to use the displayed selection's original path for any proposed
+claim. `check_claims` compares the claim against the complete native dependency.
+A display selection cannot change source support, create a new measurement or
+reduce the mathematical calculation.
