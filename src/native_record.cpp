@@ -894,7 +894,7 @@ NativeRecord NativeRecord::create_owned(NativeRecordValue value,std::uint64_t ns
         annotation.source.target_grade_count =
             static_cast<std::uint32_t>(base.endpoint().source.grade_count());
         annotation.declarations = std::move(update);
-        history->append(annotation);
+        history->append(std::move(annotation));
         const auto tail=history->tail();
         if(observer)observer("native_freeze");
         auto state=std::make_shared<const State>(tail,std::move(sources),std::move(*history));
