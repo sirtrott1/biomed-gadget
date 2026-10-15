@@ -636,14 +636,19 @@ std::uint64_t new_native_record_namespace() {
     return key;
 }
 namespace {
-NativeRecordValue operation_value(const std::vector<RawByteSource> &sources,
+struct OperationValue {
+    NativeRecordValue value;
+    std::set<std::uint64_t> request_sources;
+};
+OperationValue operation_value(const std::vector<RawByteSource> &sources,
     std::vector<RawByteSource> &raw,const NativeRecord &request,NativeRecordValue result) {
     using N=NativeRecordValue;
     std::set<std::uint64_t> used;for(const auto &s:sources)used.insert(s.key());
+    std::set<std::uint64_t> request_sources;
     std::uint64_t key=1;std::map<std::uint64_t,std::uint64_t> bindings;
     const auto next=[&] {
         while(used.contains(key)){require(key!=std::numeric_limits<std::uint64_t>::max(),"operation byte identity exhausted");++key;}
-        used.insert(key);return key;
+        used.insert(key);request_sources.insert(key);return key;
     };
     for(const auto &s:request.raw_sources()) {
         const auto target=next();bindings.emplace(s.key(),target);raw.push_back(s.rekey(target));
@@ -655,14 +660,59 @@ NativeRecordValue operation_value(const std::vector<RawByteSource> &sources,
     value.members.emplace_back("request", request.unbound_value(bindings));
     value.members.emplace_back("result", std::move(result));
     value.members.emplace_back("request_publication", N(N::ByteSpan{archive_key,0,count,false}));
-    return N(std::move(value));
+    return {N(std::move(value)),std::move(request_sources)};
+}
+NativeRecord checked_operation(NativeRecord publication,
+                               const std::set<std::uint64_t> &request_sources) {
+    struct Cursor {
+        NativeRecord value;
+        std::vector<std::string> names;
+        std::size_t next{};
+    };
+    std::vector<Cursor> pending;
+    const auto push = [&](NativeRecord value) {
+        auto names = value.kind() == NativeRecordKind::Object ? value.names()
+                                                            : std::vector<std::string>{};
+        pending.push_back({std::move(value),std::move(names),0});
+    };
+    push(publication.at("result"));
+    while (!pending.empty()) {
+        auto &cursor = pending.back();
+        const auto kind = cursor.value.kind();
+        if (kind == NativeRecordKind::Text || kind == NativeRecordKind::Bytes)
+            require(!request_sources.contains(unsigned_value(parts(cursor.value.value()).at(0))),
+                    "operation result span has no original or added byte source");
+        if (kind == NativeRecordKind::Object && cursor.next < cursor.names.size()) {
+            auto child = cursor.value.at(cursor.names[cursor.next++]);
+            push(std::move(child));
+        } else if (kind == NativeRecordKind::Array && cursor.next < cursor.value.size()) {
+            auto child = cursor.value.at(cursor.next++);
+            push(std::move(child));
+        } else pending.pop_back();
+    }
+    return publication;
 }
 } // namespace
 NativeRecord retain_operation(const NativeRecord &source,const NativeRecord &request,NativeRecordValue result,
                               const NativeRecordObserver &observer) {
     std::vector<RawByteSource> raw;
-    auto value=operation_value(source.raw_sources(),raw,request,std::move(result));
-    return source.derive(std::move(value),std::move(raw),observer);
+    auto operation=operation_value(source.raw_sources(),raw,request,std::move(result));
+    return checked_operation(source.derive(std::move(operation.value),std::move(raw),observer),
+                             operation.request_sources);
+}
+NativeRecord retain_operation(const NativeRecord &source, std::vector<RawByteSource> added,
+    const NativeRecord &request, NativeRecordValue result,
+    const NativeRecordObserver &observer) {
+    auto sources = source.raw_sources();
+    std::set<std::uint64_t> keys;
+    for (const auto &bytes : sources) keys.insert(bytes.key());
+    for (const auto &bytes : added) {
+        require(keys.insert(bytes.key()).second, "operation added byte source identity collides");
+        sources.push_back(bytes);
+    }
+    auto operation = operation_value(sources, added, request, std::move(result));
+    return checked_operation(source.derive(std::move(operation.value), std::move(added), observer),
+                             operation.request_sources);
 }
 NativeRecord retain_operation(const storage::TemporalEndpoint &source,std::uint64_t source_namespace,
     std::vector<RawByteSource> sources,const NativeRecord &request,NativeRecordValue result) {
@@ -672,9 +722,10 @@ NativeRecord retain_operation(const storage::TemporalEndpoint &source,std::uint6
 NativeRecord retain_operation(storage::TemporalEndpoint &&source,std::uint64_t source_namespace,
     std::vector<RawByteSource> sources,const NativeRecord &request,NativeRecordValue result) {
     std::vector<RawByteSource> added;
-    auto value=operation_value(sources,added,request,std::move(result));
+    auto operation=operation_value(sources,added,request,std::move(result));
     for(auto &bytes:added)sources.push_back(std::move(bytes));
-    return NativeRecord::create_from_endpoint(std::move(value),source_namespace,std::move(sources),std::move(source));
+    return checked_operation(NativeRecord::create_from_endpoint(std::move(operation.value),
+        source_namespace,std::move(sources),std::move(source)),operation.request_sources);
 }
 NativeRecord NativeRecord::create(const NativeRecordValue &value,std::uint64_t ns,
     std::vector<RawByteSource> sources,const storage::TemporalEndpoint *source) {
