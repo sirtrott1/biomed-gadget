@@ -493,10 +493,10 @@ int main(int argc, char **argv) {
         if (command == "import-evidence") {
             const auto version =
                 options.contains("--adapter-version") ? options.at("--adapter-version") : "2";
-            if (version != "1" && version != "2")
-                throw std::invalid_argument("biomedical adapter version requires 1 or 2");
+            if (version != "1" && version != "2" && version != "3")
+                throw std::invalid_argument("biomedical adapter version requires 1, 2 or 3");
             gadget::import_evidence(required("--snapshot"), required("--out"),
-                                    version == "1" ? 1 : 2);
+                                    version == "1" ? 1 : version == "2" ? 2 : 3);
             gadget::EvidenceStore store(required("--out"));
             std::cout << store.execute(gadget::Json::parse("{\"operation\":\"inspect\"}")).dump()
                       << '\n';

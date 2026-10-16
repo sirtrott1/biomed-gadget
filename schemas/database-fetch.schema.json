@@ -42,7 +42,8 @@
               "protein",
               "compound",
               "entry",
-              "polymer"
+              "polymer",
+              "drug_indication"
             ]
           },
           "identifier": {

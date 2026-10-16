@@ -46,16 +46,17 @@ std::string token(const Json &j, std::size_t maximum = source_byte_limit()) {
     const auto id = token(item.at("identifier"));
     if (provider == "chembl") {
         require(resource == "activity" || resource == "assay" || resource == "target" ||
-                    resource == "molecule" || resource == "status",
+                    resource == "molecule" || resource == "status" || resource == "drug_indication",
                 "unsupported ChEMBL resource");
         require(!item.has("cutoff_nm"), "cutoff applies only to BindingDB");
-        if (resource != "activity") {
+        if (resource != "activity" && resource != "drug_indication") {
             require(!item.has("limit") && !item.has("offset") && !item.has("endpoint"),
                     "record fetch has no page filters");
             return "https://www.ebi.ac.uk/chembl/api/data/" + resource +
                    (resource == "status" ? ".json" : "/" + id + ".json");
         }
-        require(id.starts_with("CHEMBL"), "activity requires a ChEMBL molecule identifier");
+        require(id.starts_with("CHEMBL"), "paged ChEMBL requests require a molecule identifier");
+        require(resource=="activity" || !item.has("endpoint"), "drug indication pages have no binding endpoint filter");
         const auto limit =
             item.has("limit") ? count(item.at("limit"), 1000, "API page limit") : 100;
         // ChEMBL imposes the 1000-row page size. It does not impose an
@@ -66,7 +67,7 @@ std::string token(const Json &j, std::size_t maximum = source_byte_limit()) {
                                 : 0;
         require(limit > 0, "empty API page limit");
         auto result =
-            "https://www.ebi.ac.uk/chembl/api/data/activity.json?molecule_chembl_id=" + id +
+            "https://www.ebi.ac.uk/chembl/api/data/" + resource + ".json?molecule_chembl_id=" + id +
             "&limit=" + std::to_string(limit) + "&offset=" + std::to_string(offset);
         if (item.has("endpoint")) {
             const auto e = token(item.at("endpoint"));

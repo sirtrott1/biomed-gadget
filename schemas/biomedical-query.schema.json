@@ -127,6 +127,71 @@
         "maximum"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "const": "role_join"
+        },
+        "source_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "left_kind": {
+          "enum": [
+            "binding_observation",
+            "identifier_cross_reference",
+            "source_relationship"
+          ]
+        },
+        "right_kind": {
+          "enum": [
+            "binding_observation",
+            "identifier_cross_reference",
+            "source_relationship"
+          ]
+        },
+        "left_role": {
+          "enum": [
+            "compound_or_left",
+            "target_or_right",
+            "assay",
+            "document",
+            "response"
+          ]
+        },
+        "right_role": {
+          "enum": [
+            "compound_or_left",
+            "target_or_right",
+            "assay",
+            "document",
+            "response"
+          ]
+        },
+        "activity": {
+          "enum": [
+            "retained",
+            "active_only"
+          ]
+        },
+        "max_matches": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "operation",
+        "source_digest",
+        "left_kind",
+        "left_role",
+        "right_kind",
+        "right_role",
+        "activity",
+        "max_matches"
+      ],
+      "additionalProperties": false
     }
   ]
 }

@@ -1,8 +1,10 @@
 #include <gadget/biomedical.hpp>
 #include <gadget/record_view.hpp>
 #include <gadget/workflow.hpp>
+#include <rfc/runtime/execution_policy.hpp>
 #include <algorithm>
 #include <iostream>
+#include <set>
 
 using namespace gadget;
 void check(bool ok, const char *message) {
@@ -243,6 +245,118 @@ void proposal_contracts(const EvidenceStore &store, const fs::path &root, const 
               "proposal replay changed original provider bytes");
     }
 }
+void relationship_contracts(const fs::path &root) {
+    const auto snapshot = root/"relationship-snapshot";
+    fs::copy(root/"snapshot",snapshot,fs::copy_options::recursive);
+    fs::remove(snapshot/"snapshot.rfcxs");
+    auto manifest = Json::parse(read_text(snapshot/"snapshot.json"));
+    auto responses = manifest.at("records");
+    const auto add = [&](const char *id,const char *provider,const char *resource,const char *identifier,const Json &body) {
+        const auto bytes = body.dump();
+        const auto headers = std::string("authored source relationship fixture\n");
+        const auto path = std::string(id)+".json", header_path = std::string(id)+".headers";
+        write_text(snapshot/path,bytes);write_text(snapshot/header_path,headers);
+        auto item = Json::object(), request = Json::object();
+        request.set("id",Json::string(id));request.set("provider",Json::string(provider));
+        request.set("resource",Json::string(resource));request.set("identifier",Json::string(identifier));
+        item.set("request",request);item.set("url",Json::string("offline:authored-source-relationship"));
+        item.set("path",Json::string(path));item.set("sha256",Json::string("sha256:"+sha256(bytes)));
+        item.set("headers_path",Json::string(header_path));item.set("headers_sha256",Json::string("sha256:"+sha256(headers)));
+        responses.push(item);
+    };
+    add("protein-relationships","uniprot","protein","P00519",parse(R"({
+        "primaryAccession":"P00519","uniProtKBCrossReferences":[{"database":"PDB","id":"1TEST"}],
+        "comments":[{"commentType":"DISEASE","disease":{"diseaseId":"Authored condition","diseaseAccession":"DI-TEST","diseaseCrossReference":{"database":"MIM","id":"123"}}},
+                    {"commentType":"DISEASE","note":{"texts":[{"value":"Authored statement without one condition accession"}]}}]})"));
+    add("indication-relationships","chembl","drug_indication","CHEMBL941",parse(R"({"drug_indications":[
+        {"molecule_chembl_id":"CHEMBL941","efo_id":"EFO:TEST","efo_term":"Authored condition","mesh_id":"DTEST","mesh_heading":"Authored condition","max_phase_for_ind":"4"},
+        {"molecule_chembl_id":"CHEMBL941","efo_id":"EFO:TEST","efo_term":"Authored condition","mesh_id":null,"max_phase_for_ind":"2"},
+        {"molecule_chembl_id":"CHEMBL941","efo_id":null,"mesh_id":"DOTHER","mesh_heading":"Other authored condition","max_phase_for_ind":"1"}]})"));
+    json_object_object_del(manifest.raw(),"snapshot_sha256");
+    manifest.set("snapshot_sha256",Json::string("sha256:"+sha256(manifest.dump())));
+    write_text(snapshot/"snapshot.json",manifest.dump());
+    import_evidence(snapshot,root/"relationship-store",3);
+    rejects([&] { import_evidence(snapshot,root/"relationship-v2",2); });
+    const EvidenceStore store(root/"relationship-store");
+    check(store.execute(parse(R"({"operation":"coverage"})")).at("result").at("binding_records").integer()==8,
+          "source statements became numerical binding observations");
+    const auto records = store.native_publication().at("records");
+    std::size_t relationships{};
+    bool statement=false;
+    for (std::size_t i=0;i<records.size();++i) {
+        const auto row=records.at(i);
+        if (row.at("kind").integer()!=30) continue;
+        ++relationships;
+        check(row.at("value_token").text().empty() && row.at("endpoint").text().empty(),
+              "disease annotation or indication phase became a numerical endpoint");
+        statement=statement || row.at("target").text().find("/comments/1")!=std::string::npos;
+    }
+    check(relationships==5 && statement,"source relationships dropped original duplicate or unassigned condition statements");
+    auto query=parse(R"({"operation":"role_join","source_digest":"","left_kind":"binding_observation","left_role":"target_or_right","right_kind":"identifier_cross_reference","right_role":"compound_or_left","activity":"retained","max_matches":100})");
+    query.set("source_digest",Json::string(store.digest()));
+    check(store.execute(query).at("result").at("selected").integer()==8,"native target role composition lost complete binding occurrences");
+    query.set("left_role",Json::string("compound_or_left"));
+    query.set("right_kind",Json::string("source_relationship"));
+    const auto joined=store.execute_record(admit_record_view(query));
+    const auto result=joined.at("result").at("result");
+    check(result.at("selected").integer()==18 && result.at("matches").size()==18,
+          "native role composition merged distinct source indication rows");
+    std::set<std::pair<std::string,std::string>> witnesses;
+    for (std::size_t i=0;i<result.at("matches").size();++i) {
+        const auto match=result.at("matches").at(i);
+        check(match.at("participant").text()=="chembl:CHEMBL941","native join inferred a foreign participant");
+        check(match.at("left_position").integer()==0 && match.at("right_position").integer()==0,
+              "native join lost source occurrence positions");
+        check(witnesses.emplace(match.at("left_occurrence").text(),match.at("right_occurrence").text()).second,
+              "native join repeated an occurrence witness");
+    }
+    joined.write(root/"role-join.rfcxs");
+    check(NativeRecord::read(root/"role-join.rfcxs").encode()==joined.encode(),"role composition archive changed its actual identity");
+    auto bad=Json::parse(query.dump());bad.set("max_matches",Json::integer(0));
+    bool exhausted=false;
+    try { (void)store.execute(bad); }
+    catch (const rfc::runtime::ExecutionLimitExceeded &error) {
+        exhausted=error.resource()=="role join result matches" && error.required()==18 && error.limit()==0;
+    }
+    check(exhausted,"native role result budget did not report actual complete match demand");
+    bad=Json::parse(query.dump());bad.set("source_digest",Json::string("foreign"));
+    rejects([&] { store.execute(bad); });
+    bad=Json::parse(query.dump());bad.set("activity",Json::string("inferred"));
+    rejects([&] { store.execute(bad); });
+    bad=Json::parse(query.dump());bad.set("left_role",Json::string("unknown"));
+    rejects([&] { store.execute(bad); });
+    const auto inspection=store.execute(parse(R"({"operation":"inspect"})")).at("result");
+    std::set<std::string> selected;
+    for (std::size_t i=0;i<inspection.at("entities").size();++i) {
+        auto neighbors=parse(R"({"operation":"neighbors","subject_key":"1"})");
+        neighbors.set("subject_key",inspection.at("entities").at(i).at("native_subject_key"));
+        const auto rows=store.execute(neighbors).at("result").at("records");
+        for (std::size_t j=0;j<rows.size();++j) selected.insert(rows.at(j).at("native_assertion_key").text());
+    }
+    auto context=parse(R"({"schema":"gadget.biomedical.context.v1","source_digest":"","snapshot_sha256":"","question":"Which retained source role occurrences match?","assertion_keys":[]})");
+    context.set("source_digest",Json::string(store.digest()));
+    context.set("snapshot_sha256",render_record_view(store.native_publication().at("snapshot").at("snapshot_sha256")));
+    for (const auto &key:selected) context.at("assertion_keys").push(Json::string(key));
+    const auto native_context=admit_record_view(context);
+    const auto catalog=store.source_context(native_context).at("result");
+    auto proposal=parse(R"({"schema":"gadget.biomedical.proposal.v1","source_digest":"","context_sha256":"","question_sha256":"","action":"query","query":{}})");
+    for (const auto *name:{"source_digest","context_sha256","question_sha256"}) proposal.set(name,render_record_view(catalog.at(name)));
+    proposal.set("query",query);
+    check(store.admit_proposal(native_context,admit_record_view(proposal),context.at("question").text()).at("result").at("status").text()=="prospective",
+          "native role query proposal executed or lost its complete selected context");
+    auto partial_keys=Json::array();partial_keys.push(Json::string(*selected.begin()));
+    context.set("assertion_keys",partial_keys);
+    const auto native_partial_context=admit_record_view(context);
+    const auto partial=store.source_context(native_partial_context).at("result");
+    proposal.set("context_sha256",render_record_view(partial.at("context_sha256")));
+    rejects([&] { store.admit_proposal(native_partial_context,admit_record_view(proposal),context.at("question").text()); });
+    fs::create_directory(root/"relationship-file-only");
+    fs::copy_file(root/"relationship-store/store.rfcxs",root/"relationship-file-only/store.rfcxs");
+    const EvidenceStore cold(root/"relationship-file-only");
+    check(cold.native_publication().encode()==store.native_publication().encode() &&
+          cold.execute(query).at("result").at("selected").integer()==18,
+          "standalone native role composition lost original source or complete witnesses");
+}
 int main() {
     try {
         const fs::path root = GADGET_BIOMEDICAL_TEST_BUILD;
@@ -330,7 +444,7 @@ int main() {
                       .at("binding_records")
                       .integer() == 8,
               "older frozen interpretation changed on load");
-        rejects([&] { import_evidence(root / "snapshot", root / "unsupported", 3); });
+        rejects([&] { import_evidence(root / "snapshot", root / "unsupported", 4); });
         EvidenceStore store(root / "store");
         auto coverage = store.execute(parse(R"({"operation":"coverage"})")).at("result");
         const auto native_coverage = store.execute_record(admit_record_view(parse(R"({"operation":"coverage"})")));
@@ -513,6 +627,7 @@ int main() {
         coverage.set("missing", Json::integer(0));
         check(before == store.execute(parse(R"({"operation":"coverage"})")).dump(),
               "public JSON mutated source");
+        relationship_contracts(root);
         auto corrupt = read_text(root / "store/evidence.rfcxi");
         corrupt.back() ^= 1;
         write_text(root / "store/evidence.rfcxi", corrupt);
