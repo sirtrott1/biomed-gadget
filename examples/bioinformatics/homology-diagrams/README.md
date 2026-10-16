@@ -5,6 +5,10 @@ publications and an explicitly oriented chain map between each consecutive pair.
 Each vertex names every actual source grade carrier. Equal dimensions or equal
 carrier numbers in independent publications do not establish identity.
 
+Use the standalone `homology-diagram` and `replay-homology` commands for these
+products. The `bioinformatics` catalogue describes assay workspace services.
+The diagram schema declares its own publication family and complete maps.
+
 The `rational_zigzag` product computes rational homology from the original cycle
 and boundary quotients and retains a complete interval decomposition, including
 generators that reconstruct every original arrow. The `integral_modules` product
