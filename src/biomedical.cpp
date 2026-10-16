@@ -5,6 +5,7 @@
 #include <gadget/table.hpp>
 #include <rfc/database/interpretation_codec.hpp>
 #include <rfc/database/native_query.hpp>
+#include <rfc/database/native_role_join.hpp>
 
 namespace gadget {
 NativeRecord retain_study_sources(const ScientificStudy &study, const NativeRecord &request) {
@@ -72,6 +73,27 @@ std::uint64_t code(const std::vector<std::string> &values, const std::string &v)
     return i == values.end() ? values.size() - 1
                              : static_cast<std::uint64_t>(std::distance(values.begin(), i));
 }
+NativeRoleJoinRequest role_join_request(const Json &query, const InterpretedSnapshot &source) {
+    const std::map<std::string, std::uint64_t> kinds{{"binding_observation",10},
+        {"identifier_cross_reference",20},{"source_relationship",30}};
+    const std::map<std::string, std::uint64_t> roles{{"compound_or_left",11},
+        {"target_or_right",12},{"assay",13},{"document",14},{"response",15}};
+    const auto side = [&](const char *kind_name, const char *role_name) {
+        const auto kind = query.at(kind_name).text(), role = query.at(role_name).text();
+        require(kinds.contains(kind) && roles.contains(role), "unknown declared biomedical join kind or role");
+        const auto &types = source.schema().assertions;
+        const auto type = std::find_if(types.begin(),types.end(),[&](const auto &entry) { return entry.key==kinds.at(kind); });
+        require(type!=types.end(), "biomedical join kind is absent from this source adapter");
+        require(std::any_of(type->roles.begin(),type->roles.end(),[&](const auto &entry) { return entry.key==roles.at(role); }),
+                "biomedical join role is absent from its original declaration");
+        return std::pair{kinds.at(kind),roles.at(role)};
+    };
+    const auto left = side("left_kind","left_role"), right = side("right_kind","right_role");
+    const auto activity = query.at("activity").text();
+    require(activity=="retained" || activity=="active_only", "unknown biomedical join activity policy");
+    return {left.first,left.second,right.first,right.second,
+        activity=="retained" ? NativeRoleActivity::Retained : NativeRoleActivity::ActiveOnly};
+}
 std::string string_or_empty(const Json &j, const std::string &name) {
     if (!j.has(name) || !j.at(name).raw())
         return {};
@@ -87,7 +109,7 @@ void verify_seal(const Json &record, const std::string &member) {
     json_object_object_del(copy.raw(), member.c_str());
     require(expected == "sha256:" + sha256(copy.dump()), "evidence manifest digest mismatch");
 }
-InterpretationSchema schema() {
+InterpretationSchema schema(std::uint32_t version) {
     using D = rfc::composite::Declaration;
     const auto id = [](std::uint64_t n) { return rfc::composite::DeclarationId{72103, n, 1}; };
     InterpretationSchema out;
@@ -117,6 +139,9 @@ InterpretationSchema schema() {
                        "provider identifier or response-local record pointer", labels},
                       {20, "reported_identifier_cross_reference", id(7), roles, fields,
                        "source_record", "response-local mapping pointer", labels}};
+    if (version >= 3)
+        out.assertions.push_back({30, "reported_source_relationship", id(7), roles, fields,
+            "source_record", "provider record or response-local statement pointer", labels});
     return out;
 }
 struct Packet {
@@ -125,7 +150,7 @@ struct Packet {
     std::map<std::string, Json> entities;
 };
 Packet normalize(const NativeRecord &database, std::uint32_t version, const fs::path &directory={}) {
-    require(version == 1 || version == 2, "unsupported biomedical adapter version");
+    require(version == 1 || version == 2 || version == 3, "unsupported biomedical adapter version");
     Packet p;
     p.adapter_version = version;
     p.manifest=render_record_view(database.at("snapshot"));
@@ -174,10 +199,10 @@ Packet normalize(const NativeRecord &database, std::uint32_t version, const fs::
             [&](const Json &original, const std::string &pointer, const std::string &identity,
                 const std::string &compound, const std::string &target, const std::string &assay,
                 const std::string &document, const std::string &value, const std::string &relation,
-                const std::string &endpoint, const std::string &unit, bool mapping) {
+                const std::string &endpoint, const std::string &unit, std::uint64_t kind) {
                 auto item = Json::object();
                 item.set("id", Json::string(rid + ":" + identity));
-                item.set("kind", Json::integer(mapping ? 20 : 10));
+                item.set("kind", Json::integer(static_cast<std::int64_t>(kind)));
                 item.set("provider", Json::string(provider));
                 item.set("response", Json::string(response));
                 item.set("compound", Json::string(compound));
@@ -199,7 +224,14 @@ Packet normalize(const NativeRecord &database, std::uint32_t version, const fs::
                                  const std::string &pointer, const Json &original) {
             entity(left, "source_identity", left);
             entity(right, "source_identity", right);
-            add(original, pointer, pointer, left, right, "", "", "", "", "", "", true);
+            add(original, pointer, pointer, left, right, "", "", "", "", "", "", 20);
+        };
+        const auto relationship = [&](const Json &original, const std::string &pointer,
+                                      const std::string &identity, const std::string &left,
+                                      const std::string &right, const std::string &meaning) {
+            require(version >= 3, "source relationships require biomedical adapter version 3");
+            add(original, pointer, identity, left, right, "", "", "", "", "", "", 30);
+            p.records.at(p.records.size()-1).set("relationship", Json::string(meaning));
         };
         if (provider == "chembl" && resource == "activity") {
             const auto rows = raw.at("activities");
@@ -222,7 +254,7 @@ Packet normalize(const NativeRecord &database, std::uint32_t version, const fs::
                     target, assay, document, string_or_empty(row, "standard_value"),
                     string_or_empty(row, "standard_relation"),
                     string_or_empty(row, "standard_type"), string_or_empty(row, "standard_units"),
-                    false);
+                    10);
             }
         } else if (provider == "bindingdb" && resource == "uniprot") {
             const auto rows = raw.at("getLindsByUniprotsResponse").at("affinities");
@@ -246,7 +278,7 @@ Packet normalize(const NativeRecord &database, std::uint32_t version, const fs::
                 // This response has no measurement/assay ID. Its pointer is local
                 // to these exact bytes, never a stable database measurement key.
                 add(row, pointer, response + pointer, compound, target, "", document, value,
-                    relation, string_or_empty(row, "affinity_type"), "nM", false);
+                    relation, string_or_empty(row, "affinity_type"), "nM", 10);
             }
         } else if (provider == "chembl" && resource == "target") {
             const auto left = "chembl:" + raw.at("target_chembl_id").text();
@@ -285,6 +317,53 @@ Packet normalize(const NativeRecord &database, std::uint32_t version, const fs::
                 if (db == "PDB")
                     mapping(left, "pdb:" + refs.at(r).at("id").text(),
                             "/uniProtKBCrossReferences/" + std::to_string(r), refs.at(r));
+            }
+            if (version >= 3 && raw.has("comments")) {
+                const auto comments = raw.at("comments");
+                for (std::size_t r = 0; r < comments.size(); ++r) {
+                    const auto comment = comments.at(r);
+                    if (string_or_empty(comment, "commentType") != "DISEASE") continue;
+                    const auto pointer = "/comments/" + std::to_string(r);
+                    std::string right;
+                    if (comment.has("disease") && comment.at("disease").raw() &&
+                        !string_or_empty(comment.at("disease"), "diseaseAccession").empty()) {
+                        const auto disease = comment.at("disease");
+                        right = "uniprot:disease:" + disease.at("diseaseAccession").text();
+                        entity(right, "disease_record", string_or_empty(disease, "diseaseId"));
+                        if (disease.has("diseaseCrossReference") && disease.at("diseaseCrossReference").raw()) {
+                            const auto reference = disease.at("diseaseCrossReference");
+                            if (string_or_empty(reference, "database") == "MIM" &&
+                                !string_or_empty(reference, "id").empty())
+                                mapping(right, "mim:" + reference.at("id").text(),
+                                        pointer + "/disease/diseaseCrossReference", reference);
+                        }
+                    } else {
+                        right = response + pointer;
+                        entity(right, "source_statement", "Original disease statement without one declared disease accession");
+                    }
+                    relationship(comment, pointer, pointer, left, right, "reported_disease_annotation");
+                }
+            }
+        } else if (provider == "chembl" && resource == "drug_indication") {
+            require(version >= 3, "drug indications require biomedical adapter version 3");
+            const auto rows = raw.at("drug_indications");
+            for (std::size_t r = 0; r < rows.size(); ++r) {
+                const auto row = rows.at(r);
+                require(row.at("molecule_chembl_id").text()==request.at("identifier").text(),
+                        "drug indication molecule differs from the explicitly requested source");
+                const auto compound = "chembl:" + row.at("molecule_chembl_id").text();
+                const auto efo = string_or_empty(row, "efo_id"), mesh = string_or_empty(row, "mesh_id");
+                require(!efo.empty() || !mesh.empty(), "drug indication lacks an original condition identifier");
+                entity(compound, "compound_record", compound);
+                const auto efo_id = efo.empty() ? std::string{} : "efo:" + efo;
+                const auto mesh_id = mesh.empty() ? std::string{} : "mesh:" + mesh;
+                if (!efo.empty()) entity(efo_id, "condition_record", string_or_empty(row, "efo_term"));
+                if (!mesh.empty()) entity(mesh_id, "condition_record", string_or_empty(row, "mesh_heading"));
+                const auto pointer = "/drug_indications/" + std::to_string(r);
+                relationship(row, pointer, pointer, compound, efo.empty() ? mesh_id : efo_id,
+                             "reported_drug_indication");
+                if (!efo.empty() && !mesh.empty())
+                    mapping(efo_id, mesh_id, pointer + "/condition_cross_reference", row);
             }
         } else if (provider == "pubchem" && resource == "compound") {
             const auto rows = raw.at("PropertyTable").at("Properties");
@@ -383,7 +462,7 @@ InterpretedSnapshot interpret(const Packet &p) {
     limits.declarations.max_materialized_bytes = source_byte_limit();
     limits.atlas.accession = {addressable, addressable, addressable, addressable, addressable,
                               addressable, addressable, addressable, addressable, addressable};
-    return InterpretedSnapshot::interpret(schema(), logical, limits);
+    return InterpretedSnapshot::interpret(schema(p.adapter_version), logical, limits);
 }
 std::string archive(const InterpretedSnapshot &native) {
     const auto bytes = encode_interpreted_snapshot(native);
@@ -600,7 +679,7 @@ struct EvidenceStore::State {
     static NativeRecord open(const fs::path &directory) {
         if(fs::is_regular_file(directory/"store.rfcxs"))return NativeRecord::read(directory/"store.rfcxs");
         const auto receipt=Json::parse(read_text(directory/"store.json"));
-        const auto packet=normalize(directory/"snapshot",receipt.has("adapter_version")?static_cast<std::uint32_t>(count(receipt.at("adapter_version"),2,"adapter version")):1);
+        const auto packet=normalize(directory/"snapshot",receipt.has("adapter_version")?static_cast<std::uint32_t>(count(receipt.at("adapter_version"),3,"adapter version")):1);
         const auto native=interpret(packet);return evidence_publication(directory/"snapshot",packet,native,receipt);
     }
     static InterpretedSnapshot interpret_native(const NativeRecord &publication) {
@@ -621,7 +700,7 @@ struct EvidenceStore::State {
         if(fs::exists(directory/"evidence.rfcxi"))require(read_text(directory/"evidence.rfcxi")==archive(native),"external native evidence differs from publication");
         const auto source_series=rfc::storage::decode_native_series(publication.at("source_database").bytes(),native_data_limits());
         const auto source=NativeRecord::from_history(source_series);
-        const auto expected=normalize(source,static_cast<std::uint32_t>(count(receipt.at("adapter_version"),2,"adapter version")));
+        const auto expected=normalize(source,static_cast<std::uint32_t>(count(receipt.at("adapter_version"),3,"adapter version")));
         auto expected_entities=Json::object();for(const auto &[id,value]:expected.entities)expected_entities.set(id,value);
         require(expected.manifest.dump()==manifest.dump() && expected.records.dump()==render_record_view(normalized).dump() && expected_entities.dump()==render_record_view(publication.at("entities")).dump(),"biomedical declarations differ from retained original responses");
         require(archive(interpret(expected))==archive(native),"native interpretation differs from retained original responses");
@@ -852,6 +931,13 @@ NativeRecord EvidenceStore::admit_proposal(const NativeRecord &context_request,
             require(selected.contains(key(query.at("left"))) &&
                         selected.contains(key(query.at("right"))),
                     "biomedical comparison lies outside the selected context");
+        if (operation == "role_join") {
+            const auto join = role_join_request(query,state_->native);
+            for (const auto kind : {join.left_kind,join.right_kind})
+                for (const auto assertion : state_->native.assertions(kind))
+                    require(selected.contains(assertion),
+                            "biomedical role join requires complete selected source kinds");
+        }
         if (operation == "neighbors") {
             const auto subject = key(query.at("subject_key"));
             const auto id = state_->entities.at(subject).at("id").text();
@@ -967,6 +1053,11 @@ void EvidenceStore::validate(const Json &query) const {
     } else if (op == "neighbors") {
         members(query, {"operation", "subject_key"});
         require(state_->entities.contains(key(query.at("subject_key"))), "unknown native subject");
+    } else if (op == "role_join") {
+        members(query,{"operation","source_digest","left_kind","left_role","right_kind","right_role","activity","max_matches"});
+        require(query.at("source_digest").text()==digest(), "biomedical join source digest mismatch");
+        (void)role_join_request(query,state_->native);
+        (void)count(query.at("max_matches"),std::numeric_limits<std::size_t>::max(),"role join result matches");
     } else if (op == "affinity_evidence") {
         members(query, {"operation", "endpoint", "units", "maximum"});
         const auto endpoint = query.at("endpoint").text(), unit = query.at("units").text();
@@ -1055,8 +1146,8 @@ NativeRecord EvidenceStore::execute_record(const NativeRecord &input) const {
         require(state_->entities.contains(subject), "unknown native biomedical subject");
         auto rows = R::array();
         std::size_t selected = 0;
-        for (const auto kind : {10u, 20u})
-            for (const auto assertion : state_->native.assertions(kind)) {
+        for (const auto &kind : state_->native.schema().assertions)
+            for (const auto assertion : state_->native.assertions(kind.key)) {
                 bool found = false;
                 for (const auto role : {11u, 12u, 13u, 14u, 15u})
                     for (const auto &occurrence : state_->native.participants(assertion, role))
@@ -1069,6 +1160,38 @@ NativeRecord EvidenceStore::execute_record(const NativeRecord &input) const {
         result.set("selected", R::count(selected));
         result.set("records", rows);
         result.set("subject", R(state_->entities.at(subject).native().materialize_value()));
+    } else if (op == "role_join") {
+        const auto request = role_join_request(query,state_->native);
+        const auto lease = source_execution_lease("gadget-biomedical-native-role-join");
+        const rfc::runtime::WorkAvailability availability{state_->native.schema().source_namespace,state_->native.sequence()};
+        const auto prepared = PreparedNativeRoleJoin::prepare(state_->native,request,availability,lease);
+        const auto maximum = count(query.at("max_matches"),std::numeric_limits<std::size_t>::max(),"role join result matches");
+        if (prepared.match_count()>maximum)
+            throw rfc::runtime::ExecutionLimitExceeded("role join result matches",prepared.match_count(),maximum);
+        const auto joined = prepared.execute(availability,lease);
+        auto rows = R::array();
+        for (const auto &match : joined.matches()) {
+            lease.check_cancelled();
+            auto row = R::object();
+            row.set("participant_key",R::string(std::to_string(match.participant.key)));
+            row.set("participant",R::string(state_->entities.at(match.participant.key).at("id").text()));
+            row.set("left_assertion",R::string(std::to_string(match.left_assertion)));
+            row.set("right_assertion",R::string(std::to_string(match.right_assertion)));
+            row.set("left_record_id",R::string(state_->records.at(match.left_assertion).at("id").text()));
+            row.set("right_record_id",R::string(state_->records.at(match.right_assertion).at("id").text()));
+            row.set("left_occurrence",R::string(std::to_string(match.left_occurrence.key.value)));
+            row.set("right_occurrence",R::string(std::to_string(match.right_occurrence.key.value)));
+            row.set("left_position",R::count(match.left_position));
+            row.set("right_position",R::count(match.right_position));
+            rows.push(std::move(row));
+        }
+        result.set("selected",R::count(joined.matches().size()));
+        result.set("matches",std::move(rows));
+        result.set("missing_role_fibers",R::count(prepared.missing_fibers()));
+        result.set("null_role_fibers",R::count(prepared.null_fibers()));
+        result.set("source_namespace",R::string(std::to_string(availability.source_namespace)));
+        result.set("cutoff",R::count(availability.max_sequence));
+        result.set("scope",R::string("Complete native role occurrence pairs on this exact retained source. Cross references do not assert identity equivalence, assay comparability, disease causality or efficacy."));
     } else if (op == "coverage") {
         members(query, {"operation"});
         const auto missing = select_exact(state_->native, 10, {{1}, ExactPredicateKind::IsNull, {}},

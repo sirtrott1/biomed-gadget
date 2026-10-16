@@ -90,7 +90,7 @@ NativeRecord claim_request(const NativeRecord &owner, const Json &items) {
 struct WorkflowArchives {
     std::uint64_t next{1};
     std::vector<RawByteSource> sources;
-    std::map<std::shared_ptr<const void>, std::uint64_t, std::owner_less<std::shared_ptr<const void>>> owners;
+    std::map<std::weak_ptr<const void>, std::uint64_t, std::owner_less<>> owners;
     explicit WorkflowArchives(const NativeRecord &source) {
         for (const auto &bytes : source.raw_sources())
             next = std::max(next, rfc::machine::checked_size_add(bytes.key(), 1));
@@ -226,8 +226,30 @@ struct Runner {
             if (node.has("context")) {
                 const auto refs = node.at("context");
                 source_array(refs, "model context references");
-                for (std::size_t i = 0; i < refs.size(); ++i)
-                    (void)text(refs.at(i), source_byte_limit());
+                for (std::size_t i = 0; i < refs.size(); ++i) {
+                    const auto ref = refs.at(i);
+                    if (json_object_is_type(ref.raw(), json_type_string)) {
+                        (void)text(ref, source_byte_limit());
+                        continue;
+                    }
+                    members(ref, {"from", "selections"});
+                    (void)text(ref.at("from"), source_byte_limit());
+                    const auto selections = ref.at("selections");
+                    source_array(selections, "model context selections");
+                    require(selections.size(), "model context requires selected values");
+                    for (std::size_t j = 0; j < selections.size(); ++j) {
+                        const auto selection = selections.at(j);
+                        members(selection, {"path", "value_type"}, {"coordinate"});
+                        source_array(selection.at("path"), "model context selection path");
+                        const auto type = selection.at("value_type").text();
+                        require(type == "count" || type == "integer" || type == "rational" ||
+                                    type == "text" || type == "boolean",
+                                "model context selection literal type");
+                        if (selection.has("coordinate"))
+                            (void)count(selection.at("coordinate"), std::numeric_limits<std::size_t>::max(),
+                                        "model context original flat coordinate");
+                    }
+                }
             }
         } else if (kind == "sequence" || kind == "parallel" || kind == "graph") {
             members(node, {"id", "type", "steps"},
@@ -462,10 +484,42 @@ struct Runner {
                 if (node.has("context")) {
                     auto views = Json::array();
                     for (std::size_t i = 0; i < node.at("context").size(); ++i) {
-                        const auto ref = node.at("context").at(i).text();
+                        const auto context_ref = node.at("context").at(i);
+                        const bool selected = json_object_is_type(context_ref.raw(), json_type_object);
+                        const auto ref = selected ? context_ref.at("from").text() : context_ref.text();
                         require(env.contains(ref),
                                 "model context dependency has not completed: " + ref);
-                        auto context = brief(env.at(ref).view());
+                        const auto &dependency = env.at(ref);
+                        auto context = brief(dependency.view());
+                        if (selected) {
+                            require(dependency.publication.has_value() &&
+                                        dependency.publication->at("schema").text() == "gadget.operation.native.v1" &&
+                                        dependency.publication->at("result").at("schema").text() == "gadget.scientific.result.fields.v1",
+                                    "selected model context requires an actual scientific field publication");
+                            const auto original = dependency.publication->at("result").at("fields").at("view");
+                            auto values = ResultValue::array();
+                            const auto selections = native_node.at("context").at(i).at("selections");
+                            for (std::size_t j = 0; j < selections.size(); ++j) {
+                                const auto selection = selections.at(j);
+                                std::optional<std::size_t> coordinate;
+                                if (selection.has("coordinate"))
+                                    coordinate = count(render_record_view(selection.at("coordinate")),
+                                        std::numeric_limits<std::size_t>::max(), "model context original flat coordinate");
+                                const auto literal = read_native_literal(
+                                    select_scientific_result(original, selection.at("path")),
+                                    selection.at("value_type").text(), coordinate);
+                                auto value = ResultValue(context_ref.at("selections").at(j));
+                                value.set("value", ResultValue(literal.value));
+                                value.set("binding", ResultValue(literal.binding));
+                                values.push(std::move(value));
+                            }
+                            json_object_object_del(context.raw(), "result");
+                            context.set("selections", render_record_view(NativeRecord::create(
+                                std::move(values).release(), new_native_record_namespace())));
+                            context.set("result_complete", Json::boolean(false));
+                            context.set("view_scope", Json::string(
+                                "explicit literal display selection; complete original result and certificate retained in workflow trace"));
+                        }
                         if (env.at(ref).publication) {
                             const auto &owner = *env.at(ref).publication;
                             context.set("native_source_namespace", Json::string(std::to_string(owner.source_namespace())));
@@ -694,10 +748,12 @@ struct Runner {
                     const auto name = node.at("claims_from").text();
                     require(env.contains(name), "claims dependency missing");
                     const auto &producer = env.at(name);
-                    if (strict_native) {
-                        const auto supplied = producer.publication ? producer.publication->at("claims") :
-                            admit_record_view(producer.view().at("claims"));
-                        output = check_certificate_claims_record(*dependency.publication, supplied);
+                    const auto native_claims = strict_native
+                        ? std::optional<NativeRecord>(producer.publication ? producer.publication->at("claims") :
+                            admit_record_view(producer.view().at("claims"))) : std::nullopt;
+                    if (strict_native && native_claims && native_claims->kind() == NativeRecordKind::Object &&
+                        native_claims->has("schema") && native_claims->at("schema").text() == "gadget.claims.native.v1") {
+                        output = check_certificate_claims_record(*dependency.publication, *native_claims);
                     } else {
                         const auto supplied = producer.view().at("claims");
                         members(supplied, {"source_digest", "certificate_sha256", "items"});
@@ -891,31 +947,41 @@ NativeRecord run_workflow(std::shared_ptr<const ScientificStudy> study, const Na
     receipt.set("workflow_sha256", ResultValue::string("sha256:" + sha256(admitted.dump())));
     receipt.set("native_execution", ResultValue::boolean(strict_native));
     Environment env;
+    std::optional<WorkflowValue> result;
     try {
-        const auto result = runner.run(workflow.at("entry"), env, session, "entry", 0, false);
-        receipt.set("result", archives.retain(result));
+        result = runner.run(workflow.at("entry"), env, session, "entry", 0, false);
         receipt.set("status", ResultValue::string("complete"));
     } catch (const std::exception &e) {
         receipt.set("status", ResultValue::string("failed"));
         receipt.set("error", ResultValue::string(e.what()));
     }
+    env.clear();
+    session.reset();
+    if (result) receipt.set("result", archives.retain(*result));
+    result.reset();
     auto trace = ResultValue::array();
-    for (const auto &[path, event] : runner.trace) {
+    for (auto &[path, event] : runner.trace) {
         (void)path;
         auto retained = ResultValue(event.control);
         if (event.output) retained.set("result", archives.retain(*event.output));
         if (event.comparison) retained.set("comparison", archives.retain(WorkflowValue(*event.comparison)));
         if (event.observation) retained.set("observation", archives.retain(*event.observation));
         trace.push(std::move(retained));
+        event.output.reset();
+        event.comparison.reset();
+        event.observation.reset();
     }
     receipt.set("trace", std::move(trace));
+    // Complete archived bytes now own every result and observation.
+    // Release decoded intermediates before constructing the outer publication.
+    runner.trace.clear();
+    archives.owners.clear();
     receipt.set("scope", ResultValue::string(
         "bounded application control flow; canonical P6 WorkGraph jobs and delegated "
         "caller-inclusive budgets; actual native results retained independently; one control "
         "thread outside arithmetic accounting; no chronology inferred from readiness"));
-    if (!archives.sources.empty())
-        source = source.derive(source.materialize_value(), std::move(archives.sources));
-    return retain_operation(source, workflow, std::move(receipt).release());
+    return retain_operation(source, std::move(archives.sources), workflow,
+                            std::move(receipt).release());
 }
 Json retained_workflow_value(const NativeRecord &value) {
     if (value.kind() == NativeRecordKind::Array) {

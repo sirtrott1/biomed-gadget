@@ -19,6 +19,33 @@ for name in ('candidates', 'program', 'gluing'):
 result = run('workflow', '--study', root/'study.rfcxs', '--request', root/'workflow.json',
              '--patterns', root/'roles.json', '--out', root/'workflow-cli.rfcxs')
 assert result['status'] == 'complete' and result['result']['matched'] == 1
+summary = run('workflow', '--study', root/'study.rfcxs', '--request', root/'workflow.json',
+              '--patterns', root/'roles.json', '--out', root/'workflow-summary.rfcxs', '--view', 'receipt')
+assert summary['schema'] == 'gadget.scientific.workflow.summary.v1' and summary['status'] == 'complete'
+assert 'result' not in summary and 'trace' not in summary and summary['trace_events'] == len(result['trace'])
+assert summary['source_digest'] == result['source_digest'] and summary['workflow_sha256'] == result['workflow_sha256']
+retained = subprocess.run([str(consumer), '--view-workflow', str(root/'workflow-summary.rfcxs')],
+                          check=True, capture_output=True, text=True)
+complete = json.loads(retained.stdout)
+assert complete['status'] == 'complete' and complete['result']['matched'] == 1
+assert len(complete['trace']) == len(result['trace'])
+for view, output in [('receipt', False), ('unknown', True)]:
+    destination = root/('workflow-view-' + view + '.rfcxs')
+    args = [str(binary), 'workflow', '--study', str(root/'study.rfcxs'),
+            '--request', str(root/'workflow.json'), '--view', view]
+    if output:
+        args += ['--out', str(destination)]
+    refused = subprocess.run(args, capture_output=True)
+    assert refused.returncode != 0 and not destination.exists()
+failed_workflow = json.loads((root/'workflow.json').read_text())
+failed_workflow['limits']['nodes'] = 1
+(root/'failed-workflow.json').write_text(json.dumps(failed_workflow))
+failed = subprocess.run([str(binary), 'workflow', '--study', str(root/'study.rfcxs'),
+    '--request', str(root/'failed-workflow.json'), '--patterns', str(root/'roles.json'),
+    '--out', str(root/'failed-workflow.rfcxs'),
+    '--view', 'receipt'], capture_output=True, text=True)
+assert failed.returncode == 2 and (root/'failed-workflow.rfcxs').is_file()
+assert json.loads(failed.stdout)['status'] == 'failed' and json.loads(failed.stdout)['error']
 for name in ('candidates', 'program', 'gluing'):
     query = json.loads((root/(name+'.json')).read_text())
     query['model_sha256'] = 'sha256:foreign'

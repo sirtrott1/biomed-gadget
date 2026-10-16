@@ -167,8 +167,14 @@ run('import-assays', '--spec', root/'inputs/import.json', '--out', root/'workspa
 manifest = root/'workspace/workspace.json'
 query = json.loads((root/'inputs/query.json').read_text())
 query['complete_families'] = True
-result = run('assay-query', '--workspace', manifest, '--request', save('complete-query.json', query))['result']
+result = run('assay-query', '--workspace', manifest, '--request', save('complete-query.json', query),
+             '--out', root/'section owner #1')['result']
 complete_families(result)
+published = root/'section owner #1/result.rfcxs'
+published_hash = hashlib.sha256(published.read_bytes()).hexdigest()
+run('assay-query', '--workspace', manifest, '--request', root/'complete-query.json',
+    '--out', root/'section owner #1', fail=True)
+check(hashlib.sha256(published.read_bytes()).hexdigest() == published_hash)
 paired_capture_contracts()
 legacy = run('assay-query', '--workspace', manifest, '--request', root/'inputs/query.json')['result']
 explicit_legacy = copy.deepcopy(query)
@@ -269,6 +275,9 @@ for name, edit in [
 ]:
     bad = copy.deepcopy(query); edit(bad)
     run('assay-query', '--workspace', manifest, '--request', save(name+'.json', bad), fail=True)
+    refused = root / ('refused-output-' + name)
+    run('assay-query', '--workspace', manifest, '--request', root/(name+'.json'), '--out', refused, fail=True)
+    check(not refused.exists())
 # Default pipelines and bound local-model recipe selection use the same contract.
 plan = run('pipeline-prepare', '--workspace', manifest, '--request', root/'inputs/pipeline.json')
 run('pipeline', '--workspace', manifest, '--request', save('plan.json', plan), '--out', root/'pipeline')
@@ -302,5 +311,25 @@ shutil.copytree(derived.parent, root/'portable')
 replayed = run('replay-derivation', '--workspace', root/'portable/workspace.rfcxs',
                '--assay', 'rna-compatible', '--out', root/'detached-replay')
 check(replayed['status'] == 'PASS')
+renderer_path = example.parents[2] / 'tools/render_assay_sections.py'
+spec = importlib.util.spec_from_file_location('section_reading', renderer_path)
+renderer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(renderer)
+reading = root / 'reading with spaces'
+operation = root/'native owner #1/assay sections.rfcxs'
+operation.parent.mkdir()
+shutil.copyfile(root/'section owner #1/result.rfcxs', operation)
+receipt = renderer.render(binary, operation, reading)
+check(receipt['sections'] == len(result['sections']))
+check(json.loads((reading/'view.json').read_text())['result'] == result)
+check(receipt['native_sha256'] == 'sha256:' + hashlib.sha256(operation.read_bytes()).hexdigest())
+check('Missing coordinates' in (reading/'report.html').read_text())
+check('native%20owner%20%231/assay%20sections.rfcxs' in (reading/'report.html').read_text())
+try:
+    renderer.render(binary, root/'complete-query.json', root/'invalid reading')
+except ValueError:
+    check(not (root/'invalid reading').exists())
+else:
+    check(False)
 print(json.dumps(dict(status='PASS', independent_checks=checks, sections=5, source_coordinates=6,
                       constraint_coordinates=6, support_patterns=3, portable_replay=True)))

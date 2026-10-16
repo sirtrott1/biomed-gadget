@@ -195,6 +195,15 @@
             "evidence"
           ],
           "additionalProperties": false
+        },
+        "reverse_correspondence": {
+          "$ref": "#/oneOf/5/properties/correspondence"
+        },
+        "map_output": {
+          "enum": [
+            "enumerated",
+            "factored"
+          ]
         }
       },
       "required": [

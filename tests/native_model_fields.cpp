@@ -883,6 +883,52 @@ void verify_censored_workflow(const std::shared_ptr<const ScientificStudy> &stud
           "censored reopened workflow changed complete native publication");
 }
 
+rfc::numeric::ExactMatrix moment_form(const NativeRecord &owner, const NativeRecord &binding,
+                                     const char *name) {
+    using Matrix = rfc::numeric::ExactMatrix;
+    const auto matrix = [&](const NativeRecord &descriptor) {
+        const auto &tensor = field(owner, descriptor)->tensor;
+        const auto shape = tensor.domain().extents();
+        check(shape.size() == 2, "moment form lost both carrier axes");
+        Matrix result(shape[0], shape[1]);
+        for (std::size_t i = 0; i < shape[0]; ++i)
+            for (std::size_t j = 0; j < shape[1]; ++j) result.set(i, j, state(tensor, i * shape[1] + j));
+        return result;
+    };
+    const auto descriptor = binding.at(name);
+    if (!descriptor.has("expression")) return matrix(descriptor);
+    const auto nodes = binding.at("factored_maps").at("nodes");
+    std::vector<Matrix> values;
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        const auto raw = nodes.at(i);
+        const auto node = raw.has("additions") ? raw.at("additions") : raw;
+        const auto rows = node.at("rows").integer().get_ui(), columns = node.at("columns").integer().get_ui();
+        const auto prior = [&](const NativeRecord &index) -> const Matrix & {
+            check(index.integer() >= 0 && index.integer() < i, "moment expression lost acyclic source order");
+            return values.at(index.integer().get_ui());
+        };
+        const auto kind = node.at("kind").text();
+        Matrix value(rows, columns);
+        if (kind == "matrix") value = matrix(raw.at("base"));
+        else if (kind == "identity") value = Matrix::identity(rows);
+        else if (kind == "transpose") value = prior(node.at("input")).transpose();
+        else if (kind == "solve") value = prior(node.at("system")).inverse();
+        else if (kind == "compose") {
+            value = Matrix::identity(columns);
+            for (std::size_t j = 0; j < node.at("application_order").size(); ++j)
+                value = prior(node.at("application_order").at(j)).multiply(value);
+        } else if (kind == "sum") {
+            for (std::size_t j = 0; j < node.at("inputs").size(); ++j)
+                value = value.add(prior(node.at("inputs").at(j)));
+        } else throw std::runtime_error("unsupported moment expression");
+        check(value.rows() == rows && value.cols() == columns, "complete moment expression shape differs");
+        values.push_back(std::move(value));
+    }
+    const auto result = values.at(descriptor.at("expression").integer().get_ui());
+    check(result.rows() == descriptor.at("rows").integer() && result.cols() == descriptor.at("columns").integer(),
+          "moment expression descriptor shape differs");
+    return result;
+}
 void verify_moment(const NativeRecord &publication, const NativeRecord &original) {
     const auto owner = publication.at("result").at("fields"), view = owner.at("view");
     audit_fields(owner,view); audit_fields(owner,owner.at("bindings"));
@@ -928,8 +974,12 @@ void verify_moment(const NativeRecord &publication, const NativeRecord &original
         audit_fields(old,old.at("view")); audit_fields(old,old.at("bindings"));
         const auto new_x = values(owner,inputs.at(2).at("values")), new_y = values(owner,inputs.at(3).at("values"));
         const auto &comparison = *field(owner,binding.at("comparison"));
-        check(comparison.input != comparison.output && field(owner,binding.at("old_form"))->input == comparison.input &&
-              field(owner,binding.at("new_form"))->input == comparison.output,
+        const auto input_axis = [&](const char *name) {
+            const auto form = binding.at(name);
+            return form.has("expression") ? form.at("input_carrier").integer().get_ui() : *field(owner,form)->input;
+        };
+        check(comparison.input != comparison.output && input_axis("old_form") == comparison.input &&
+              input_axis("new_form") == comparison.output,
               "moment independent old/new form/map carriers identified by dimension");
         const auto jx = apply(owner,binding.at("comparison"),old_x), jy = apply(owner,binding.at("comparison"),old_y);
         const auto ex = values(owner,binding.at("left_innovation")), ey = values(owner,binding.at("right_innovation"));
@@ -940,12 +990,13 @@ void verify_moment(const NativeRecord &publication, const NativeRecord &original
         const auto pair = [](const auto &a,const auto &b) {
             Rational result{}; for (std::size_t i = 0; i < a.size(); ++i) result += a[i]*b[i]; return result;
         };
-        const auto old_value = pair(old_x,apply(owner,binding.at("old_form"),old_y));
-        const auto new_value = pair(new_x,apply(owner,binding.at("new_form"),new_y));
-        const Rational pullback = pair(jx,apply(owner,binding.at("new_form"),jy))-old_value;
-        const auto left = pair(ex,apply(owner,binding.at("new_form"),jy));
-        const auto right = pair(jx,apply(owner,binding.at("new_form"),ey));
-        const auto interaction = pair(ex,apply(owner,binding.at("new_form"),ey));
+        const auto old_form = moment_form(owner,binding,"old_form"), new_form = moment_form(owner,binding,"new_form");
+        const auto old_value = pair(old_x,old_form.apply(old_y));
+        const auto new_value = pair(new_x,new_form.apply(new_y));
+        const Rational pullback = pair(jx,new_form.apply(jy))-old_value;
+        const auto left = pair(ex,new_form.apply(jy));
+        const auto right = pair(jx,new_form.apply(ey));
+        const auto interaction = pair(ex,new_form.apply(ey));
         check(scalar(owner,view.at("pullback_form")) == pullback && scalar(owner,view.at("left_innovation")) == left &&
               scalar(owner,view.at("right_innovation")) == right && scalar(owner,view.at("innovation_interaction")) == interaction,
               "moment complete four finite contributions differ");
@@ -955,6 +1006,34 @@ void verify_moment(const NativeRecord &publication, const NativeRecord &original
               "moment full endpoint delta identity differs");
         check(scalar(owner,view.at("finite_rate"))*scalar(owner,view.at("interval")) == expected,
               "moment declared finite interval/rate differs");
+        if (binding.has("common_carrier")) {
+            const auto common = binding.at("common_carrier");
+            const auto dx = values(owner,common.at("left_change")), dy = values(owner,common.at("right_change"));
+            const auto kx = apply(owner,common.at("reverse_correspondence"),new_x),
+                       ky = apply(owner,common.at("reverse_correspondence"),new_y);
+            for (std::size_t i = 0; i < old_x.size(); ++i)
+                check(old_x[i]+dx[i] == kx[i] && old_y[i]+dy[i] == ky[i], "moment common source realization differs");
+            const auto jdx = apply(owner,binding.at("comparison"),dx), jdy = apply(owner,binding.at("comparison"),dy);
+            Rational total{};
+            const auto terms = view.at("factor_interactions");
+            check(terms.size() == 7, "moment lost finite interaction orders");
+            for (std::size_t mask = 1; mask < 8; ++mask) {
+                const auto &a = (mask & 1u) ? dx : old_x;
+                const auto &b = (mask & 4u) ? dy : old_y;
+                const auto &ja = (mask & 1u) ? jdx : jx;
+                const auto &jb = (mask & 4u) ? jdy : jy;
+                Rational value = pair(a,old_form.apply(b));
+                if (mask & 2u) value = pair(ja,new_form.apply(jb))-value;
+                check(scalar(owner,terms.at(mask-1).at("contribution")) == value, "moment finite field/form interaction differs");
+                std::size_t position{};
+                for (std::size_t bit = 0; bit < 3; ++bit) if (mask & (1u << bit))
+                    check(terms.at(mask-1).at("changed_factors").at(position++).text() ==
+                          (bit == 0 ? "left_field" : bit == 1 ? "form" : "right_field"),
+                          "moment factor order differs");
+                total += value;
+            }
+            check(total == expected, "moment seven interactions fail full reconstruction");
+        } else check(!view.has("factor_interactions"), "moment inferred a common carrier from dimension");
     }
     auto request = Json::parse(R"({"schema":"gadget.claims.native.v1","source_namespace":"","cutoff":0,"items":[{"path":[],"value_type":"rational","comparison":"equal","value":"0"}]})");
     request.set("source_namespace",Json::string(std::to_string(publication.source_namespace())));
