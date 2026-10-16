@@ -397,6 +397,10 @@ struct LocalAgent::State {
     RetainedRecord identity;
     std::mutex mutex;
     const pid_t process_id{::getpid()};
+    void clear_prefix() {
+        std::vector<llama_token>().swap(prefix_tokens);
+        std::vector<std::uint8_t>().swap(prefix_state);
+    }
     void process() const {
         if (::getpid() != process_id)
             throw std::logic_error("inherited local model service cannot be used after fork");
@@ -831,8 +835,7 @@ void LocalAgent::bind(std::shared_ptr<const Workspace> study) {
     std::lock_guard lock(state_->mutex);
     state_->study = std::move(study);
     state_->queries = std::move(queries);
-    state_->prefix_tokens.clear();
-    state_->prefix_state.clear();
+    state_->clear_prefix();
 }
 void LocalAgent::bind_scientific(std::shared_ptr<const ScientificStudy> study) {
     state_->process();
@@ -847,8 +850,7 @@ void LocalAgent::bind_scientific(std::shared_ptr<const ScientificStudy> study) {
     state_->scientific = std::move(study);
     state_->source_page = Json{};
     state_->scientific_queries = std::move(queries);
-    state_->prefix_tokens.clear();
-    state_->prefix_state.clear();
+    state_->clear_prefix();
 }
 void LocalAgent::clear_source_context() {
     state_->process();
@@ -856,8 +858,7 @@ void LocalAgent::clear_source_context() {
     if (!state_->scientific)
         throw std::invalid_argument("source context requires a scientific model profile");
     state_->source_page = Json{};
-    state_->prefix_tokens.clear();
-    state_->prefix_state.clear();
+    state_->clear_prefix();
 }
 Json LocalAgent::ask(const std::string &prompt) { return ask(prompt, {}); }
 Json LocalAgent::ask(const std::string &prompt, const std::vector<fs::path> &images) {
@@ -1161,6 +1162,7 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
                 throw std::runtime_error("llama.cpp could not restore its private prompt state");
             reused = state_->prefix_tokens.size();
         } else if (state_->options.cache_prompt) {
+            state_->clear_prefix();
             // Find the prefix shared by empty and sentinel user probes and this
             // request. Only fixed template/study tokens enter the reusable state.
             input.messages[1].content.clear();
@@ -1217,8 +1219,7 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
                     state_->prefix_state = std::move(state);
                     state_->prefix_tokens.assign(tokens.begin(), tokens.begin() + prefix);
                 } else {
-                    state_->prefix_state.clear();
-                    state_->prefix_tokens.clear();
+                    state_->clear_prefix();
                 }
             }
             decode(prefix, tokens.size());
