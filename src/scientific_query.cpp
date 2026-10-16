@@ -32,6 +32,7 @@
 #include <rfc/local/interior_interface_solve.hpp>
 #include <rfc/runtime/staged_resources.hpp>
 #include <rfc/temporal/moment_change.hpp>
+#include <rfc/temporal/factor_attribution.hpp>
 #include <rfc/temporal/operation_word.hpp>
 
 namespace gadget {
@@ -1120,21 +1121,44 @@ struct ScientificSession::State {
             owner->native_publication(), new_context.to_ambient);
         ResultFields publication(new_snapshot.publication);
         const auto old_axis = publication.axis(old_x.size()), new_axis = new_snapshot.grade_axes.at(grade);
+        const auto factored = research_detail::NativeFactoredTemporalMaps::requested(query);
         const auto form = [&](const NativeStudy &study) {
             const auto hodge = study.hodge(rfc::core::Grade{grade});
-            const auto power = rfc::field::materialize_action_matrix(hodge.metric(), [&](const Vector &v) {
-                return rfc::statistics::hodge_power_apply(hodge, order, v);
+            return rfc::field::materialize_action_matrix(hodge.metric(), [&](const Vector &v) {
+                lease.check_cancelled();
+                return hodge.metric().apply(rfc::statistics::hodge_power_apply(hodge, order, v));
             });
-            return study.tower().metrics().at(grade).materialize().multiply(power);
         };
-        const auto old_form = form(*old_context.study), new_form = form(*new_context.study);
         const auto comparison = query.has("correspondence")
             ? temporal_map(name, other_name, grade, query.at("correspondence"))
             : rfc::numeric::ExactMatrix::identity(old_x.size());
-        const auto change = rfc::temporal::changing_dimension_cross_moment(
-            old_x, old_y, old_form, new_x, new_y, new_form, comparison, comparison);
+        const auto transported_x = comparison.apply(old_x), transported_y = comparison.apply(old_y);
+        const auto innovation_x = rfc::numeric::sub(new_x, transported_x),
+                   innovation_y = rfc::numeric::sub(new_y, transported_y);
         const auto old_value = old_context.study->moment(rfc::core::Grade{grade}, order, old_x, old_y);
         const auto new_value = new_context.study->moment(rfc::core::Grade{grade}, order, new_x, new_y);
+        // These two columns label the actual transported field and innovation.
+        // They need not be independent and do not replace either source carrier.
+        const auto restrict_form = [&](const NativeStudy &study, const std::vector<Vector> &left,
+                                       const std::vector<Vector> &right) {
+            const auto hodge = study.hodge(rfc::core::Grade{grade});
+            rfc::numeric::ExactMatrix restricted(left.size(), right.size());
+            for (std::size_t j = 0; j < right.size(); ++j) {
+                lease.check_cancelled();
+                const auto powered = rfc::statistics::hodge_power_apply(hodge, order, right[j]);
+                for (std::size_t i = 0; i < left.size(); ++i)
+                    restricted.set(i, j, hodge.metric().inner(left[i], powered));
+            }
+            return restricted;
+        };
+        rfc::numeric::ExactMatrix old_contraction(1, 1), diagnostic_map(2, 1);
+        old_contraction.set(0, 0, old_value); diagnostic_map.set(0, 0, Rational{1});
+        const auto new_contraction = restrict_form(*new_context.study,
+            {transported_x, innovation_x}, {transported_y, innovation_y});
+        const auto change = rfc::temporal::changing_dimension_cross_moment(
+            Vector{Rational{1}}, Vector{Rational{1}}, old_contraction,
+            Vector{Rational{1}, Rational{1}}, Vector{Rational{1}, Rational{1}},
+            new_contraction, diagnostic_map, diagnostic_map);
         require(change.total == new_value - old_value, "native finite cross moment identity failed");
         const auto old_time = source.contexts.at(name).declaration.at("time"),
                    new_time = source.contexts.at(other_name).declaration.at("time");
@@ -1164,14 +1188,103 @@ struct ScientificSession::State {
         inputs.push(retain_input(publication, query.at("new_field").text(), new_x, new_axis, new_context.to_ambient.at(grade)));
         inputs.push(retain_input(publication, query.at("new_other_field").text(), new_y, new_axis, new_context.to_ambient.at(grade)));
         binding.set("inputs", std::move(inputs));
-        binding.set("old_form", ResultFields::stage_matrix(old_form, old_axis, old_axis));
-        binding.set("new_form", ResultFields::stage_matrix(new_form, new_axis, new_axis));
+        if (factored) {
+            std::vector<std::uint64_t> old_axes;
+            auto axes = ResultValue::array();
+            for (std::size_t k = 0; k < old_context.to_ambient.size(); ++k) {
+                const auto axis = k == grade ? old_axis : publication.axis(old_context.to_ambient[k].size());
+                old_axes.push_back(axis);
+                auto item = ResultValue::object();
+                item.set("grade", ResultValue::count(k));
+                item.set("source_carrier", ResultValue::count(old_snapshot.grade_axes[k]));
+                item.set("coordinate_carrier", ResultValue::count(axis));
+                std::vector<std::size_t> coordinates(old_context.to_ambient[k].begin(), old_context.to_ambient[k].end());
+                item.set("original_coordinates", publication.indices(coordinates, axis));
+                axes.push(std::move(item));
+            }
+            binding.set("old_endpoint_axes", std::move(axes));
+            research_detail::NativeFactoredTemporalMaps registry(
+                {&temporal(old_context), &temporal(new_context)}, &publication,
+                {old_axes, new_snapshot.grade_axes});
+            const auto expression = [&](std::size_t endpoint, std::uint64_t axis, std::size_t size) {
+                auto power = registry.identity(size, axis);
+                if (order) {
+                    auto factor = registry.hodge(endpoint, rfc::core::Grade{grade});
+                    for (auto remaining = order; remaining; remaining >>= 1u) {
+                        if (remaining & 1u) power = registry.compose({power, factor});
+                        if (remaining > 1u) factor = registry.compose({factor, factor});
+                    }
+                }
+                return registry.compose({power, registry.metric(endpoint, rfc::core::Grade{grade})});
+            };
+            const auto old_form = expression(0, old_axis, old_x.size()),
+                       new_form = expression(1, new_axis, new_x.size());
+            binding.set("old_form", old_form); binding.set("new_form", new_form);
+            binding.set("factored_maps", registry.archive());
+            auto forms = ResultValue::object();
+            forms.set("old_form", old_form); forms.set("new_form", new_form);
+            forms.set("factored_maps", registry.archive());
+            view.set("forms", std::move(forms));
+        } else {
+            binding.set("old_form", ResultFields::stage_matrix(form(*old_context.study), old_axis, old_axis));
+            binding.set("new_form", ResultFields::stage_matrix(form(*new_context.study), new_axis, new_axis));
+        }
         binding.set("comparison", ResultFields::stage_matrix(comparison, old_axis, new_axis));
-        const auto transported_x = comparison.apply(old_x), transported_y = comparison.apply(old_y);
         binding.set("transported_left", ResultFields::stage_vector(transported_x, new_axis));
         binding.set("transported_right", ResultFields::stage_vector(transported_y, new_axis));
-        binding.set("left_innovation", ResultFields::stage_vector(rfc::numeric::sub(new_x, transported_x), new_axis));
-        binding.set("right_innovation", ResultFields::stage_vector(rfc::numeric::sub(new_y, transported_y), new_axis));
+        binding.set("left_innovation", ResultFields::stage_vector(innovation_x, new_axis));
+        binding.set("right_innovation", ResultFields::stage_vector(innovation_y, new_axis));
+        std::optional<rfc::numeric::ExactMatrix> reverse;
+        if (query.has("reverse_correspondence"))
+            reverse = temporal_map(other_name, name, grade, query.at("reverse_correspondence"));
+        else if (old_context.to_ambient.at(grade) == new_context.to_ambient.at(grade) &&
+                 comparison == rfc::numeric::ExactMatrix::identity(old_x.size()))
+            reverse = rfc::numeric::ExactMatrix::identity(old_x.size());
+        if (reverse) {
+            require(reverse->multiply(comparison) == rfc::numeric::ExactMatrix::identity(old_x.size()) &&
+                    comparison.multiply(*reverse) == rfc::numeric::ExactMatrix::identity(new_x.size()),
+                    "moment common carrier requires two sided inverse correspondences");
+            const auto dx = rfc::numeric::sub(reverse->apply(new_x), old_x),
+                       dy = rfc::numeric::sub(reverse->apply(new_y), old_y);
+            const auto old_restricted = restrict_form(*old_context.study, {old_x, dx}, {old_y, dy});
+            const auto new_restricted = restrict_form(*new_context.study,
+                {transported_x, comparison.apply(dx)}, {transported_y, comparison.apply(dy)});
+            rfc::numeric::ExactMatrix old_left(1, 2), new_left(1, 2);
+            old_left.set(0, 0, Rational{1}); new_left.set(0, 0, Rational{1}); new_left.set(0, 1, Rational{1});
+            const auto terms = rfc::temporal::finite_ordered_factor_attribution(
+                {old_left, old_restricted, old_left.transpose()},
+                {new_left, new_restricted, new_left.transpose()}, rfc::temporal::FactorOrder::WrittenProduct);
+            require(rfc::temporal::sum_factor_interactions(terms, 1, 1).get(0, 0) == change.total,
+                    "native seven term moment identity failed");
+            auto interactions = ResultValue::array();
+            for (const auto &term : terms) {
+                auto item = ResultValue::object(), factors = ResultValue::array();
+                for (auto position : term.changed_positions)
+                    factors.push(ResultValue::string(position == 0 ? "left_field" : position == 1 ? "form" : "right_field"));
+                item.set("changed_factors", std::move(factors));
+                item.set("contribution", scalar(publication, term.contribution.get(0, 0)));
+                interactions.push(std::move(item));
+            }
+            view.set("factor_interactions", std::move(interactions));
+            auto common = ResultValue::object();
+            common.set("reverse_correspondence", ResultFields::stage_matrix(*reverse, new_axis, old_axis));
+            common.set("left_change", ResultFields::stage_vector(dx, old_axis));
+            common.set("right_change", ResultFields::stage_vector(dy, old_axis));
+            const auto left_axis = publication.axis(2), right_axis = publication.axis(2);
+            const auto lift = [](const Vector &base, const Vector &delta) {
+                rfc::numeric::ExactMatrix result(base.size(), 2);
+                for (std::size_t i = 0; i < base.size(); ++i) {
+                    result.set(i, 0, base[i]); result.set(i, 1, delta[i]);
+                }
+                return result;
+            };
+            common.set("left_realization", ResultFields::stage_matrix(lift(old_x, dx), left_axis, old_axis));
+            common.set("right_realization", ResultFields::stage_matrix(lift(old_y, dy), right_axis, old_axis));
+            common.set("old_restricted_form", ResultFields::stage_matrix(old_restricted, right_axis, left_axis));
+            common.set("new_restricted_form", ResultFields::stage_matrix(new_restricted, right_axis, left_axis));
+            common.set("meaning", ResultValue::string("Exact contractions on the two declared field columns, which may be dependent; complete endpoint operators and original carriers retained separately"));
+            binding.set("common_carrier", std::move(common));
+        }
         binding.set("old_moment", scalar(publication, old_value)); binding.set("new_moment", scalar(publication, new_value));
         publication.bind(std::move(binding));
         lease.check_cancelled();
@@ -2338,7 +2451,7 @@ struct ScientificSession::State {
             members(query,
                     {"operation", "context", "other_context", "field", "other_field", "new_field",
                      "new_other_field", "order"},
-                    {"correspondence"});
+                    {"correspondence", "reverse_correspondence", "map_output"});
             const auto other = query.at("other_context").text();
             temporal_times(name, other);
             const auto k = input(name, query.at("field").text(), false).second;
@@ -2353,6 +2466,16 @@ struct ScientificSession::State {
             else
                 require(prepared.to_ambient.at(k) == context(other).to_ambient.at(k),
                         "different temporal carriers require an explicit correspondence");
+            (void)research_detail::NativeFactoredTemporalMaps::requested(query);
+            if (query.has("reverse_correspondence")) {
+                const auto forward = query.has("correspondence")
+                    ? temporal_map(name, other, k, query.at("correspondence"))
+                    : rfc::numeric::ExactMatrix::identity(prepared.to_ambient.at(k).size());
+                const auto reverse = temporal_map(other, name, k, query.at("reverse_correspondence"));
+                require(reverse.multiply(forward) == rfc::numeric::ExactMatrix::identity(forward.cols()) &&
+                        forward.multiply(reverse) == rfc::numeric::ExactMatrix::identity(forward.rows()),
+                        "moment common carrier requires two sided inverse correspondences");
+            }
             (void)count(query.at("order"), std::numeric_limits<std::size_t>::max(), "moment order");
         } else {
             require(operation == "boundary" || operation == "adjoint" || operation == "hodge" ||
