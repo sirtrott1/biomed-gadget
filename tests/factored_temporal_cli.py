@@ -33,13 +33,13 @@ words=[ [{'kind':'adjoint'},{'kind':'hodge'},{'kind':'boundary'},{'kind':'green'
         [{'kind':'hodge'},{'kind':'diagonal_field','fields':['x','x','x']},{'kind':'hodge'},{'kind':'green','lambda':'1/1'}]]
 for word in words:
     q=copy.deepcopy(base);q['word']=word;pair(q)
-# Unequal grade metrics at each endpoint expose an incorrect transpose-as-adjoint.
+# Unequal grade metrics at each endpoint expose an incorrect transpose as adjoint.
 for t in range(3):
     path=root/('native/p'+str(t)+'/study.json');d=json.loads(path.read_text())
     for k,metric in enumerate(d['contexts'][0]['metrics']):
         size=sum(c['grade']==k for c in d['cells']);metric.clear();metric.update(kind='diagonal',values=[str(2+t+k+i) for i in range(size)])
     r.save(path,d)
-# Re-admit the changed declarations under their actual new hashes and digests.
+# Re admit the changed declarations under their actual new hashes and digests.
 r.connect(binary,root/'native',['p0','p1','p2'],'x',base['word'])
 for word in words+[base['word']]:
     q=copy.deepcopy(base);q['word']=word;pair(q)

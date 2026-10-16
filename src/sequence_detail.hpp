@@ -105,7 +105,7 @@ inline std::uint64_t token(const std::string &s) {
 struct Hit {
     std::size_t reference, offset;
 };
-// Injective two-bit keys, not a probabilistic hash or a sampled reference index.
+// Injective two bit keys, not a probabilistic hash or a sampled reference index.
 class SeedIndex {
     using Table = std::unordered_map<std::uint64_t, std::vector<Hit>>;
     std::map<std::size_t, Table> tables_;

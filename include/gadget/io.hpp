@@ -59,7 +59,7 @@ class Json {
     std::string dump() const;
     std::string dump_compact() const;
 };
-// The complete-file adapter is constrained by its string and stream
+// The complete file adapter is constrained by its string and stream
 // representations. Callers may still declare a narrower byte contract.
 std::size_t source_byte_limit();
 // Complete bytes from one opened regular file, with size and EOF validation.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind a finite-law research question to a native pipeline and selected result facts."""
+"""Bind a finite law research question to a native pipeline and selected result facts."""
 import argparse
 import json
 from pathlib import Path

@@ -1,7 +1,7 @@
 # From read evidence to expression bounds
 
 This example runs the same expression method used for transcript sequences,
-exon-compatible alignment records and unweighted equivalence classes. All input
+exon compatible alignment records and unweighted equivalence classes. All input
 files and their hashes are included. From the GADGET source root, with a built
 `gadget` executable:
 
@@ -32,7 +32,7 @@ windows: two in A1 and one in A2. It contributes one observation, retaining all
 three placement witnesses. The second sample has three unique A1 reads, one
 ambiguous A1/A2 read and one unmatched read.
 
-| Observable | Baseline | Follow-up | Follow-up minus baseline |
+| Observable | Baseline | Follow up | Follow up minus baseline |
 |---|---:|---:|---:|
 | A1 assigned counts | [1, 3] | [3, 4] | [0, 3] |
 | A2 assigned counts | [0, 2] | [0, 1] | [-2, 1] |
@@ -76,14 +76,14 @@ remain distinct from missing observations.
 Sample bounds in `expression` include the caller's positive rational scales.
 The underlying `allocation_certificate` retains raw count bounds; its contrasts
 already apply those scales. A scale must have a provenance declaration. There is
-no estimated library-size factor, transcript-length correction or fitted
+no estimated library size factor, transcript length correction or fitted
 abundance. A positive lower contrast bound means the sign holds for every
 admissible allocation; an interval containing zero retains the ambiguity.
 Different targets' marginal endpoints need not occur in one joint allocation.
 
-The optional `coupled-query.json` declares a between-sample A1 constraint and two
+The optional `coupled-query.json` declares a between sample A1 constraint and two
 capacity bounds. Execute it with the same `assay-query` command. These authored
-constraints fix A1 at two baseline and three follow-up counts. They are explicitly
+constraints fix A1 at two baseline and three follow up counts. They are explicitly
 additional assumptions, not findings inferred from the reads. Each coupling term
 names a sample and a declared target and acts on **unscaled counts**. GADGET
 translates those memberships and the original class conservation equations into
@@ -96,7 +96,7 @@ an infeasibility certificate and cannot be materialized as measured expression.
 Other evidence modes use the same `samples`, `targets`, `contrasts` and optional
 `coupling` contract:
 
-- `transcript_sequences` matches FASTA/FASTQ records against a hash-bound transcript
+- `transcript_sequences` matches FASTA/FASTQ records against a hash bound transcript
   FASTA under declared strands, IUPAC compatibility and a mismatch budget. Every
   contiguous placement is retained. Its coordinates are transcript coordinates;
   the current method does not align indels or infer new transcripts.
@@ -114,8 +114,8 @@ Other evidence modes use the same `samples`, `targets`, `contrasts` and optional
 
 Annotation matching uses a complete contig/interval index, preserving original
 feature order and all overlaps. Search sizes follow source geometry and checked
-native coordinate representation. There is no feature-count, pair-comparison or
-witness-count policy ceiling. Native kernels and coupled output can still require
+native coordinate representation. There is no feature count, pair comparison or
+witness count policy ceiling. Native kernels and coupled output can still require
 substantial time and memory when the actual ambiguity is large.
 
 Independent expression and feature assignment materialization retains the candidate
@@ -136,5 +136,5 @@ the original candidates and classes. Replay retains and checks each namespace.
 
 `tests/expression_allocation_cli.py` independently enumerates finite assignments,
 read placements, coupling constraints, extrema and optimizer residuals. It also
-checks source-only replay, randomized candidate sets, large exact counts and
+checks source only replay, randomized candidate sets, large exact counts and
 annotation dimensions exceeding the former application ceilings.

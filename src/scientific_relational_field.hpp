@@ -6,7 +6,7 @@
 #include <rfc/core/axioms.hpp>
 
 namespace gadget::scientific_detail {
-// Source-bound orthogonal actions; native SDK owns frames, solves and arithmetic.
+// Source bound orthogonal actions; native SDK owns frames, solves and arithmetic.
 struct PreparedRelationalField {
     const NativeStudy &study;
     rfc::core::Grade grade;

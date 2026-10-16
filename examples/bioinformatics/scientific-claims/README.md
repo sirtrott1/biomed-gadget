@@ -6,7 +6,7 @@ analytical outputs. Researchers select each fact's path, type and scientific
 meaning. Models can report values or comparisons; they cannot change those
 selections.
 
-This example reuses the RNA assignment and source-context protocols. It checks
+This example reuses the RNA assignment and source context protocols. It checks
 15 facts: reported and missing RNA support, declared units, individual positive,
 negative and inactive incidence coefficients, a transcript length, recorded read
 quality, measured RNA and computed allocation contrast bounds. GeneA's assigned
@@ -34,7 +34,7 @@ context target and a descriptor path. An answer selection names a completed answ
 binding, producing step, result ordinal and path within that result. Answer file
 hashes, result file hashes, certificate seals, source owners and effective queries
 are checked before values enter the catalog. Paths resolve against the selected
-objects; no claim-count, path-depth or array-index policy truncates the selection.
+objects; no claim count, path depth or array index policy truncates the selection.
 The admitted C++ object owns its captured values independently of subsequent file
 edits. Opening a new object checks the files again.
 
@@ -64,7 +64,7 @@ checked receipt. Owners are shared only when their complete captured bytes agree
 To give the model the full catalog instead, pass `--catalog-mode full`.
 
 The reporting decoder provides one slot per selected fact, in selection order.
-Its size follows the request; it has no fixed fact-count ceiling. Each slot fixes
+Its size follows the request; it has no fixed fact count ceiling. Each slot fixes
 the selected identity and equality comparison while leaving the reported value
 to the model. Rational strings follow the native canonical integer/fraction
 syntax. The backend independently rejects invalid values and checks every
@@ -101,7 +101,7 @@ text. Rational observations must be typed values or actual encoded tensors.
 
 For a nonscalar tensor, add `coordinate` with its original flat coordinate.
 This selects the actual tensor axis, independently of any compact display's
-selected-coordinate order. A scalar descriptor supplies its own coordinate.
+selected coordinate order. A scalar descriptor supplies its own coordinate.
 Reported zero is comparable; absent support refuses a numerical claim. Counts
 and signed integers retain native arbitrary precision. Text and Boolean values
 support equality and inequality, and numerical types also support ordering.

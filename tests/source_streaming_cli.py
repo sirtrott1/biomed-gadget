@@ -48,7 +48,7 @@ assert len(page['records'])==9 and page['binding']['publication_digest']!=page['
 q={**foreign,'source_sequence':'7'}
 p=subprocess.run([str(binary),'source-read','--study',str(coord),'--request',str(replay.save(root/'invalid.json',q))],capture_output=True,text=True)
 assert p.returncode
-# A portable original-count assay selects an actual native partition, not a detached table.
+# A portable original count assay selects an actual native partition, not a detached table.
 pipeline=root/'assay';pipeline.mkdir()
 features=pipeline/'features.tsv';features.write_text('id\ng1\ng2\ng3\ng4\n')
 obs=pipeline/'observations.tsv';obs.write_text('id\nA\nB\n')

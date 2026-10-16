@@ -444,10 +444,10 @@ InterpretedSnapshot interpret(const Packet &p) {
         }
         logical.assertions.push_back(std::move(a));
     }
-    // These are complete in-memory producer declarations. Admission uses the
+    // These are complete in memory producer declarations. Admission uses the
     // addressable native containers and byte representation, not the defaults
     // intended for bounded external decoders. Intrinsic declaration depth and
-    // tensor-rank representations remain the canonical SDK's responsibility.
+    // tensor rank representations remain the canonical SDK's responsibility.
     InterpretationLimits limits;
     const auto addressable = std::numeric_limits<std::size_t>::max();
     limits.max_records = addressable;
@@ -595,7 +595,7 @@ void scientific_view(const Packet &p, const InterpretedSnapshot &native, const f
     write_text(root / "record-map.json", mapping.dump() + "\n");
     import_table(root / "table-import.json", root / "study");
     // Bind the mathematical view to the complete immutable source packet and
-    // explicit native-assertion correspondence, without substituting its carrier.
+    // explicit native assertion correspondence, without substituting its carrier.
     auto study = Json::parse(read_text(root / "study/study.json"));
     auto docs = study.at("documents");
     const auto attach = [&](const std::string &id, const std::string &name,

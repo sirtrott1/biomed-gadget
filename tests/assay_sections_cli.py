@@ -1,4 +1,4 @@
-"""Declared inter-assay sections; independent rational projection and portable lineage."""
+"""Declared inter assay sections; independent rational projection and portable lineage."""
 import copy
 import hashlib
 import importlib.util
@@ -237,7 +237,7 @@ modified = copy.deepcopy(query)
 modified['interfaces'][0]['participants'][1]['map']['entries'][0]['coefficient'] = '2'
 changed = run('assay-query', '--workspace', manifest, '--request', save('changed-map.json', modified))['result']
 check(payload(changed) != payload(result))
-# Joined serial and multi-worker actions agree on the complete mathematical output.
+# Joined serial and multi worker actions agree on the complete mathematical output.
 serial = copy.deepcopy(query); serial['workers'] = 1
 check(payload(run('assay-query', '--workspace', manifest, '--request', save('serial.json', serial))['result']) == payload(result))
 # Unequal interface stalk dimensions and multivariate restriction maps.
@@ -278,7 +278,7 @@ for name, edit in [
     refused = root / ('refused-output-' + name)
     run('assay-query', '--workspace', manifest, '--request', root/(name+'.json'), '--out', refused, fail=True)
     check(not refused.exists())
-# Default pipelines and bound local-model recipe selection use the same contract.
+# Default pipelines and bound local model recipe selection use the same contract.
 plan = run('pipeline-prepare', '--workspace', manifest, '--request', root/'inputs/pipeline.json')
 run('pipeline', '--workspace', manifest, '--request', save('plan.json', plan), '--out', root/'pipeline')
 derived = root/'pipeline/sections/workspace/workspace.rfcxs'
@@ -290,7 +290,7 @@ proposal = dict(schema='gadget.pipeline.recipe.proposal.v1', action='recipes',
 admitted = run('recipe-proposal', '--workspace', manifest, '--intent', root/'inputs/intent.json',
                '--request', save('proposal.json', proposal), '--prompt', 'Assess support after compatibility')
 check(admitted['status'] == 'admitted')
-# Previous local-section ceilings: 258 direct-sum coordinates and 33 sections.
+# Previous local section ceilings: 258 direct sum coordinates and 33 sections.
 study = json.loads((root/'workspace/assays/0/partitions/0/study.json').read_text())
 local = dict(operation='local_sections', context='all', construction='cellular_sheaf',
              stalks=[dict(grade=0,key=c['key'],axes=[f'a{i}' for i in range(129)])

@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
         const auto solved = std::chrono::steady_clock::now();
         const auto residual = numeric::sub(
             numeric::add(answer.value, study.hodge(core::Grade{0}).apply(answer.value)), j);
-        // Independent rank-one inverse: (I + b b*)^-1 j = j - b(b*j)/(1+b*b).
+        // Independent rank one inverse: (I + b b*)^-1 j = j - b(b*j)/(1+b*b).
         const Rational tail(1, static_cast<unsigned long>(n - 1));
         const Rational q = 1 + tail;
         const Rational head = 1 - Rational(1) / (1 + q), other = tail / (1 + q);

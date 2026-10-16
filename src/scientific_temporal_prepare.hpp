@@ -66,7 +66,7 @@ class PreparedTemporalStudy {
                 // L = [B^dagger C] [B; C^dagger]. Retain every adjacent
                 // coordinate, including dependent, cancelled and zero columns.
                 // The native Woodbury correction has m coordinates, rather
-                // than n. This comparison is source-derived, not a size cap.
+                // than n. This comparison is source derived, not a size cap.
                 Matrix u(n, m), v(n, m);
                 const auto append = [&](const Matrix &a, const Matrix &b, std::size_t offset) {
                     for (const auto &[p, value] : a.entries())
@@ -85,7 +85,7 @@ class PreparedTemporalStudy {
                 woodbury_.emplace(Matrix::identity(n), std::move(u),
                                   Matrix::diagonal(Vector(m, lambda_)), std::move(v), limits_, checkpoint_);
             } else {
-                // No smaller adjacent-coordinate system: reuse the native
+                // No smaller adjacent coordinate system: reuse the native
                 // exact factorization on the original field coordinates.
                 direct_.emplace(Matrix::identity(n).add(prepared.hodge(grade).scale(lambda_)),
                                 limits_, checkpoint_);

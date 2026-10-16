@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a source-bound C++ binding-evidence workflow; optionally execute it."""
+"""Prepare a source bound C++ binding evidence workflow; optionally execute it."""
 import argparse
 import json
 from pathlib import Path

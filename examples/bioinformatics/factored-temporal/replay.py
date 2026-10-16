@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run both complete-map contracts for an admitted temporal history."""
+"""Run both complete map contracts for an admitted temporal history."""
 import argparse,json,subprocess
 from pathlib import Path
 from verify import verify_pair

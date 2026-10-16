@@ -236,7 +236,7 @@ int main() {
         check(resources->coordinator().available_workers() == 2,
               "prepared control request leaked workers");
         // A larger observed allocation may request more than the former 32
-        // workers. The one-field request launches only one useful tile.
+        // workers. The one field request launches only one useful tile.
         auto wide_observed = std::make_shared<rfc::runtime::HardwareInventory>(*observed);
         wide_observed->allowed_cpus.clear();
         for (unsigned i = 0; i < 48; ++i)

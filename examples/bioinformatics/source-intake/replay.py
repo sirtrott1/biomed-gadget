@@ -76,7 +76,7 @@ def experiments(binary, root, *, records=100001, columns=902, categories=1025,
     names = ['identity', 'category', 'value']
     rows = [['record-' + str(i) + '-' + 'x' * 64, 'category-' + str(i % categories), str(i)]
             for i in range(records)]
-    # A lexical identity can exceed the former 4096-byte text profile.
+    # A lexical identity can exceed the former 4096 byte text profile.
     rows[-1][0] += 'x' * 4097
     table(binary, root / 'records', names, rows, ['identity', 'category'], ['category'],
           identity='identity', dictionary_bytes=(1 << 20) + 1)

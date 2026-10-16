@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent paired-law verification and optional conventional benchmarks."""
+"""Independent paired law verification and optional conventional benchmarks."""
 import argparse
 import itertools
 import json

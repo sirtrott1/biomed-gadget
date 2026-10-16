@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bind the observed-response recipe and eight numerical fact owners."""
+"""Bind the observed response recipe and eight numerical fact owners."""
 import argparse,json
 from pathlib import Path
 from replay import save,digest,run

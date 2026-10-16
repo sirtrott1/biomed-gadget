@@ -38,7 +38,7 @@ struct KString {
     kstring_t value{0, 0, nullptr};
     ~KString() { std::free(value.s); }
 };
-// HTSlib takes ownership of this separate, already hash-checked byte image.
+// HTSlib takes ownership of this separate, already hash checked byte image.
 std::unique_ptr<htsFile, HtsCloser> open_image(const ResourceImage &r) {
     require(!r.bytes.empty(), "empty HTS source");
     auto *buffer = static_cast<char *>(std::malloc(r.bytes.size()));
@@ -73,7 +73,7 @@ std::map<std::string, std::uint64_t> contig_lengths(const Json &reference) {
     }
     return lengths;
 }
-// CRAM is decoded only against a caller-supplied, complete reference image.
+// CRAM is decoded only against a caller supplied, complete reference image.
 // A private directory holds HTSlib's required FASTA index; source paths/UR tags
 // and ambient reference caches are never selected as input references.
 struct ReferenceImage {

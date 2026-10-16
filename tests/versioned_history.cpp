@@ -30,8 +30,8 @@ int main(int argc, char **argv) {
             throw std::runtime_error("equivalent rational parameter duplicated temporal factors");
         if (session.preparation_count() != 3)
             throw std::runtime_error("publication preparations omitted from session accounting");
-        // Compare the composed operator-first path with the SDK's independent
-        // materialized Green-delta reference on both original source grades.
+        // Compare the composed operator first path with the SDK's independent
+        // materialized Green delta reference on both original source grades.
         for (const auto &file_name : {"certificate.json", "relations.json"}) {
             const auto result = Json::parse(read_text(root / file_name)).at("result");
             for (std::size_t t = 0; t < 2; ++t) {

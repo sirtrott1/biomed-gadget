@@ -97,7 +97,7 @@ def examples(binary, producer, out, clinical=None):
                            capture_output=True,text=True,check=True)
             carrier_keys=['1','12']
         # The source publication retains the original durations, censoring and
-        # category-membership relations. These are recorded fields, not event estimates.
+        # category membership relations. These are recorded fields, not event estimates.
         query = dict(operation='hodge_frame_decomposition', publication='self',
             source_sequence=inspection['source_sequence'], grade=0, grade_carriers=carrier_keys,
             fields=['all.time','all.age'], metrics=dict(kind='unit'))

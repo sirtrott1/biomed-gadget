@@ -104,7 +104,7 @@ std::string cache_key(const inference::NativeMetricNoveltyRequest &r) {
         std::to_string(r.new_publication.source_namespace()) + ":" +
         std::to_string(r.new_publication.sequence()) + ":" + std::to_string(r.new_carrier) + ":" +
         std::to_string(r.new_metric.tensor_declaration()->key) + ":";
-    // Private retained-owner addresses separate independent publications. They
+    // Private retained owner addresses separate independent publications. They
     // are cache addresses, never mathematical identities or public receipts.
     declaration +=
         std::to_string(reinterpret_cast<std::uintptr_t>(r.old_publication.endpoint().get())) + ":";
@@ -171,7 +171,7 @@ NativeRecord NativeNoveltyPlans::execute_fields(const Json &query, const NativeN
     const bool reuse = retain && cached != plans_.end() &&
                        same_request(cached->second.request(), r) &&
                        cached->second.request().dimension_limit >= r.dimension_limit;
-    // A digest collision or independent equal-key owner cannot borrow this plan.
+    // A digest collision or independent equal key owner cannot borrow this plan.
     auto plan = reuse ? cached->second : Plan::prepare(std::move(r), a, lease);
     auto result = query.has("causes")
                       ? plan.execute_causes(b.old_field, b.new_field, b.causes, a, lease)

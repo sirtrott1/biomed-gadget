@@ -66,7 +66,7 @@ AssayFieldsSource spatial_fields_source(const ScientificStudy &source, const Jso
 Json quality_analysis(const ResourceImage &resource, const Json &request);
 Json aggregate_analysis(const Matrix &matrix, const Json &declaration, const Json &request,
                         const rfc::runtime::CpuResourceCoordinator::Reservation &reservation);
-// Disjoint original-coordinate storage ranges. These correspondences address
+// Disjoint original coordinate storage ranges. These correspondences address
 // quantitative measurements; they do not glue independent source complexes.
 struct NativeAssayPartition {
     std::size_t begin{}, end{};

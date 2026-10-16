@@ -1,4 +1,4 @@
-"""Replay a portable, researcher-authored import and answer-contract protocol."""
+"""Replay a portable, researcher authored import and answer contract protocol."""
 import argparse
 import hashlib
 import json

@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
               "detached output or cache clear changed source");
         check(stats().at("preparations").integer() == before_clear.at("preparations").integer() + 1,
               "cleared factors were not rebuilt");
-        // A plan is an admitted request sequence, not a sixteen-step math cap.
+        // A plan is an admitted request sequence, not a sixteen step math cap.
         auto plan = Json::object(), steps = Json::array();
         plan.set("schema", Json::string("gadget.scientific.plan.v1"));
         plan.set("id", Json::string("seventeen-complete-actions"));

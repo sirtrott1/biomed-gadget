@@ -120,7 +120,7 @@ Json model_catalog_view(const Json &catalog, const std::string &task, bool compa
         return view;
     if (task == "source_annotator") {
         // Resolved targets retain every selected owner and quoted span. The
-        // original request is re-admitted independently and stays in receipts.
+        // original request is re admitted independently and stays in receipts.
         json_object_object_del(view.raw(), "request");
         view.set("schema", Json::string("gadget.assays.source.context.model.view.v1"));
     } else if (task == "recipe_planner" && view.has("source_context")) {
@@ -629,7 +629,7 @@ struct LocalAgent::State {
             scientific || options.task == "pipeline_planner" ? gadget_scientific_query_schema
                                                              : gadget_query_schema);
         // Retain the original tree before flattening decoder alternatives.
-        // Branch-local references stay bound to this stable source definition.
+        // Branch local references stay bound to this stable source definition.
         schema_references(query_schema, "#/$defs/query_source");
         schema["$defs"]["query_source"] = query_schema;
         // The upstream converter treats nested oneOf branches independently

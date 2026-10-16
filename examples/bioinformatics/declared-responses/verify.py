@@ -31,7 +31,7 @@ def source_maps(root,p,spec,result):
     else:
         table=next(x for x in d['documents'] if x['id']=='table')
         rows=list(csv.DictReader(io.StringIO((base/table['path']).read_text())))
-        # The producer declares two sex-membership relations in the existing source.
+        # The producer declares two sex membership relations in the existing source.
         categories=sorted({r['sex'] for r in rows});assert len(categories)==2
         B=S.zeros(len(rows),2)
         for i,r in enumerate(rows):B[i,categories.index(r['sex'])]=1

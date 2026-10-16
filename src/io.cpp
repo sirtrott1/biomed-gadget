@@ -38,7 +38,7 @@ std::optional<unsigned> json_hex_quad(std::string_view source) {
     return value;
 }
 void validate_json_source_strings(std::string_view source) {
-    // json-c owns the grammar and decoding. Inspect only string-token escapes
+    // json-c owns the grammar and decoding. Inspect only string token escapes
     // whose replacement or decoded NUL would lose the original identity.
     for (std::size_t position = 0; position < source.size();) {
         const auto byte = source[position++];
@@ -104,7 +104,7 @@ void validate_json_numeric_literals(json_object *root) {
             pending.push_back({value});
         else if (json_object_is_type(value, json_type_double) && !std::isfinite(json_object_get_double(value))) {
             // json-c preserves a valid decimal literal even when its
-            // binary64 view overflows. Only its non-JSON extensions refuse.
+            // binary64 view overflows. Only its non JSON extensions refuse.
             const auto literal = json_object_to_json_string_ext(value, JSON_C_TO_STRING_PLAIN);
             if (!literal) throw std::bad_alloc{};
             if (std::string_view(literal) == "NaN" || std::string_view(literal) == "Infinity" ||
@@ -162,7 +162,7 @@ Json Json::parse(const std::string &s) {
         auto error = json_tokener_get_error(tok.get());
         const auto consumed = json_tokener_get_parse_end(tok.get());
         if (error == json_tokener_continue && consumed == s.size()) {
-            // Scalar tokens need an explicit end-of-input notification. Keep
+            // Scalar tokens need an explicit end of input notification. Keep
             // the original source intact and let the same tokener finish it.
             result = Json(json_tokener_parse_ex(tok.get(), "", 1));
             error = json_tokener_get_error(tok.get());

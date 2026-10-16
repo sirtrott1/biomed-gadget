@@ -20,7 +20,7 @@ int main(int argc, char **argv) {
         auto declaration = admitted.declaration();
         TemporalEndpoint endpoint = *admitted.endpoint();
         // Three admitted subcomplexes retain original relation identities; only
-        // the middle endpoint includes the declared grade-two relation.
+        // the middle endpoint includes the declared grade two relation.
         for (auto &block : endpoint.local_blocks)
             if (block.block_key == 1)
                 std::erase_if(block.cells, [](const auto &cell) { return cell.grade.value == 2; });

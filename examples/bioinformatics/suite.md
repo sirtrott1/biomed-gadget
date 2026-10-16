@@ -2,7 +2,7 @@
 
 GADGET separates physical records, assignment choices, measured fields and
 relational structure. These recipes prepare fields for the same native analysis
-interface used by bulk expression, cell-level assays and longitudinal studies.
+interface used by bulk expression, cell level assays and longitudinal studies.
 
 ## Build with genomic codecs
 
@@ -13,7 +13,7 @@ their capability catalog omits these formats and rejects their admission.
 H5AD is enabled separately with `-DGADGET_ENABLE_HDF5=ON`.
 
 A genomic resource declares its assembly, hash of the reference FASTA, contig
-dictionary and zero-based half-open coordinate convention. Its source hash binds
+dictionary and zero based half open coordinate convention. Its source hash binds
 the complete input file. CRAM also requires `reference_source`, a path/hash record
 for that exact FASTA. GADGET supplies a private reference image and index to the
 decoder. Resource admission retains that image for portable reimport.
@@ -21,11 +21,11 @@ decoder. Resource admission retains that image for portable reimport.
 Decoded binary records are identified by file hash and ordered record index.
 Their decoded SAM/VCF representation accompanies the original file; record
 indices are not invented byte offsets. Binary end markers, CIGAR bounds, query
-lengths, read-group dictionaries, GT allele indices and reference lengths are
-checked. Record, genotype and CIGAR-piece counts follow the complete decoded
+lengths, read group dictionaries, GT allele indices and reference lengths are
+checked. Record, genotype and CIGAR piece counts follow the complete decoded
 source, with checked size arithmetic. The retained file, workspace manifest and
 certificate use their actual byte/container representations. There is no
-application record-count or fixed MiB ceiling on these adapters.
+application record count or fixed MiB ceiling on these adapters.
 
 ## Counting and splice evidence
 
@@ -48,7 +48,7 @@ Annotation grouping uses an explicit GTF/GFF3 attribute, such as `gene_id`,
 `transcript_id` or `Parent`; BED uses its record ID. Repeated intervals belonging
 to one feature are unioned, while original records remain identifiable. Shared
 GFF3 parents remain shared. Strand policies are `ignore`, `same` or `opposite`
-relative to the alignment strand; these are not automatic library-protocol calls.
+relative to the alignment strand; these are not automatic library protocol calls.
 
 ```json
 {
@@ -74,10 +74,10 @@ relative to the alignment strand; these are not automatic library-protocol calls
 }
 ```
 
-Only `M`, `=` and `X` positions enter aligned-base overlap. Deletions and skipped
+Only `M`, `=` and `X` positions enter aligned base overlap. Deletions and skipped
 introns do not. The alternative rule `all_aligned_bases` requires each reported
 aligned base to belong to the feature's interval union. Every overlap includes
-its base count and source-record witness. A retained alternative outside every
+its base count and source record witness. A retained alternative outside every
 selected feature adds an unassigned candidate, even when another mapping overlaps
 a gene. Filters and upstream candidate search determine the resulting universe.
 
@@ -86,7 +86,7 @@ sharp marginal assignment bounds through exact count maps. A segment contributes
 to a feature's lower bound when every candidate belongs to that feature; it
 contributes to its upper bound when any candidate does. The output is a bound
 field, with assignment uncertainty preserved. It is not an estimated abundance.
-Paired-template, UMI and barcode deduplication require additional declared models
+Paired template, UMI and barcode deduplication require additional declared models
 and are not inferred from a query name or optional tag.
 
 ## Coverage, variants, quality and sequence pairs
@@ -94,10 +94,10 @@ and are not inferred from a query name or optional tag.
 | Method | Result |
 |---|---|
 | `read_quality` | Read lengths, stored Phred+33 score counts by cycle, caller thresholds and IUPAC GC bounds |
-| `annotation_features` | Attribute-grouped annotation interval unions, physical frames and original record indices |
+| `annotation_features` | Attribute grouped annotation interval unions, physical frames and original record indices |
 | `chromatin_contrast` | Common physical intersection segments, complete scaled coverage fields, matched differences, integrals, quadrances and threshold components |
-| `variant_genotypes` | Complete called allele-copy fields, ordered allele dictionaries, ploidy, phasing separators and original variant records |
-| `exact_sequence_alignment` | A complete edit grid, ordered optimal path, all optimal-step support, and native prefix/suffix primal–dual certificates |
+| `variant_genotypes` | Complete called allele copy fields, ordered allele dictionaries, ploidy, phasing separators and original variant records |
+| `exact_sequence_alignment` | A complete edit grid, ordered optimal path, all optimal step support, and native prefix/suffix primal to dual certificates |
 
 Chromatin samples declare positive scales with their producing evidence, named
 treated/control pairs, strand handling and thresholds. The caller explicitly
@@ -108,12 +108,12 @@ are outside this calculation. Threshold components describe observed coverage;
 they are not calibrated peak significance.
 
 Variant `filter_policy: pass` selects only `PASS`; a dot means filters were not
-applied. `all` retains every input call. Allele-copy zero requires a complete GT;
-partial and missing GT remain absent, including mixed-ploidy calls. REF/ALT and
+applied. `all` retains every input call. Allele copy zero requires a complete GT;
+partial and missing GT remain absent, including mixed ploidy calls. REF/ALT and
 upstream likelihood/filter fields remain in the source representation. Variant
 calling, haplotype reconstruction and pathogenicity annotation are separate tasks.
 
-The sequence profiles use DNA/RNA IUPAC bases, including U; reverse-complement
+The sequence profiles use DNA/RNA IUPAC bases, including U; reverse complement
 search requires DNA tokens. Pair alignment uses FASTA records and the complete
 `(query_length + 1) × (reference_length + 1)` global edit grid, with nonnegative
 rational match, mismatch and linear gap costs. `literal` compares tokens;
@@ -123,25 +123,25 @@ rule requires equal singleton sets. The result names this compatibility rule.
 RexGraph's native routes produce prefix and suffix costs. An attained minimum
 route also attains the minimum on each of its subroutes, so GADGET retains each
 native route once and references its positions for previously unfilled source
-coordinates. Native primal–dual checks verify both complete potential fields,
+coordinates. Native primal to dual checks verify both complete potential fields,
 and native boundary actions verify tightness along every referenced route.
 `route_witnesses`, `prefix_suffix_witnesses` and `native_route_calls` expose this
 reuse. The chosen ordered route, its realized field and every step on any
 minimum route remain separate outputs. All source relations and the complete
-cost, chosen-path and optimal-support fields retain supported zeros.
+cost, chosen path and optimal support fields retain supported zeros.
 
 Sequence lengths and grid size have no separate policy ceiling. Checked native
 cell, occurrence and integer domains govern representation. The complete grid,
 route histories and result stay in memory; this method retains their actual
-construction and routing cost. It implements global linear-gap alignment.
+construction and routing cost. It implements global linear gap alignment.
 [The portable example](sequence-witnesses/README.md) provides both inputs and a
 pipeline request.
 
 ## Cells, spatial structure and assay integration
 
 `aggregate_assay` takes explicit feature and observation maps. Each group names
-original identities and rational coefficients. This serves specimen-level sums
-of single-cell counts, supplied gene-set totals, declared region aggregates and
+original identities and rational coefficients. This serves specimen level sums
+of single cell counts, supplied gene set totals, declared region aggregates and
 other linear assay questions. Arithmetic means require explicit coefficients.
 Any unsupported input with a nonzero coefficient makes the corresponding output
 absent. Equal shapes do not establish assay correspondence, and grouping does
@@ -155,18 +155,18 @@ along the stored axis. Unsupported coordinates retain their dependency semantics
 Execution receipts retain every packet's source digest, namespace, cutoff and
 coordinate range without parsing the raw matrix again. Complete unit sums use
 native window actions within packets and an explicit exact matrix action across
-their results. Dictionary-based designs compile the same declared maps into this
+their results. Dictionary based designs compile the same declared maps into this
 route. Storage ranges address measurement coordinates; they do not glue source
 topology or define biological groups.
 
 Imports retain the complete carrier by default within the native source index
 domain. An explicit `partition_size` requests disjoint storage ranges; the
-numerical results keep the same original-coordinate interpretation.
+numerical results keep the same original coordinate interpretation.
 
 `spatial_relations` reads retained observation coordinates with their explicit
 `coordinate_frame` and `coordinate_units` columns. A positive diagonal native
 metric and caller radius squared define physical neighbors without a fitted
-embedding. Each pair becomes an oriented grade-one relation; coordinate order
+embedding. Each pair becomes an oriented grade one relation; coordinate order
 sets the sign convention. Neighborhoods describe the supplied physical geometry.
 Higher attachments and biological interactions need separate source declarations.
 The existing `field_transfer` method compares assay fields under an explicit
@@ -174,7 +174,7 @@ measurement map, retaining its rank, kernel, residual and coordinate identities.
 
 ## Continue with native relational analysis
 
-`derive-assays` materializes feature-count bounds, genotype-copy fields, chromatin
+`derive-assays` materializes feature count bounds, genotype copy fields, chromatin
 contrasts, declared aggregates, physical spatial relations or complete edit grids into a new canonical
 assay workspace. Its declaration names the generating recipe, new namespace,
 study design and independent GET channel. Source files, the complete producing
@@ -182,7 +182,7 @@ certificate, map declarations and original measurement metadata are retained.
 Spatial derivation appends physical relations to authored structure, preserving
 existing higher attachments and their fields; duplicate identities reject.
 Edit grids retain prefix/suffix potential fields at grade zero and independent
-cost, chosen-path and optimal-support fields at grade one. Hodge and Green
+cost, chosen path and optimal support fields at grade one. Hodge and Green
 therefore act on the actual retained edit relations. Alternative edit histories
 are kept; sharing endpoints does not automatically create a higher face.
 
@@ -209,9 +209,9 @@ interface; model prose remains a separate observation. CPU reservations and
 native work graphs retain ownership of execution. Packed CPU/GPU capabilities
 apply to their existing native packed operations, not to rational metric solves.
 
-The independent suite test checks per-base chromatin fields, strand and CIGAR
+The independent suite test checks per base chromatin fields, strand and CIGAR
 semantics, ambiguous assignments, phased and missing genotypes, known spatial
-distances, support propagation, archive relocation and exhaustive tiny edit-path
+distances, support propagation, archive relocation and exhaustive tiny edit path
 oracles. These authored inputs qualify the contracts. Biological experiments
 must supply their own designs and sources; the airway expression demonstration
 provides a separately retained real assay example.
@@ -225,15 +225,15 @@ assertions retain their separate identities even at equal physical coordinates.
 
 For a literal ACGT query of length `m` with mismatch bound `k < m`, at least one
 of `k + 1` disjoint seeds is unchanged in every acceptable placement. The existing
-injective two-bit index retains every requested seed hit. A seed is shortened
-when needed to fit its intrinsic 64-bit representation; this preserves the
-necessary condition. Full query-length native mismatch actions verify every
+injective two bit index retains every requested seed hit. A seed is shortened
+when needed to fit its intrinsic 64 bit representation; this preserves the
+necessary condition. Full query length native mismatch actions verify every
 candidate. On a completely ACGT reference, a literal query symbol outside ACGT
 necessarily consumes a mismatch. A seed containing that symbol cannot be the
 intact seed of an admitted placement, so it is omitted without discarding the
 query. Ambiguous literal queries on references containing ambiguous tokens,
 nonliteral rules and `k >= m` use the full contiguous placement universe.
-Every declared-junction placement is checked in full.
+Every declared junction placement is checked in full.
 
 `literal` means equal tokens and `possible` means a nonempty IUPAC intersection.
 This method's established `definite` rule requires the query's IUPAC set to be
@@ -244,24 +244,24 @@ follows query, strand, reference and start, then junction declaration and split.
 `base_comparisons` record actual native verification work. These exact counts
 use decimal strings when they exceed signed JSON integer representation.
 
-Query, reference, mismatch, overhang, comparison, junction and accepted-result
+Query, reference, mismatch, overhang, comparison, junction and accepted result
 counts have no separate policy ceiling. Source, index and complete outputs
 remain resident. Repetitive seeds and IUPAC/junction fallback incur their full
-work. The declared universe contains contiguous and single-junction placements;
+work. The declared universe contains contiguous and single junction placements;
 indels and undeclared junctions belong to other methods.
 
-`sequence_assembly_graph` constructs the complete observed literal k-mer
+`sequence_assembly_graph` constructs the complete observed literal k mer
 transition complex. Prefix and suffix identities are shared only when the tokens
-are equal. Each retained k-mer relation has two independently keyed signed
-occurrences; a self-loop keeps both even though its boundary cancels. The
-occurrence-count field is computed by the native count map. Every read's walk,
+are equal. Each retained k mer relation has two independently keyed signed
+occurrences; a self loop keeps both even though its boundary cancels. The
+occurrence count field is computed by the native count map. Every read's walk,
 sequence offsets, original record span and reconstructed sequence are retained.
 All branches remain visible. An optional declared pair of endpoints requests
-one native minimum-hop walk. Its sequence is a graph walk, rather than an inferred
-biological consensus. Materialization admits the graph, independent grade-one
-counts and grade-zero outgoing-vocabulary counts for native Hodge, Green and
+one native minimum hop walk. Its sequence is a graph walk, rather than an inferred
+biological consensus. Materialization admits the graph, independent grade one
+counts and grade zero outgoing vocabulary counts for native Hodge, Green and
 sheaf analyses. `k >= 2`, and every read must be at least k bases long. Source
-read, k-mer, node, occurrence and k counts have no separate policy ceiling.
+read, k mer, node, occurrence and k counts have no separate policy ceiling.
 The native exact count map contains one membership per original occurrence;
 `source_occurrences` and `count_operator_nonzeros` expose that complete support.
 Cycle dimension is computed by native exact boundary rank. The complete source,
@@ -273,21 +273,21 @@ constraints (`eq`, `le`, `ge`) and an explicit minimizing or maximizing objectiv
 RexGraph solves the equalities and fixed bounds as `x = x0 + K z`, with a complete
 native kernel frame. Free parameters retain the corresponding original variable
 coordinates. Reduced inequality and bound supports determine independent
-parameter groups; a native contrast-kernel frame certifies their partition.
+parameter groups; a native contrast kernel frame certifies their partition.
 Each original variable and inequality belongs to at most one group. The original
 rows, coefficients, bounds, objective and names remain available for verification.
-The reported `affine_dimension` is the dimension of the equality and fixed-bound
+The reported `affine_dimension` is the dimension of the equality and fixed bound
 solution space; inequalities may restrict it further. Arithmetic is exact
 rational arithmetic. Linear feasibility and optimization require no metric.
-Authored constraints are native grade-one relations; every dense source term,
+Authored constraints are native grade one relations; every dense source term,
 including a zero coefficient, remains an existent occurrence. Arity does not
-create a higher-grade attachment.
+create a higher grade attachment.
 
-`bounded_integer` enumerates each independent free-coordinate box and checks
+`bounded_integer` enumerates each independent free coordinate box and checks
 integrality of reconstructed coordinates. `bounded_rational` enumerates distinct
 active hyperplanes within each group, using native exact normalization, rank,
 solve and residual checks. Scaled duplicate rows retain their original evidence
-but share active search work. Inconsistent equalities receive a native left-null
+but share active search work. Inconsistent equalities receive a native left null
 contradiction witness; constant bound and integrality contradictions are also
 reported. Degenerate feasible polytopes remain supported.
 
@@ -297,25 +297,25 @@ Explicit output retains every optimal integer point or rational vertex. Set
 optimal tuple per group, with their Cartesian product count. Rational vertex
 products span the complete optimal face by convex hull. Set
 `factor_certificate: true` to retain these factors alongside explicit witnesses. Counts exceeding the
-signed 64-bit JSON integer representation use decimal strings. Materialized
+signed 64 bit JSON integer representation use decimal strings. Materialized
 assays use the same sharp bound endpoints in either representation.
 
 There are no application ceilings on variable/constraint counts, candidates,
 feasible points or optimal witnesses. Native cell indices and source/container
-representations govern admission. Genuinely coupled enumeration and complete
+representations govern admission. coupled enumeration and complete
 explicit output incur their actual costs. Every variable still requires declared
-finite bounds. [The coupled-allocation example](coupled-allocation-factors.json)
+finite bounds. [The coupled allocation example](coupled-allocation-factors.json)
 shows declared class totals, a shared capacity and an independent ambiguity fiber.
 
 `relational_persistence` acts on one admitted assay partition and its complete
-source complex. Supply increasing rational `levels`, a birth-level index for
+source complex. Supply increasing rational `levels`, a birth level index for
 every `{grade,index}` coordinate, the filtration meaning and evidence. Every
 level must be closed under all retained boundary occurrences, including inactive
 ones. The method preserves authored higher relations, verifies all chain
 compositions and native inclusion maps, and records cycle/boundary frames and
 every induced homology image rank. Rational interval multiplicities must
-reconstruct the full rank invariant. Endpoints are birth-inclusive and
-death-exclusive. Surviving intervals are censored at the final supplied level;
+reconstruct the full rank invariant. Endpoints are birth inclusive and
+death exclusive. Surviving intervals are censored at the final supplied level;
 the input does not establish their future lifetime. All source cells and supplied
 levels are retained. Integral torsion requires a separately declared lattice; this profile
 uses rational chain homology.
@@ -336,8 +336,8 @@ field or a complete vector. `coefficient_domain: "rational"` uses the declared
 rational coordinates. `"retained_lattice"` accepts integer vectors in the source's
 coordinated lattice basis. A source field always uses rational coordinates.
 The method retains every incidence, including inactive assertions, and records
-its signed contribution and lower-stalk sum. It reports cycle and boundary
-membership, integral free rank and torsion, higher-chain filling witnesses,
+its signed contribution and lower stalk sum. It reports cycle and boundary
+membership, integral free rank and torsion, higher chain filling witnesses,
 gradient/curl/harmonic fields, their metric quadrances, and complete field
 reconstruction. Source size follows the complete native complex and checked
 coordinate/container representations.
@@ -372,7 +372,7 @@ a deterministic explanation derived from the checked incidence and field facts.
 `indexed_sequence_alignment` searches every nonempty reference substring within
 a declared unit edit budget. It retains one exact minimizing edit history for
 each admitted placement, its complete declared route carrier, signed boundary
-check and cost check. The index uses injective two-bit DNA keys for the requested
+check and cost check. The index uses injective two bit DNA keys for the requested
 seeds. With at most `e` edits, one of `e+1` disjoint seeds must survive unchanged;
 its reference position locates the substring start within `e` bases. Every
 admitted path lies inside `|query_prefix-reference_prefix| <= e`. These bounds
@@ -394,7 +394,7 @@ permit complete pruning before `rfc::path::dijkstra_exact` solves each endpoint.
 The edit budget must be strictly less than every query length, which ensures
 that the seed partition has `e+1` nonempty parts. The index retains every hit
 for each requested seed. Seed keys encode up to 32 bases injectively in a
-64-bit word; longer reads use seeds within that representation. Candidate
+64 bit word; longer reads use seeds within that representation. Candidate
 starts, band carriers, native route calls and placements follow the complete
 source and declared budget. Native cell coordinates and checked machine sizes
 bound the representation. Every returned placement includes one minimizing
@@ -405,59 +405,59 @@ Queries with ambiguity require an explicitly different question, such as the
 existing `reference_sequence_matches` compatibility rules. Source intake and
 complete certificates remain in memory; route work and output size grow with
 the declared search universe. This implementation does not yet provide a
-streaming chromosome-scale alignment service.
+streaming chromosome scale alignment service.
 
 `sequence_splice_discovery` requires no annotation or supplied junction list.
-It indexes every query overhang using an exact seed within the native 64-bit
+It indexes every query overhang using an exact seed within the native 64 bit
 key domain, verifies the full overhang and retains every matching exon extension.
 It declares transitions satisfying query order, reference order, intron lengths
-and transcript-oriented boundary motifs. Native routes minimize junction count;
+and transcript oriented boundary motifs. Native routes minimize junction count;
 the result retains all admitted complete exon chains, including unspliced
 placements. Supply `query_resource`, `reference_resource`, `strands`,
 `minimum_exon_bases`, `minimum_intron_bases`, `maximum_intron_bases`,
 `maximum_junctions`, `motifs` such as `["GT-AG", "GC-AG", "AT-AC"]`, and
-`evidence`. Coordinates are zero-based half-open in reference orientation. On
-the negative strand, the reported motif is reverse-complemented into transcript
+`evidence`. Coordinates are zero based half open in reference orientation. On
+the negative strand, the reported motif is reverse complemented into transcript
 orientation. Exons match literally, with zero exon edits. The caller's junction
-bound defines the universe; there is no additional four-junction policy.
+bound defines the universe; there is no additional four junction policy.
 Query prefix and exon coordinates index the query in reference orientation;
 on `-` they index its reverse complement. Original read intervals are obtained
 as `[m-end, m-begin)`. Unresolved reference tokens cannot form a literal DNA
 boundary motif, and are skipped without removing valid chains elsewhere.
-Reference-start interval lookup excludes only transitions outside the declared
+Reference start interval lookup excludes only transitions outside the declared
 intron range. An explicit traversal stack enumerates every admitted chain in
-source order. Query, exon, transition, comparison, junction and match-output
+source order. Query, exon, transition, comparison, junction and match output
 counts have no separate policy ceiling. Complete carriers and output retain
 their actual costs; repeated source patterns can produce many valid chains.
 
-`read_overlap_reconstruction` minimizes the length of a suffix-prefix cover of
+`read_overlap_reconstruction` minimizes the length of a suffix prefix cover of
 every source read, each used once in its retained orientation. Its request
 contains `resource`, positive `minimum_overlap`,
 `objective: "minimum_suffix_prefix_read_cover"`, and `evidence`. A native
-relational state records the used source-read identities and last read. Every
+relational state records the used source read identities and last read. Every
 transition costs the number of added bases. For fixed source and target states,
 a shorter admissible overlap is strictly dominated by the longest one; read
 order is still optimized globally. All original reads remain distinct, including
 equal spellings. Native directed reachability identifies impossible starts: a
 complete cover starting at read a must be able to reach every other read in the
 full overlap graph. `overlap_carrier` and `start_reachability` retain the carrier,
-attained paths and unreachable-target witnesses for those decisions.
+attained paths and unreachable target witnesses for those decisions.
 
 The derived search carrier declares every reachable prefix state from the starts
 that survive this necessary condition. This avoids constructing unreachable
 members of the full subset universe. `source_reads`, `source_read_mask` and
-`last_read` retain the exact original coordinates of each state; source-sized
+`last_read` retain the exact original coordinates of each state; source sized
 native packed bits support masks beyond one machine word. This carrier is a
-restriction of the formal subset-state search universe, and its retained steps
+restriction of the formal subset state search universe, and its retained steps
 include every feasible complete cover. It is not the earlier enumeration of
 all formal subsets, and its native carrier digest and arena addresses can change.
 Original read variables, overlap alternatives and minimum layouts are preserved.
 
-Native minimum-route histories certify complete prefix costs and attained suffix
-costs. Dead-end suffix costs are absent. The native suffix dual is checked on the
-boundary-closed viable vertex/edge restriction, retaining the original coordinate
+Native minimum route histories certify complete prefix costs and attained suffix
+costs. Dead end suffix costs are absent. The native suffix dual is checked on the
+boundary closed viable vertex/edge restriction, retaining the original coordinate
 maps. The complete prefix dual is checked on the full derived carrier. During
-heap-based layout traversal, native suffix witnesses exclude only prefixes that
+heap based layout traversal, native suffix witnesses exclude only prefixes that
 cannot attain the global minimum. Source, overlap, layout, spelling and visit
 counts have no separate policy ceiling. Dense overlap comparisons, branching
 state spaces and complete requested outputs retain their actual costs.
@@ -468,8 +468,8 @@ gluing with complete overlap coverage; restricting the glued sequence recovers
 every source read. Equal read strings retain separate source identities.
 `identifiable_sequence` means that all minimum layouts spell one sequence under
 these declared constraints. Interior containment, orientation changes and error
-correction require additional declarations. The shared-field Gram compares
-representative layouts on the read-cover transition carrier with identity
+correction require additional declarations. The shared field Gram compares
+representative layouts on the read cover transition carrier with identity
 metric. GADGET checks each representative's native endpoint field once; RexGraph
 computes the complete inherited Gram. Equal endpoint fields certify every pair's
 closed difference by linearity, without repeating the boundary calculation for
@@ -483,12 +483,12 @@ source inputs and a pipeline selecting these three methods.
 `rfc::runtime::WorkGraph`, with positive `concurrent_jobs` admitted against the
 observed native CPU capacity and
 `queries: [{"id": "search", "query": {...}}]`. Each child is a complete
-`gadget.assays.query.v1` request. Source-query jobs receive one native CPU worker;
+`gadget.assays.query.v1` request. Source query jobs receive one native CPU worker;
 a `native_query` receives its declared worker demand. The result follows declared
 job order after all owned jobs join. Recursive batches reject. Jobs retain only
-source-order receipts in the graph, with complete certificates staged under one
+source order receipts in the graph, with complete certificates staged under one
 private owner. The joined response reads every certificate in declaration order.
-The final complete JSON response still occupies memory and uses json-c's actual
+The final complete JSON response still occupies memory and uses `json-c`'s actual
 representation; no fixed certificate MiB ceiling is imposed here.
 
 These operations use the same command as other assay queries:
@@ -497,4 +497,4 @@ These operations use the same command as other assay queries:
 gadget assay-query --workspace workspace/workspace.json --request search.json
 ```
 
-The general `expression_allocations` recipe joins raw transcript matching, exon-compatible alignment evidence or unweighted equivalence classes to exact expression bounds and sample contrasts. See [the RNA evidence example](rna-evidence/README.md) for its full contract, coupled constraints and source-only replay.
+The general `expression_allocations` recipe joins raw transcript matching, exon compatible alignment evidence or unweighted equivalence classes to exact expression bounds and sample contrasts. See [the RNA evidence example](rna-evidence/README.md) for its full contract, coupled constraints and source only replay.

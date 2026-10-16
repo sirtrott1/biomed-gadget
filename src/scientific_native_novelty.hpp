@@ -12,7 +12,7 @@ struct NativeNoveltyBinding {
     Json declarations;
 };
 // Only canonical immutable plans are retained. Input fields, output vectors,
-// quotations and receipts are never cached. Clearing releases our plan owners.
+// quotations and receipts are never cached. Clearing releases the retained plan owners.
 class NativeNoveltyPlans {
     std::map<std::string, rfc::inference::PreparedNativeMetricNovelty> plans_;
     std::size_t applications_{}, preparations_{};

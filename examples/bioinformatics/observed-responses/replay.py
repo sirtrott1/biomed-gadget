@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce observed count/exposure, ordered-category and measured dose models."""
+"""Reproduce observed count/exposure, ordered category and measured dose models."""
 import argparse, csv, importlib.util, itertools, json, shutil
 from fractions import Fraction as Q
 from pathlib import Path

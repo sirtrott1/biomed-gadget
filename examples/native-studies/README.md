@@ -14,7 +14,7 @@ not supply a replacement. Construct these values with `NativeRecordValue`.
 Fields declare their stored key, context, channel, quantity, units, method,
 value type and byte evidence. Categorical fields cannot serve as linear amplitudes.
 
-Each document declares its id, path label, SHA-256 and `utf8` or `binary` format.
+Each document declares its id, path label, SHA256 and `utf8` or `binary` format.
 The separate `documents` argument holds matching ids and complete `ByteSpan`
 values from the producer's original raw sources. Admission compares every byte
 against that source. Evidence columns select spans within these documents.
@@ -31,16 +31,16 @@ admitted source; `cell_identity(grade, id)` resolves the corresponding stable ke
 
 | Evidence rule | Required binding |
 |---|---|
-| `spans` | Complete source-grade fields named by `document_index_field`, `start_field`, `end_field`, plus a `documents` dictionary |
+| `spans` | Complete source grade fields named by `document_index_field`, `start_field`, `end_field`, plus a `documents` dictionary |
 | `documents` | One or more original document ids covering the complete bytes |
 | `cofaces` | Adjacent `upper_grade`, whose directly evidenced original cofaces supply the spans |
 
 Set `occurrence_evidence` to `parent_cell`. Each occurrence retains its own
 identity, order, aspects and coefficient; its evidence resolves from the actual
 parent relation. `source_index()` reports complete counts, and `read_source()`
-returns caller-sized presentation pages without changing the mathematical carrier.
+returns caller sized presentation pages without changing the mathematical carrier.
 
-A context declares its id, strict-subcomplex block or ambient null block,
+A context declares its id, strict subcomplex block or ambient null block,
 explicit time or null time, and one metric per grade. Metrics use `identity` or
 `diagonal_field` with a stored field key. A diagonal field must have complete
 support on that grade and strictly positive exact values. Its values are reused
@@ -66,4 +66,4 @@ separately from that mathematical comparison.
 
 Build and run `gadget_native_derivation_tests` for an executable example covering
 annotation, evidence pages, field metrics, Hodge calculations, rejected invalid
-bindings, native-only relocation, replay and collection aliases.
+bindings, native only relocation, replay and collection aliases.

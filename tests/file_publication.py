@@ -1,4 +1,4 @@
-"""Exact byte-stream publication, real output failure, concurrency and stop checks."""
+"""Exact byte stream publication, real output failure, concurrency and stop checks."""
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os

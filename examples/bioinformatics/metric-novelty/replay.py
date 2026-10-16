@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay complete metric-relative changes and check them with independent Fractions."""
+"""Replay complete metric relative changes and check them with independent Fractions."""
 import argparse
 import copy
 import importlib.util
@@ -110,7 +110,7 @@ def dot(a,b): return sum((x*y for x,y in zip(a,b) if x and y),F(0))
 
 
 def solve(a,b):
-    """Separate exact Gauss-Jordan elimination; verifier only, never production."""
+    """Separate exact Gauss Jordan elimination; verifier only, never production."""
     rows = [list(row)+[value] for row,value in zip(a,b)]
     for k in range(len(b)):
         pivot = next(i for i in range(k,len(b)) if rows[i][k])

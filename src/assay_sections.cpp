@@ -279,7 +279,7 @@ Json assay_sections(const AssayWorkspace &workspace, const Json &request,
                 group.restriction.set(j, group.rows[j], 1);
             group.action = group.restriction.multiply(delta).multiply(group.inclusion);
             auto metric = Metric::diagonal(std::move(weights));
-            // The metric-orthogonal complement of ker(D) is im(M^-1 D^T).
+            // The metric orthogonal complement of ker(D) is im(M^-1 D^T).
             // Prepare the smaller native image frame, never an n by n projector.
             const auto image = group.action.transpose().image_frame();
             M frame(image.rows(), image.cols());

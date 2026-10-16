@@ -1,4 +1,4 @@
-"""Native-only replay after all compatibility views and external inputs disappear."""
+"""Native only replay after all compatibility views and external inputs disappear."""
 import hashlib
 import json
 import shutil

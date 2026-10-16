@@ -1,4 +1,4 @@
-"""Dictionary-defined exact maps, native branch bindings and detached lineage."""
+"""Dictionary defined exact maps, native branch bindings and detached lineage."""
 import copy
 import hashlib
 import json
@@ -89,7 +89,7 @@ for a in combined['assays']:
  for p,old in zip(a['partitions'],prior['partitions']):
   check(p['source_digest']==old['source_digest'] and p['source_namespace']==old['source_namespace'])
   check(Path(p['path']).suffix=='.rfcxs','Native study binding')
-# Independent six-coordinate before/after projection witnesses from the declaration.
+# Independent six coordinate before/after projection witnesses from the declaration.
 section=json.loads((root/'pipeline/sections/result.json').read_text())['assays'][0]
 # The selected original carrier retains the complete native interface result.
 derived_root=root/'pipeline/sections/workspace'
@@ -99,7 +99,7 @@ check(Q(proof['sections'][0]['residual_quadrance'])==Q(1420,51))
 check([Q(v) for f in proof['sections'][0]['fields'] for v in f['compatible']]==[Q(3),Q(84,17),Q(3),Q(191,51),Q(382,51),Q(443,51)])
 check(proof['sections'][1]['residual_quadrance']=='0' and proof['sections'][1]['complete'])
 check(not proof['sections'][2]['complete'] and proof['sections'][2]['fields'][0]['input'][0] is None)
-# Model-bound selection closes through every explicitly selected input branch.
+# Model bound selection closes through every explicitly selected input branch.
 intent=json.loads((root/'inputs/intent.json').read_text());catalog=run('recipe-catalog','--workspace',manifest,'--intent',root/'inputs/intent.json')
 check(next(x for x in catalog['recipes'] if x['id']=='combined')['dependencies']==['atac-stage','rna-stage'])
 proposal=dict(schema='gadget.pipeline.recipe.proposal.v1',action='recipes',source_digest=catalog['source_digest'],intent_sha256=catalog['intent_sha256'],goals=['support'])
@@ -127,7 +127,7 @@ run('replay-derivation','--workspace',root/'portable-derived/workspace.rfcxs','-
 # Each grouped branch remains reproducible from its nested original source files.
 for name in ['rna','atac']:
  run('replay-derivation','--workspace',root/'portable-bound/workspace.rfcxs','--assay',name,'--out',root/('replayed-'+name))
-# Binding also retains a nontrivial three-grade source and selected physical bytes.
+# Binding also retains a nontrivial three grade source and selected physical bytes.
 def source_record(name,value):
  p=root/name;p.write_text(value);return dict(path=name,sha256='sha256:'+hashlib.sha256(p.read_bytes()).hexdigest())
 spec=copy.deepcopy(json.loads((root/'inputs/import.json').read_text()));spec['assays']=spec['assays'][:1]

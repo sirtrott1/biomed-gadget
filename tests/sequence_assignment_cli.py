@@ -1,4 +1,4 @@
-"""Independent allocation-factor and complete indexed sequence contracts."""
+"""Independent allocation factor and complete indexed sequence contracts."""
 import argparse
 import hashlib
 import itertools
@@ -232,7 +232,7 @@ def main():
                           source=dict(path=repeated.name,sha256='sha256:'+hashlib.sha256(repeated.read_bytes()).hexdigest())))
     long_size=20065
     resource('long-reference.fa',{'long':'A'*long_size});resource('long-query.fa',{'long':'A'*long_size})
-    # Many source reads, and enough placements to cross the old 10000-result cap.
+    # Many source reads, and enough placements to cross the old 10000 result cap.
     resource('many-query.fa',{'read'+str(i):'A' for i in range(1025)})
     salmon=root/'classes.eq'; salmon.write_text('5001\n1\n'+'\n'.join(names)+'\n5001 '+ ' '.join(map(str,range(5001)))+' 17\n')
     resources.append(dict(id='classes',format='salmon_eq',method='Unweighted declared class source',source=dict(path=salmon.name,sha256='sha256:'+hashlib.sha256(salmon.read_bytes()).hexdigest())))

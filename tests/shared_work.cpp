@@ -112,7 +112,7 @@ int main(int argc, char **argv) {
         branch.at("on_false").at("query").set("operation", Json::string("invent"));
         rejects([&] { execute_workflow(study, invalid, models, cpu); });
         check(model_calls == 1, "unadmitted branch performed work");
-        // A model-supplied literal claim is tied to its input certificate. The
+        // A model supplied literal claim is tied to its input certificate. The
         // graph checks it and takes a repair branch when it contradicts data.
         auto claimed = query(
             R"({"schema":"gadget.scientific.workflow.v1","id":"checked-model-claim","source_digest":"","limits":{"depth":12,"nodes":32,"model_calls":1,"parallel_workers":2},"definitions":[],"entry":{"id":"root","type":"graph","workers":2,"steps":[{"id":"coverage","after":[],"node":{"id":"coverage","type":"query","query":{"operation":"coverage","field":"baseline.partial"}}},{"id":"proposal","after":["coverage"],"node":{"id":"proposal","type":"model","role":"claimant","prompt":"Declare a literal claim","context":["coverage"]}},{"id":"checked","after":["coverage","proposal"],"node":{"id":"checked","type":"check_claims","from":"coverage","claims_from":"proposal"}},{"id":"repair","after":["checked"],"node":{"id":"repair","type":"branch","from":"checked","condition":{"path":["contradicted"],"value_type":"count","comparison":"greater","value":0},"on_true":{"id":"reinspect","type":"query","query":{"operation":"inspect"}},"on_false":{"id":"clean","type":"query","query":{"operation":"coverage","field":"baseline.G"}}}}]}})");

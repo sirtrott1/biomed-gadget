@@ -96,7 +96,7 @@ Workspace load_pager(const fs::path &root) {
     }
     const std::map<std::string, std::string> directories = {
         {"AD", "pag data/Alzheimers"}, {"HD", "pag data/Huntingtons/huntington_all_pager_files"}};
-    // These four zero-byte exports are part of the supplied legacy source.
+    // These four zero byte exports are part of the supplied legacy source.
     const std::set<std::string> expected_empty = {
         "pag data/Alzheimers/MOX010352_genes.csv", "pag data/Alzheimers/TAX019115_genes.csv",
         "pag data/Alzheimers/TAX026391_genes.csv",

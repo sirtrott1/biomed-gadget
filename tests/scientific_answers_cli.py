@@ -1,4 +1,4 @@
-"""Researcher-bound answer coverage, native conflict cores and retained outputs."""
+"""Researcher bound answer coverage, native conflict cores and retained outputs."""
 import copy
 import hashlib
 import itertools
@@ -85,7 +85,7 @@ contract_schema=json.loads((Path(__file__).resolve().parents[1]/'schemas/pipelin
 declared_observables=contract_schema['properties']['requirements']['items']['properties']['observable']['enum']
 check(set(declared_observables)=={o['id'] for o in catalog['observables']})
 
-# Exhaustively compare native coverage with an independent set-based oracle.
+# Exhaustively compare native coverage with an independent set based oracle.
 for n in range(1,len(recipes)+1):
     for names in itertools.combinations([r['id'] for r in recipes],n):
         answer=admit(path,catalog,list(names))
@@ -189,7 +189,7 @@ p,c=prepare(legacy)
 check(c['scientific_admission']['status']=='untyped')
 check(admit(p,c,['support-A'],out='manual-legacy')['scientific_admission']['status']=='untyped')
 check(not (root/'manual-legacy/answers.json').exists())
-# Long questions have no inherited 4096-byte policy; native string representation applies.
+# Long questions have no inherited 4096 byte policy; native string representation applies.
 long=copy.deepcopy(intent);long['answer_contract']['question']='Observe declared support. '+('alpha beta '*500)
 p,c=prepare(long)
 check(admit(p,c,['support-A','support-B','green-A'],prompt=long['answer_contract']['question'])['status']=='admitted')
@@ -232,15 +232,15 @@ check([Fraction(v) for field in section['fields'] for v in field['compatible']]=
 shutil.move(root/'staged-source',root/'moved-source')
 shutil.copytree(root/'staged',root/'detached')
 verify_receipts(root/'detached',result)
-# No former 16/32 requirement cutoff; all obligations and source-scoped witnesses retained.
+# No former 16/32 requirement cutoff; all obligations and source scoped witnesses retained.
 many=copy.deepcopy(intent)
 many['answer_contract']['requirements']=[dict(id='observation-'+str(i),observable='field_support',bindings=['support-A']) for i in range(600)]
 p,c=prepare(many)
 check(c['scientific_admission']['native']['cells']==600)
 check(admit(p,c,['support-A'])['scientific_admission']['native']['assignment']==[1]*600)
 check(not list(root.glob('.gadget-pipeline-*')))
-# Typed coverage references every complete consensus family, including no-family
-# evidence. Reuse the independent original-read oracle and its own fixtures.
+# Typed coverage references every complete consensus family, including no family
+# evidence. Reuse the independent original read oracle and its own fixtures.
 from read_consensus_cli import qualify as qualify_consensus
 consensus_root = root/'consensus-answers'
 consensus_oracle_checks = qualify_consensus(binary, consensus_root)

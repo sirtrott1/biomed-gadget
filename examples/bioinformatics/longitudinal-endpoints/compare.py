@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare reported-observation bounds with SciPy's Kaplan-Meier estimate."""
+"""Compare reported observation bounds with SciPy's Kaplan-Meier estimate."""
 import csv,json,sys
 from pathlib import Path
 import scipy

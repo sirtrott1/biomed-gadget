@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the complete declared assay-section example using a supplied GADGET binary."""
+"""Run the complete declared assay section example using a supplied GADGET binary."""
 import argparse
 import json
 import shutil

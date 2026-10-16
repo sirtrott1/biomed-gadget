@@ -158,7 +158,7 @@ def run(binary,root):
     batch_protocol['jobs'].append(dict(id='coverage',query=dict(operation='coverage',field='all.A_change'),description='Joint contrast support'))
     protocol_file.write_text(json.dumps(batch_protocol));assert len(execute(binary,root/'study/study.json',protocol_file,batch,resume=True)['jobs'])==2
     # Display files do not own completion or the original protocol. Resume
-    # directly from the checkpoint and source-bound native plan publications.
+    # directly from the checkpoint and source bound native plan publications.
     for name in ('manifest.json','protocol.json','catalog.json','job-0.json','job-1.json'):
         (batch/name).unlink()
     batch_protocol['jobs'].append(dict(id='inspection',query=dict(operation='inspect'),description='Native source binding'))

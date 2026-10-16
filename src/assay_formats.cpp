@@ -270,7 +270,7 @@ Matrix read_matrix(const fs::path &root, const Json &spec) {
             }
         }
         require(!records.next(record), "Matrix Market entry count");
-        // Explicit zeros also participate in duplicate and missing-mask checks.
+        // Explicit zeros also participate in duplicate and missing mask checks.
         // Sorting evidence indices does not change the retained source bytes.
         for (auto &column : reported) {
             std::sort(column.begin(), column.end());

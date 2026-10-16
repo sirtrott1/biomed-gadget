@@ -1,11 +1,11 @@
 # Scientific annotations and reproducible RNA answers
 
 This example links a research question to retained source records, then runs the
-existing RNA expression, read-quality and measurement-support methods. Source
+existing RNA expression, read quality and measurement support methods. Source
 references identify RNA features, quantitative fields, the whole assay context,
 individual relation occurrences, transcript records and a FASTQ read. All inputs
-are constructed method examples. The transcript-to-gene declaration belongs to
-the read-evidence protocol; the matrix retains its separate native namespace.
+are constructed method examples. The transcript to gene declaration belongs to
+the read evidence protocol; the matrix retains its separate native namespace.
 
 ```sh
 python3 examples/bioinformatics/source-context/replay.py \
@@ -15,7 +15,7 @@ python3 examples/bioinformatics/source-context/replay.py \
 The driver stages only the files used by this protocol from `rna-evidence/` and
 `staged-assays/`, together with `relations.json`. Its output includes those seven
 original inputs, their import declaration, a portable native workspace, the
-source-context request, annotation proposals and receipts, a typed pipeline
+source context request, annotation proposals and receipts, a typed pipeline
 intent and the completed numerical results. It relocates the workspace and
 results, checks identical source references, and regenerates the expression
 analysis from its retained lineage. Reproduction needs the GADGET executable and
@@ -28,7 +28,7 @@ coefficients −1 and +1, and an inactive `f2` occurrence whose realized coeffic
 is zero. Annotation references retain all three occurrences. Their cancellation
 in the boundary leaves their source identities and roles available for inspection.
 
-Read-evidence analysis retains every admissible assignment to the supplied
+Read evidence analysis retains every admissible assignment to the supplied
 transcripts. The declared geneA total increases by one assigned read under every
 admissible allocation. The individual transcript changes remain unresolved.
 The quality method reports the stored baseline quality symbols. The support
@@ -36,11 +36,11 @@ methods report the matrix's supplied coordinates. `answers.json` links each
 requested output to its complete producing certificate and relevant source
 mentions.
 
-A source-context request uses `gadget.assays.source.context.v1`. Each selected
+A source context request uses `gadget.assays.source.context.v1`. Each selected
 native target names its assay, partition and study digest, together with its
 cell, occurrence, field or context selector. A physical resource target names
 the original artifact hash and, optionally, its decoded record index. Evidence
-quotes use UTF-8 byte offsets. Resource-record quotes must lie within that
+quotes use UTF8 byte offsets. Resource record quotes must lie within that
 record's original span. The context catalog includes resolved owners, native
 field coordinates and support, incidence roles, source hashes and verified spans.
 
@@ -66,16 +66,16 @@ Annotation receipts mark interpretations as prospective and record
 was quoted. Evaluating the interpretation remains a scientific task. A
 researcher can retain the proposal in a pipeline intent's optional
 `source_context` declaration and explicitly map its mention IDs to typed answer
-requirements. Planning and execution re-admit that declaration; completed
+requirements. Planning and execution re admit that declaration; completed
 answers retain the full mapping. The numerical methods use their original
 parameters, fields, metrics and source declarations.
 
 The original evidence and every selected target remain available. Model context
-and output tokens are caller-declared runtime resources. The annotation API has
-no separate target, mention or evidence-count ceiling.
+and output tokens are caller declared runtime resources. The annotation API has
+no separate target, mention or evidence count ceiling.
 
 Model responses retain the actual catalog shown to the model and its byte hash,
-along with the system-prompt hash. Compact annotation views keep every selected
+along with the system prompt hash. Compact annotation views keep every selected
 target and quote while omitting the repeated request. Recipe views reference
 sealed evidence and retain target descriptors, prospective mentions and the
 researcher's mappings. Resource records share one decoded source during a request.

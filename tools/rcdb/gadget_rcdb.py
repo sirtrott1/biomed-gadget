@@ -255,7 +255,7 @@ def read_compressed_publication(path, *, gadget, max_encoded_bytes, max_output_b
 
 
 def install_compressed_format(*, gadget, max_encoded_bytes, max_output_bytes):
-    """Register RCDB-framed RFCXS files with RexGraph's format registry."""
+    """Register RCDB framed RFCXS files with RexGraph's format registry."""
     from rexgraph.io import register_format
     _positive_byte_budget(max_encoded_bytes, "encoded")
     _positive_byte_budget(max_output_bytes, "decoded")
@@ -276,7 +276,7 @@ def install_compressed_format(*, gadget, max_encoded_bytes, max_output_bytes):
 
 
 def validate_publication(raw, *, gadget):
-    """Validate and re-encode an RFCXS publication with GADGET's native reader."""
+    """Validate and re encode an RFCXS publication with GADGET's native reader."""
     if type(raw) is not bytes or not raw.startswith(_MAGIC):
         raise ValueError("GADGET publication requires RFCXS bytes")
     with TemporaryDirectory(prefix="gadget-rcdb-") as folder:
@@ -344,7 +344,7 @@ def read_publication(store, record_id, *, version=None, as_of=None, valid_at=Non
 
 
 def install_rcql_operator():
-    """Register typed current/versioned native-byte retrieval on an RCDB source."""
+    """Register typed current/versioned native byte retrieval on an RCDB source."""
     from rcql import Domain, Exactness, OperatorSignature, RCType, TypePattern, ValueKind
     from rcql.execution_trace import record_method
     from rcql.operators import register as register_operator
@@ -493,7 +493,7 @@ def install_rcql_executor(*, gadget):
 
 
 def install_format(*, gadget):
-    """Register RFCXS admission with RexGraph's existing file-format registry."""
+    """Register RFCXS admission with RexGraph's existing file format registry."""
     from rexgraph.io import register_format
     binary = str(Path(gadget).resolve(strict=True))
     name, extensions = "gadget-native", (".rfcxs",)

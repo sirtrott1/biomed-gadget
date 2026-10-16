@@ -1,4 +1,4 @@
-"""Version-bound RCQL execution of a binary GADGET assay request."""
+"""Version bound RCQL execution of a binary GADGET assay request."""
 from contextlib import closing
 import importlib.util
 from pathlib import Path

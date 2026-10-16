@@ -1,10 +1,10 @@
 # Controlled ChIP read coverage
 
-This example compares two EGR1 ChIP libraries with two input-control libraries
+This example compares two EGR1 ChIP libraries with two input control libraries
 from the HudsonAlpha ENCODE K562 experiment. It retains every chromosome 21
 read interval in the four complete published alignment archives and uses the
 general `controlled_coverage` operation. The library identifiers and data
-preparation belong to this example; the runtime method accepts caller-declared
+preparation belong to this example; the runtime method accepts caller declared
 resources, samples, controls and contrasts.
 
 ## Data and design
@@ -17,7 +17,7 @@ the analysis does not infer additional pairing between the four libraries.
 The adapter retains the original directory listing, file declarations,
 publisher checksums and complete compressed alignment files.
 
-The measured intervals are the original 25-base mapped reads. The separately
+The measured intervals are the original 25 base mapped reads. The separately
 reported fragment length is not used to extend or shift them. Each original
 row contributes one read, including duplicate rows. BED scores are retained
 as original bytes and are not used as counts. The reference is the complete
@@ -31,15 +31,15 @@ as original bytes and are not used as counts. The reference is the complete
 | Input replicate 2 | 14,363,052 | 252,523 | 6,313,075 |
 
 Chromosome 21 is a declared physical scope, not a random sample or a substitute
-for genome-wide qualification. The adapter scans every row of each complete
+for genome wide qualification. The adapter scans every row of each complete
 archive, checks the pinned SHA256 and publisher MD5, and writes selected rows
 without changing their bytes or order. No read depth normalization, duplicate
 removal or fitted significance model is applied. All sample divisors are one.
 
 ## Relational source and fields
 
-GADGET builds the grade-zero cells from the complete endpoint partition of the
-observed interval union. Each original interval is a distinct grade-one cell;
+GADGET builds the grade zero cells from the complete endpoint partition of the
+observed interval union. Each original interval is a distinct grade one cell;
 its ordered boundary occurrences name the physical cells it covers. Overlapping
 reads and duplicate reads remain separate relations. An interval with many
 members retains that arity directly. No pairwise clique or inferred higher
@@ -49,7 +49,7 @@ The complete source, field carriers, measured support and original byte spans
 are published through RexGraphCpp. A sample field stores the read coverage of
 each physical cell. A zero is measured within the declared union; positions
 outside that union are outside this carrier. Original strand values are
-retained, while this query declares strand-independent coverage.
+retained, while this query declares strand independent coverage.
 
 For physical cell lengths `M`, the two input fields form the declared control
 matrix `C`. RexGraphCpp obtains an independent image frame `F` from those actual
@@ -63,8 +63,8 @@ Cᵀ M residual = 0
 ⟨y, y⟩M = ⟨represented, represented⟩M + ⟨residual, residual⟩M
 ```
 
-All coefficients are rational. The runtime uses canonical image-frame and
-metric-solve operations; it does not fit an embedding or compute an eigensystem.
+All coefficients are rational. The runtime uses canonical image frame and
+metric solve operations; it does not fit an embedding or compute an eigensystem.
 The three declared fields `y` are EGR1 replicate 1, EGR1 replicate 2, and their
 difference. Each result retains the complete input, represented and residual
 fields, frame coordinates, quadrances and residual Gram matrix.
@@ -89,7 +89,7 @@ multiway membership in the physical partition.
 | EGR1 replicate 2 | 9,363,280 | 1,647,481.834 | 7,715,798.166 | 17.595% |
 | Replicate 1 minus replicate 2 | 26,219,936 | 896,617.008 | 25,323,318.992 | 3.420% |
 
-Quadrance uses squared read-count units times reference bases. Displayed decimals
+Quadrance uses squared read count units times reference bases. Displayed decimals
 are rounded; the publication and verifier retain rational coefficients and
 check the identities exactly. The two ChIP libraries have different spatial
 coverage fields, and most of their difference remains outside the declared input
@@ -100,7 +100,7 @@ depths. It does not distinguish the experimental causes of their disagreement.
 
 Build GADGET against the independent RexGraphCpp project as described in the
 [build instructions](../../README.md#build-and-test). The CPU preset builds both
-the application and the verifier. The following commands use repository-relative
+the application and the verifier. The following commands use repository relative
 paths and download the complete public inputs into a new data directory.
 
 ```sh
@@ -151,7 +151,7 @@ It reconstructs every physical cell by an event sweep, checks every interval
 identity and byte span, and checks every ordered boundary occurrence. It then
 verifies all sample fields, the complete declared control span, projection
 coordinates, orthogonality, mass conservation, metric decomposition and
-cross-contrast residual Gram. It also checks the original request and workspace
+cross contrast residual Gram. It also checks the original request and workspace
 bytes and exact canonical archive reencoding. The same executable accepts other
 BED workspaces, rational divisors, dependent controls, an optional intercept,
 separate strands and any declared number of samples or contrasts.

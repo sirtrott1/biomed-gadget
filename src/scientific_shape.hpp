@@ -115,7 +115,7 @@ inline PhysicalShapeFit physical_shape_fit(const rfc::numeric::ExactMatrix &norm
     }
     if (!seed.empty() && admit(seed))
         return out;
-    // Complete rank-derived independent affine faces. No truncation or policy
+    // Complete rank derived independent affine faces. No truncation or policy
     // ceiling. Stop as soon as the native witness proves global optimality.
     for (std::size_t k = 1; k <= std::min(order.size(), gram.size()); ++k) {
         std::vector<std::size_t> chosen(k);

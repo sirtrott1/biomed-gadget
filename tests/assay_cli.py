@@ -1,4 +1,4 @@
-"""Independent finite-allocation, physical-coverage, axis/support and native-dispatch contracts."""
+"""Independent finite allocation, physical coverage, axis/support and native dispatch contracts."""
 import copy
 import hashlib
 import itertools
@@ -85,7 +85,7 @@ def main():
     controls=dict(operation='controlled_pairings',fields=['all.g1','all.g2'],endpoint='all.g3',controls=['all.person-A'],selection=[],support='joint_reported',metric='identity',intercept=True)
     controlled=native('cells',controls)['result'];assert controlled['n']==4 and controlled['control_rank']==2
     checks+=2
-    # Multi-core native field work and independent partition results are equal.
+    # Multi core native field work and independent partition results are equal.
     runq=dict(schema='gadget.assays.query.v1',operation='native_query',assay='dense',query={**paired,'workers':2},concurrent_jobs=2)
     run=request('run.json',runq,'assay-query','--workspace',workspace,'--out',root/'run')
     assert len(run['results'])==1 and run['results'][0]['workers']==2
@@ -95,7 +95,7 @@ def main():
     higher_green=dict(operation='green_response',context='all',field='all.flux',**{'lambda':'1'},interior=[0],coordinates=dict(id='7100',cells=['1000000','1000001','1000002']))
     for a,expected in [('open',Q(1)),('filled',Q(1,4))]:
         response=native(a,higher_green)['result'];assert [Q(v['value']['rational']) for v in response['field']]==[expected]*3;checks+=3
-    # Cross-assay transport uses declared identity maps; no equal-shape shortcut.
+    # Cross assay transport uses declared identity maps; no equal shape shortcut.
     mapping=dict(domain_quantity='read_count',domain_units='counts',codomain_quantity='read_count',codomain_units='counts',method='authored identity on the same feature identities',evidence='Declared fixture correspondence',entries=[dict(left_id=f'g{i}',right_id=f'g{i}',coefficient='1') for i in range(1,4)])
     transfer=query('field_transfer',left=dict(assay='dense',partition=0,field='all.L1'),right=dict(assay='sparse',partition=0,field='all.L1'),map=mapping,metric='identity')['result']
     assert Q(transfer['residual_quadrance'])==0 and transfer['map_rank']==3 and transfer['map_kernel_dimension']==0

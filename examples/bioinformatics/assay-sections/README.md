@@ -8,24 +8,24 @@ comparison costs illustrate the method; they are not experimental calibrations.
 
 The five sections represent two complete observations, one incomplete
 observation, a measured zero field and an entirely unobserved field. The interface
-family includes two comparisons, a three-assay balance, two cancelling occurrences,
+family includes two comparisons, a three assay balance, two cancelling occurrences,
 an inactive occurrence and an occurrence with zero magnitude. All are retained.
 The same operation accepts any number of declared views, observables and sections.
 
 ## Mathematics
 
-Each view is a grade-zero identity in a declared interface complex. Its stalk
+Each view is a grade zero identity in a declared interface complex. Its stalk
 contains all coordinates of the selected quantitative field from that view's
 actual native source grade. These interface grades describe the comparison
 construction; they do not relabel the biological source complex. Each interface
-is a primary grade-one relation of arbitrary arity. No pairwise expansion or
+is a primary grade one relation of arbitrary arity. No pairwise expansion or
 higher biological relation is inferred.
 
 For occurrence `j`, the caller supplies a restriction matrix `rho_j` from a view
 stalk to the interface's observable stalk. Its contribution to the cellular sheaf
 coboundary is `e_j (1 - 2 o_j) q_j rho_j`, using its original existence,
 orientation and magnitude. Repeated occurrences remain distinct even when their
-contributions cancel. The three-assay example declares a signed balance, rather
+contributions cancel. The three assay example declares a signed balance, rather
 than pairwise equality of its inputs.
 
 RexGraph's `LinearStalkBundle` and `LinearCellularSheaf` assemble this coboundary
@@ -51,7 +51,7 @@ dimension. They are joint directions, so coefficients cannot be chosen
 independently for each view. Row dependencies satisfy `D^T L = 0` and retain
 every relation among the assessed constraints. Their carriers name the original
 selected coordinate and row maps. Omitting this output selection preserves the
-earlier projection-only contract and exact replay of existing native archives.
+earlier projection only contract and exact replay of existing native archives.
 
 A comparison cost across different measurement units must be declared. Each view
 metric names its measurement domain and the common quadrance codomain. The
@@ -64,7 +64,7 @@ An interface coordinate is assessed only when every nonzero, active occurrence
 map dependency is observed. This rule applies before cancellation of repeated
 occurrences. Missing measurements remain JSON `null` and remain absent in the
 published native tensor. Supported zeros participate in the calculation.
-Inactive and zero-magnitude occurrences retain their maps but introduce no
+Inactive and zero magnitude occurrences retain their maps but introduce no
 numerical dependency.
 
 For an incomplete section, the projection uses only observed coordinates and
@@ -90,14 +90,14 @@ under their different declared costs. The residuals are 3 and -1. The complete
 The partial field has zero residual on the assessed domain, but its missing RNA
 coordinate leaves two rows unassessed. It is not reported as a complete compatible
 section. An unobserved field similarly has zero residual because no measured
-coordinate participates. Only the inactive and zero-magnitude rows are assessed.
+coordinate participates. Only the inactive and zero magnitude rows are assessed.
 This distinguishes an observed agreement from absence of comparable measurements.
 
 ## Run and reproduce
 
 Build GADGET against the canonical RexGraph C++ checkout as described in the
 [root README](../../../README.md). The mathematical example needs no model or
-optional file-format library. From the GADGET repository:
+optional file format library. From the GADGET repository:
 
 ```sh
 python3 examples/bioinformatics/assay-sections/replay.py \
@@ -124,12 +124,12 @@ a separate native publication inside the archive.
 
 `assay_sections` is available in the `single_cell`, `multi_omics` and `custom`
 pipeline profiles. Scientists supply the measurement maps and metrics and select
-which sections to examine. Existing count-preserving aggregation can first form
+which sections to examine. Existing count preserving aggregation can first form
 specified specimen or cell groups. Unrelated measurements need no comparison
 unless the scientific question and declared maps call for one.
 
 `intent.json` binds the example's method and support inspection for the existing
-local-model planner. A model may select those bindings; GADGET checks the source
+local model planner. A model may select those bindings; GADGET checks the source
 and intent hashes and includes their required dependencies. With a build that
 enables local llama.cpp inference and a supplied local model:
 
@@ -145,7 +145,7 @@ build/gadget/gadget plan-recipes \
 Model selection does not define a new measurement map or populate missing values.
 The declared numerical calculation can run without a model. Repeated sections
 with identical support share a prepared exact solve. Native CPU tiles execute
-independent section actions with joined completion and one caller-inclusive
+independent section actions with joined completion and one caller inclusive
 reservation. The factorized system has the constraint rank as its dimension;
 complete source fields and result coordinates are retained.
 

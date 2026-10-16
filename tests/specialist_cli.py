@@ -1,4 +1,4 @@
-"""Selected specialist recipes and independent exact assay-map qualification."""
+"""Selected specialist recipes and independent exact assay map qualification."""
 import argparse
 import copy
 import hashlib
@@ -134,7 +134,7 @@ def qualify(binary, root):
         check(actual['execution']['required_source_observations']==3,'Unreferenced observations not materialized')
         check(actual['execution']['intermediate_coordinates']==0 and actual['execution']['sparse_map_owner']=='rfc::numeric::PreparedSparseExactMap','Native selected maps retain no dense source intermediate')
         check(actual['execution']['first_map']=='features','Apply the original stored feature carrier map')
-    # A smaller target observation axis retains complete-support semantics,
+    # A smaller target observation axis retains complete support semantics,
     # including signed cancellation with an absent required input.
     compact={**query,'observation_groups':[group('merged',[('x',1),('y',-1),('z',1)])], 'workers':workers}
     reversed_order=execute('observation-first',manifest,compact)
@@ -236,7 +236,7 @@ def qualify(binary, root):
     run('assay-query','--workspace',partial,'--request',save('partial-transfer.json',dict(
         schema='gadget.assays.query.v1',operation='field_transfer',**invalid)),fail=True)
 
-    # A sequence recipe produces a true native grade-one carrier. Dependent
+    # A sequence recipe produces a true native grade one carrier. Dependent
     # recipes retain the measured loop count and original signed occurrences.
     resource=dict(id='reads',format='fasta',source=source('reads.fa','>a\nAACG\n>b\nAACT\n>c\nAAAA\n>d\nAAAA\n'),method='Authored sequences')
     sequence=workspace('sequence-workspace',[],[resource])

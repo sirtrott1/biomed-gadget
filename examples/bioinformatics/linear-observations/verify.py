@@ -1,4 +1,4 @@
-"""Independent Fraction solve and original-coordinate observation checks."""
+"""Independent Fraction solve and original coordinate observation checks."""
 import json
 import csv
 import hashlib

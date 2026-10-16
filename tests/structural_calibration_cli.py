@@ -148,7 +148,7 @@ def main(binary,root):
     # A denominator can vanish in only part of the complete law. Do not drop states.
     unstable=copy.deepcopy(q);unstable.pop('uncertainty');unstable['fields']=['all.probe'];unstable['hypotheses']=[dict(id='curl-probe',field='all.probe',statistic='probe_fraction',sector='curl',probes=['all.A'])]
     v=execute(unstable)['result'];check(v['status']=='undefined_family_statistic' and len(v['states'])==24 and v['hypotheses'][0]['reference_tail_mass'] is None)
-    # Cardinality beyond 64-bit addressability can be inspected without enumeration.
+    # Cardinality beyond 64 bit addressability can be inspected without enumeration.
     demo.source.authored(root/'wide/inputs',arity=21)
     command('import-assays','--spec',root/'wide/inputs/import.json','--out',root/'wide/workspace')
     huge=demo.query(['all.object_A'],[dict(id='all',relation='relation:assertion-0',cells=[f'feature-{i}' for i in range(21)])],[dict(id='full',field='all.object_A',statistic='sector_fraction',sector='full')])

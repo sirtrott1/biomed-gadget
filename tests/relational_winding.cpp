@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
             record.set("pairings", values);
             readings.push(record);
         }
-        // Positive control: a primary relation direction genuinely excites
+        // Positive control: a primary relation direction excites
         // this frame. Empty harmonic output cannot pass the test.
         bool excited = false;
         for (std::size_t i = 0; i < rows && !excited; ++i) {

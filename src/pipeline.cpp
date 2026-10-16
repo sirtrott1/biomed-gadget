@@ -77,7 +77,7 @@ struct Recipe {
     bool native{}, materializable{}, binding{};
 };
 // Recipes assemble existing contracts. Scientific operators and source
-// materialization remain in their existing RexGraph-backed services.
+// materialization remain in their existing RexGraph backed services.
 const std::map<std::string, Recipe> recipes{
     {"quality", {"read_quality"}},
     {"coverage", {"coverage", true}},
@@ -558,7 +558,7 @@ Json pipeline_model_catalog(const AssayWorkspace &workspace) {
     for (std::size_t i = 0; i < catalog.at("resources").size(); ++i)
         resources.push(catalog.at("resources").at(i).at("declaration"));
     out.set("source_digest", Json::string(workspace.digest()));
-    // The current model decoder proposes query steps, not default-recipe goal
+    // The current model decoder proposes query steps, not default recipe goal
     // objects. Present that executable interface; recipe configurations have
     // their own schema and must not be confused with workspace operations.
     const auto declared_profiles = pipeline_profiles();
@@ -659,7 +659,7 @@ RecipeIntent prepare_intent(const AssayWorkspace &workspace, const Json &declara
     prepared.defaults.set("goals", goals);
     prepared.indices = std::move(earlier);
     // The same compiler checks all declared bindings, even currently unselected
-    // ones. Operation-level numerical admission remains with its existing owner.
+    // ones. Operation level numerical admission remains with its existing owner.
     if (!prepared.names.empty())
         (void)default_pipeline(workspace, prepared.defaults);
     prepared.catalog = Json::object();
@@ -765,7 +765,7 @@ Json admit_recipe_proposal(const AssayWorkspace &workspace, const Json &intent,
             selected[index] = true;
         }
         // Every edge names an earlier binding. A reverse pass includes the full
-        // prerequisite closure without recursion or a fixed graph-depth limit.
+        // prerequisite closure without recursion or a fixed graph depth limit.
         for (std::size_t i = selected.size(); i > 0; --i)
             if (selected[i - 1])
                 for (const auto dependency : prepared.dependencies[i - 1])

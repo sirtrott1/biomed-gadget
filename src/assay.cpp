@@ -163,7 +163,7 @@ RelationEvidence relation_evidence(const Json &declaration) {
     return out;
 }
 // The packet has one actual source carrier. Partitioning is a storage/execution
-// policy, not an assertion that per-partition topology equals whole-carrier topology.
+// policy, not an assertion that per partition topology equals whole carrier topology.
 Json make_packet(const fs::path &destination, Matrix &matrix, const Json &spec,
                  const Json &design, std::size_t begin, std::size_t end,
                  std::uint64_t namespace_key, const Json &relation_data,

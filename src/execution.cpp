@@ -115,7 +115,7 @@ rfc::approximation::DenseMatrix cross_relation_gram(const Execution &left, const
     (void)left.resources_->readmit();
     auto reservation = left.resources_->coordinator().reserve(1, dense_bytes(a.domain_size(), b.domain_size()));
     // Executions are built from the same declared ambient identities; no
-    // dimension-only identification is used by the calling biomedical recipe.
+    // dimension only identification is used by the calling biomedical recipe.
     rfc::approximation::DenseMatrix result(a.domain_size(), b.domain_size());
     for (std::size_t j = 0; j < b.domain_size(); ++j) {
         auto column = b.apply(rfc::numeric::SparseRationalVector::basis(b.domain_size(), j));

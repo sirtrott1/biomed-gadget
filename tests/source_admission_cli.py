@@ -1,4 +1,4 @@
-"""Versioned span/quote, retained-source, budget and malformed-table contracts."""
+"""Versioned span/quote, retained source, budget and malformed table contracts."""
 import copy,json,random,shutil,subprocess,sys
 from pathlib import Path
 repo=Path(__file__).resolve().parents[1]
@@ -104,7 +104,7 @@ for i,change in enumerate([dict(evidence_profile='invented'),dict(intake=dict(ma
 raw=(spec_path.parent/'table.tsv').read_bytes();q={**original,'evidence_profile':'document_spans_v2','intake':dict(max_source_bytes=len(raw),max_record_bytes=max(map(len,raw.splitlines())),max_token_offsets=7*5)}
 p=replay.save(spec_path.parent/'exact-budget.json',q)
 replay.run(binary,'import-table','--spec',p,'--out',root/'exact-budget')
-# Legacy declarations still require quotes; version-two supplied quotes are checked.
+# Legacy declarations still require quotes; version two supplied quotes are checked.
 declaration=json.loads((spans/'study.json').read_text())
 for i,change in enumerate(['legacy','quote','unknown','bounds','empty','utf8','hash']):
  d=copy.deepcopy(declaration);span=d['cells'][0]['evidence'][0]

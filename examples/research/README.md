@@ -33,7 +33,7 @@ descriptive quantity. It supplies no sampling significance or causal effect.
 ordered visits. It constructs a common vocabulary of the observed signs of
 their exact changes. Each joint state is a relation containing one signed
 change category per channel. Four observed states can support an explicitly
-declared coordinate-exchange identity. These analytical identities supply the
+declared coordinate exchange identity. These analytical identities supply the
 higher boundary; they are not inferred biological interactions. Magnitudes
 remain in the complete patient change fields and their state aggregates.
 
@@ -45,11 +45,11 @@ dimension is rank(H_left) + rank(H_right) − rank([H_left; H_right]), where the
 two maps project the same shared cycles into the intervals' harmonic spaces.
 Matching Betti numbers alone does not identify persistent classes.
 
-Optional `controls` remove the same declared patient-space span from each
+Optional `controls` remove the same declared patient space span from each
 endpoint and change field before aggregation. If E maps patient coordinates
 to observed states, the controlled endpoint harmonic field is P_h E R y.
 Both its patient evaluation E* P_h E R y and its projection onto the image of
-the repeated-support subcomplex are retained. Each change field has its own
+the repeated support subcomplex are retained. Each change field has its own
 controlled harmonic pairing with this endpoint. Aggregation retains patient
 multiplicity; these are unnormalized pairings, with the stated field units.
 
@@ -78,8 +78,8 @@ metrics and time declarations. It reports the boundary and metric pullback
 defects, all nine Hodge sector transports, field innovation, and the exact
 Green response change decomposed into realization, innovation and operator
 terms. A nonzero boundary defect prevents interpreting the correspondence as
-an induced homology map. This query can work with source-authored tissue,
-pathway or interaction complexes; it does not require a feature-sign recipe.
+an induced homology map. This query can work with source authored tissue,
+pathway or interaction complexes; it does not require a feature sign recipe.
 
 ```json
 {
@@ -110,7 +110,7 @@ python3 tools/scientific_batch.py --binary build/gadget/gadget \
 receipt, the unchanged input study, the original query declarations and the
 compiled GADGET/RexGraph fingerprints. Changed earlier queries or sources are
 refused. The earlier manifest and protocol remain as provenance. A single leaf
-per plan is the default to bound full-field receipt size; `--plan-steps` permits
+per plan is the default to bound full field receipt size; `--plan-steps` permits
 up to sixteen.
 
 Each batch leaf has an `id`, `description` and scientific `query`. Batches use
@@ -120,8 +120,8 @@ result hashes and elapsed time. The runtime and tests are bounded: 4096
 patient coordinates, 128 observed trajectory states, and 128 coordinates per
 context in a structure transition. This exact rational profile runs on CPU.
 
-The I-SPY2 source adapter and experiment declarations are
+The I SPY2 source adapter and experiment declarations are
 `tools/prepare_endpoint_study.py` and `tools/declare_endpoint_experiment.py`.
 They exercise the general interface; the C++ research module contains no
-I-SPY2 identifiers. Contract tests use a separate nonclinical dataset and an
+I SPY2 identifiers. Contract tests use a separate nonclinical dataset and an
 independent Fraction oracle.

@@ -90,11 +90,11 @@ void import_table(const fs::path &specification, const fs::path &destination) {
         }
     } cleanup{stage};
     // Copy once to a private retained image before parsing. mmap is a byte
-    // backend, not an immutable view of a caller-owned file being edited.
+    // backend, not an immutable view of a caller owned file being edited.
     publish_file_exact(stage / "table.txt", FilePublication::CreateNew, [&](std::ostream &out) {
         std::ifstream stream(source_path, std::ios::binary);
         require(static_cast<bool>(stream), "table source open");
-        // A transfer chunk is not a source-size limit. Read exactly the admitted
+        // A transfer chunk is not a source size limit. Read exactly the admitted
         // image and reject growth/truncation before a larger file can be retained.
         std::array<char, 1024 * 1024> buffer{};
         for (std::uintmax_t copied = 0; copied < source_bytes;) {
@@ -241,8 +241,8 @@ void import_table(const fs::path &specification, const fs::path &destination) {
         builder.add_grade_one(rfc::core::RelationKey{group.key}, type, memberships);
     }
     TemporalEndpoint endpoint(builder.freeze());
-    // Keys belong to their declared namespaces. Cell keys are grade-relative;
-    // carrier and tensor keys each use one complete source-ordered namespace.
+    // Keys belong to their declared namespaces. Cell keys are grade relative;
+    // carrier and tensor keys each use one complete source ordered namespace.
     std::map<StableCellKey, std::uint64_t> stalk_carriers;
     for (std::size_t k = 0; k < endpoint.source.grade_count(); ++k) {
         const auto grade = rfc::core::Grade{static_cast<std::uint16_t>(k)};

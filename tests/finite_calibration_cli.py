@@ -1,4 +1,4 @@
-"""Independent finite-law, paired-design and weighted-contraction qualifications."""
+"""Independent finite law, paired design and weighted contraction qualifications."""
 import copy
 import importlib.util
 import itertools
@@ -109,7 +109,7 @@ def main(binary, root):
             check(result['joint_family']['global_tail_mass'] is None)
             return
         check(Q(result['joint_family']['global_tail_mass'])==sum((w for w,v in zip(weights,maxima) if v>=maxima[observed]),Q(0)))
-        # Independent coordinate covariance and sample-Gram contractions agree.
+        # Independent coordinate covariance and sample Gram contractions agree.
         mean=[sum((w*row[h] for w,row in zip(weights,expected)),Q(0)) for h in range(len(hypotheses))]
         centered=[[row[h]-mean[h] for h in range(len(hypotheses))] for row in expected]
         covariance=[[sum((w*row[i]*row[j] for w,row in zip(weights,centered)),Q(0)) for j in range(len(hypotheses))] for i in range(len(hypotheses))]
@@ -176,7 +176,7 @@ def main(binary, root):
     relation_result=execute(relational)
     check(relation_result['model_comparison']['grade']==1 and relation_result['hypotheses'][0]['reference_tail_mass']=='1')
     check(relation_result['joint_family']['ensemble']['status']=='constant_statistics')
-    # Refuse incomplete/ill-typed declarations instead of changing the law.
+    # Refuse incomplete/ill typed declarations instead of changing the law.
     failures=[]
     def bad(mutator):
         value=copy.deepcopy(query);mutator(value);failures.append(value)

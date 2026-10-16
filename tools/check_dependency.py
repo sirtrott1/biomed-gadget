@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify recorded build inputs, with an explicit live-development profile."""
+"""Verify recorded build inputs, with an explicit live development profile."""
 import argparse
 import hashlib
 import json

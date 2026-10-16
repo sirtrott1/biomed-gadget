@@ -162,7 +162,7 @@ AssayFieldsSource indexed_alignment_fields_source(const ResourceImages &images, 
                 }
                 relation_count =
                     rfc::machine::checked_size_add(relation_count, routes.steps.size());
-                // An all-mismatch zero-budget carrier has no grade-one relations.
+                // An all mismatch zero budget carrier has no grade one relations.
                 if (routes.steps.empty())
                     continue;
                 const auto source = routes.freeze();

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce source-declared structural and field-span ablations with GADGET."""
+"""Reproduce source declared structural and field span ablations with GADGET."""
 import argparse
 import copy
 import importlib.util

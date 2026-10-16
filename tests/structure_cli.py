@@ -1,4 +1,4 @@
-"""Independent source-incidence, path, rational and integral chain witnesses."""
+"""Independent source incidence, path, rational and integral chain witnesses."""
 import copy
 from fractions import Fraction as Q
 import hashlib

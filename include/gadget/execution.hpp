@@ -6,7 +6,7 @@
 #include <rfc/field/exact_hodge.hpp>
 
 namespace gadget {
-// Owns every object referenced by RexGraph's non-owning operator facades.
+// Owns every object referenced by RexGraph's non owning operator facades.
 class Execution {
     std::string source_digest_;
     std::unique_ptr<rfc::core::RelationalComplex> complex_;

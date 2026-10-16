@@ -1,4 +1,4 @@
-"""Independent paired-count, gluing, solve and dependent workflow contracts."""
+"""Independent paired count, gluing, solve and dependent workflow contracts."""
 import copy, hashlib, json, shutil, subprocess, sys
 from fractions import Fraction as F
 from pathlib import Path
@@ -40,7 +40,7 @@ def main():
     broken=copy.deepcopy(paired);broken['pairs'][1]['right']='all.a0';query(broken,False)
     broken=copy.deepcopy(paired);broken['normalization']['evidence'][0]['text']='invented';query(broken,False)
     cells=declaration['cells'];occurrences=declaration['occurrences'];lower=[c for c in cells if c['grade']==0];upper=[c for c in cells if c['grade']==1]
-    # Exact differences on a four-way relation. Every flag map is explicit.
+    # Exact differences on a four way relation. Every flag map is explicit.
     maps=[];coeffs=[[4,0,0],[-4,4,0],[0,-4,4],[0,0,-4]]
     for o,c in zip(occurrences,coeffs):maps.append(dict(grade=1,key=o['key'],matrix=[[str(v)] for v in c]))
     local=dict(operation='local_sections',context='all',construction='cellular_sheaf',stalks=[dict(grade=0,key=c['key'],axes=['all.a0']) for c in lower]+[dict(grade=1,key=upper[0]['key'],axes=['difference.0','difference.1','difference.2'])],maps=maps,sections=[dict(id='counts',grade=0,fields=['all.a0'],quantity='read_count',units='counts')],metric='identity')

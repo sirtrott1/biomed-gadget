@@ -1,4 +1,4 @@
-"""Independent rational and source-support checks for declared multivariable comparisons."""
+"""Independent rational and source support checks for declared multivariable comparisons."""
 import copy
 import csv
 import importlib.util

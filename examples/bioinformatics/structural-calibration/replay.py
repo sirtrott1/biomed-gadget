@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage source-declared exchange laws and calibrate native structural readings."""
+"""Stage source declared exchange laws and calibrate native structural readings."""
 import argparse
 import csv
 import copy

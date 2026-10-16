@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Produce source-bound response transitions and independently check every term."""
+"""Produce source bound response transitions and independently check every term."""
 import argparse, copy, hashlib, json, subprocess
 from pathlib import Path
 

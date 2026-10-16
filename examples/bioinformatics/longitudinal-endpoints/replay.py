@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run native temporal histories and interval-observed clinical endpoints."""
+"""Run native temporal histories and interval observed clinical endpoints."""
 import argparse,csv,hashlib,json,shutil,subprocess,time
 from pathlib import Path
 from fractions import Fraction as Q

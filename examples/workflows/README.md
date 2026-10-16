@@ -33,7 +33,7 @@ A native branch or claim node reads actual typed values. A `condition` or claim
 item declares `path`, `value_type`, `comparison` and expected `value`. Paths start
 within the producing operation's scientific view or biomedical result. For a
 nonscalar tensor add `coordinate`, its original flat coordinate, independently
-of a compact display's selected-coordinate order. An unsupported coordinate
+of a compact display's selected coordinate order. An unsupported coordinate
 refuses a numerical comparison; reported zero remains comparable. Claims can
 be contradicted and a later branch can select an explicit repair or base case.
 The branch's retained `comparison` owns the literal check and its source pins.

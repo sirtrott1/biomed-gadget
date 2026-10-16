@@ -2608,7 +2608,7 @@ struct ScientificSession::State {
                     }
                 binding.set("field_semantics", local_meanings);
                 bindings.push(binding);
-                // Preserve legacy one-source keys; publication-local meanings
+                // Preserve legacy one source keys; publication local meanings
                 // are retained without merging equal labels from other owners.
                 if (pub == "self") {
                     meanings.set(id, owner_.fields.at(id).declaration);

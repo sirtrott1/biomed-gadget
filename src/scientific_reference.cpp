@@ -69,7 +69,7 @@ ResultValue score_ensemble_fields(const std::vector<Vector> &scores, const Vecto
     out.set("rank", ResultValue::count(rank));
     out.set("metric", ResultValue::string("identity on the declared dimensionless hypothesis axes"));
     out.set("normalization", ResultValue::string(weighting));
-    // Select coordinate covariance or sample-Gram space from the dimensions.
+    // Select coordinate covariance or sample Gram space from the dimensions.
     // A positive rational law metric avoids square roots of unequal masses.
     const bool state_space = summary.sample_space;
     const auto &form = summary.contraction;

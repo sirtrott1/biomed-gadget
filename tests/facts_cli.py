@@ -1,4 +1,4 @@
-"""Literal facts, completed-result ownership, falsification, omission and source-sized admission."""
+"""Literal facts, completed result ownership, falsification, omission and source sized admission."""
 import copy
 import hashlib
 import importlib.util
@@ -167,7 +167,7 @@ for member, value in [('answer', 'wrong'), ('binding', 'wrong'), ('step', 'wrong
     invalid['facts'][8]['from'][member] = value
     admit(invalid, True)
 
-# Source-only views and result-only views retain distinct authorities.
+# Source only views and result only views retain distinct authorities.
 source_only = copy.deepcopy(request)
 source_only.pop('answers')
 source_only['facts'] = source_only['facts'][:8]

@@ -46,7 +46,7 @@ def main(binary,root):
                    lambda v:v['dose_comparisons'][0].update(direction='unrestricted'),
                    lambda v:v['physical_shape'].update(evidence=[dict(document='missing',start=0,end=1,text='x')])]:
         bad=copy.deepcopy(changed);change(bad);execute(bad,True)
-    # Analytic count example: Q=sum_i(y_i-beta0-beta1*d_i)^2, beta0>=0.
+    # Analytic count example: Q=sum_i(y_i beta0 beta1*d_i)^2, beta0>=0.
     analytic=root/'analytic';qq=demo.source.authored(analytic,1);qq.pop('reference_law');qq.pop('dose_comparisons');qq.pop('green_parameter')
     qq['responses']=qq['responses'][:1];qq['model']=dict(intercept=True,terms=[dict(id='dose',factors=['all.dose']),dict(id='alias',factors=['all.dose_alias'])])
     table=analytic/'inputs/measurements.tsv';rows=list(csv.reader(table.open(),delimiter='\t'))
@@ -69,7 +69,7 @@ def main(binary,root):
     other=next(f for f in scaled['physical_shape']['results'] if f['model']=='full')
     check(other['fits'][0]['objective_represented']==fitted['fits'][0]['objective_represented'])
     check(other['joint_residual_quadrance']==fitted['joint_residual_quadrance'])
-    # Empty spans remain feasible; no positive-rank special-case assumptions.
+    # Empty spans remain feasible; no positive rank special case assumptions.
     zero=copy.deepcopy(q);zero['model']=dict(intercept=False,terms=[]);zero.pop('reference_law');zero.pop('dose_comparisons')
     empty=execute(zero);check(all(all(Q(x)==0 for part in f['fits'] for x in part['objective_represented']) for f in empty['physical_shape']['results']))
     grade_case=root/'grade-one';demo.source.authored(grade_case,1)

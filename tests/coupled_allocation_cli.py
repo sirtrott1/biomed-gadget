@@ -1,4 +1,4 @@
-"""Independent bounded-domain oracles and affine-factor reconstruction contracts."""
+"""Independent bounded domain oracles and affine factor reconstruction contracts."""
 import copy
 from fractions import Fraction as Q
 import hashlib

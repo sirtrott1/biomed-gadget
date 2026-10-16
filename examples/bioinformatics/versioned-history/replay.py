@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage publication-indexed histories on original coordinates."""
+"""Stage publication indexed histories on original coordinates."""
 import argparse,csv,hashlib,json,shutil,subprocess,time
 from pathlib import Path
 
@@ -61,7 +61,7 @@ def clinical(binary,source,root):
     provenance=json.loads((root/'original/provenance.json').read_text())
     assert sha(root/'original/lung.csv').removeprefix('sha256:')==provenance['decoder']['sha256']
     rows=list(csv.DictReader((root/'original/lung.csv').open()));assert len(rows)==228
-    # These are constructed data-access publications, not longitudinal visits.
+    # These are constructed data access publications, not longitudinal visits.
     # Each selected row keeps every original variable, missing token and status.
     cuts=[80,160,len(rows)]
     for t,size in enumerate(cuts):

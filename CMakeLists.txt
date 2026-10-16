@@ -334,7 +334,7 @@ if(GADGET_ENABLE_LOCAL_MODEL)
     set(offset 0)
     while(offset LESS bytes)
       math(EXPR remaining "${bytes} - ${offset}")
-      # C++ guarantees a 65536-character literal representation, including its
+      # C++ guarantees a 65536 character literal representation, including its
       # terminator. Piece size affects embedding only, never the schema domain.
       if(remaining GREATER 65535)
         set(length 65535)

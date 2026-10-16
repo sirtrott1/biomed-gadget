@@ -350,7 +350,7 @@ Value observed_response_model(const NativeStudy &study, const Json &query, core:
             observations[s].push_back(std::move(y));
         }
     }
-    // Admit dose groups even during validate-only, before preparation/execution.
+    // Admit dose groups even during validate only, before preparation/execution.
     struct Dose {
         Json declaration;
         Vector doses;

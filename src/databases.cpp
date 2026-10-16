@@ -59,8 +59,8 @@ std::string token(const Json &j, std::size_t maximum = source_byte_limit()) {
         require(resource=="activity" || !item.has("endpoint"), "drug indication pages have no binding endpoint filter");
         const auto limit =
             item.has("limit") ? count(item.at("limit"), 1000, "API page limit") : 100;
-        // ChEMBL imposes the 1000-row page size. It does not impose an
-        // application-wide observation count or a million-record offset.
+        // ChEMBL imposes the 1000 row page size. It does not impose an
+        // application wide observation count or a million record offset.
         const auto offset = item.has("offset")
                                 ? count(item.at("offset"), std::numeric_limits<std::size_t>::max(),
                                         "API page offset")

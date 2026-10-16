@@ -1,4 +1,4 @@
-"""Independent exact large-carrier and complete-certificate regression."""
+"""Independent exact large carrier and complete certificate regression."""
 import hashlib
 import json
 import subprocess

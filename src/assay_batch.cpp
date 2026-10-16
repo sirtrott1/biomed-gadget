@@ -16,7 +16,7 @@ NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRec
     require(concurrency > 0 && json_object_is_type(declarations.raw(), json_type_array) &&
                 declarations.size() > 0,
             "source query batch requires queries and positive admitted concurrency");
-    // The native graph retains source-order indices; complete results live
+    // The native graph retains source order indices; complete results live
     // under one private owner until all jobs join and publication is assembled.
     const auto stage = private_directory(fs::temp_directory_path(), "gadget-query-batch-");
     struct Cleanup {

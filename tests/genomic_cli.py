@@ -1,4 +1,4 @@
-"""Independent finite oracles for genomic, spatial and derived-assay contracts."""
+"""Independent finite oracles for genomic, spatial and derived assay contracts."""
 import copy
 from fractions import Fraction as Q
 import hashlib

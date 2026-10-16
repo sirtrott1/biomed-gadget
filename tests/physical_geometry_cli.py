@@ -102,7 +102,7 @@ def oracle(result, request, raw):
         field=[sum((Q(records[j][5]) for j in members if records[j][0]==s),Q(0))/Q(sample['scale']) for c,st,a,b,members in atoms]
         fields.append(field)
         check(list(map(Q,result['sample_fields'][s]['values']))==field,'Independent coverage action')
-        # Independent per-base count integral, including overlapping repeats and zeros.
+        # Independent per base count integral, including overlapping repeats and zeros.
         integral=Q(0)
         for c,st in frames:
             ends=[r[3] for r in records if r[1]==c and (request['strand_policy']=='ignore' or r[-1]==st)]
@@ -251,7 +251,7 @@ for label,values in [('short',['2','3']),('nonpositive',['2','0','5','7'])]:
     spec=dict(schema='gadget.assays.import.v1',id='invalid-metric',design=design,resources=[],assays=[bad],links=[])
     run('import-assays','--spec',save('invalid-'+label+'.json',spec),'--out',root/('invalid-'+label),fail=True)
 
-# Materialized contrast fields and interval-primary native carrier are portable.
+# Materialized contrast fields and interval primary native carrier are portable.
 original_result=query('materialize-oracle',workspace,request)
 material=dict(schema='gadget.assays.materialize.v1',id='fields',source_namespace='771992',design=design,recipe=request,channel='E')
 run('derive-assays','--workspace',workspace,'--request',save('materialize.json',material),'--out',root/'derived')

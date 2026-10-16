@@ -68,7 +68,7 @@ check(not targets['incidence-2']['resolved']['descriptor']['aspects']['exists'])
 check(targets['incidence-0']['resolved']['descriptor']['lower'] == targets['incidence-1']['resolved']['descriptor']['lower'])
 check(targets['incidence-0']['target']['key'] != targets['incidence-1']['target']['key'])
 
-# Native API ownership, mutable-view separation, every retained occurrence,
+# Native API ownership, mutable view separation, every retained occurrence,
 # UTF-8 split rejection and the removed legacy mention ceiling.
 result = subprocess.run([str(helper), 'native', str(root / 'native-fixture')], capture_output=True, text=True, timeout=180)
 check(result.returncode == 0)

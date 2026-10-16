@@ -11,7 +11,7 @@ replay.authored(binary,producer,root/'rectangular',rectangular);checks.append(ve
 n=65
 large=(replay.declaration('many-original-coordinates',3,replay.identity(n),replay.matrix([[1] for _ in range(n)]),dict(rows=1,columns=n,entries=[dict(row=0,column=i,value='1') for i in range(n)]),[2]),replay.declaration('many-original-coordinates-new',4,replay.identity(n),replay.matrix([[2] for _ in range(n)]),dict(rows=1,columns=n,entries=[dict(row=0,column=i,value='1') for i in range(n)]),[3]),replay.identity(n),replay.identity(1),replay.identity(1))
 replay.authored(binary,producer,root/'beyond-native-default',large);checks.append(verify.verify(root/'beyond-native-default'))
-# Complete zero and empty source-coordinate carriers are distinct from missing support.
+# Complete zero and empty source coordinate carriers are distinct from missing support.
 empty=dict(rows=0,columns=0,entries=[])
 case=(replay.declaration('zero-carrier',0,empty,empty,empty,[],replay.source(0)),replay.declaration('zero-carrier-new',1,empty,empty,empty,[],replay.source(0)),empty,empty,empty)
 replay.authored(binary,producer,root/'empty',case)

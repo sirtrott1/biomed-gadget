@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
             custom.at("result").at("native_execution").at("green_preparation_policy").text() ==
                 low.name)
             throw std::logic_error("preparation and execution policies conflated");
-        // Immutable admitted sources and detached certificates survive source-file mutation.
+        // Immutable admitted sources and detached certificates survive source file mutation.
         const auto original = read_text(root / "p0/study.rfcxs");
         write_text(root / "p0/study.rfcxs", "changed after admission");
         const auto retained = session.execute(observation);

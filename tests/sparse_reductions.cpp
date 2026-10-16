@@ -170,7 +170,7 @@ int main(int argc, char **argv) {
         check(!session.execute(window).at("result").at("preparation_reused").boolean(),
               "clear failed to reset reuse");
         // The transposed storage profile can reduce observation groups with the
-        // same declared-map and support semantics, preserving feature identities.
+        // same declared map and support semantics, preserving feature identities.
         spec.at("assays").at(0).set("carrier", Json::string("observations"));
         spec.at("assays").at(0).set("source_namespace", Json::string("2101"));
         write_text(root / "transposed.json", spec.dump());

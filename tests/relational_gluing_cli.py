@@ -70,7 +70,7 @@ for name, change in [
     ('zero-workers', lambda q: q.update(workers=0)),
 ]:
     q = copy.deepcopy(query); change(q); execute(q, name + '.json', fail=True)
-# Public default recipe, custom plan and model-proposed structured query routes.
+# Public default recipe, custom plan and model proposed structured query routes.
 prepared = run('pipeline-prepare', '--workspace', manifest, '--request', root / 'inputs/pipeline.json')
 plan = save('prepared.json', prepared)
 index = run('pipeline', '--workspace', manifest, '--request', plan, '--out', root / 'pipeline')
@@ -98,13 +98,13 @@ typed = run('recipe-proposal', '--workspace', manifest, '--intent', intent_path,
             '--out', root / 'typed')
 assert typed['status'] == 'admitted'
 assert {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in (root / 'workspace').rglob('*') if p.is_file()} == before
-# A whole-source carrier larger than both historical 64 and 1024 defaults.
+# A whole source carrier larger than both historical 64 and 1024 defaults.
 make(root / 'large-inputs', vertices=2049, repetitions=2)
 run('import-assays', '--spec', root / 'large-inputs/import.json', '--out', root / 'large-workspace')
 large = run('assay-query', '--workspace', root / 'large-workspace/workspace.json', '--request', root / 'large-inputs/query.json')
 verify(large, json.loads((root / 'large-inputs/reference.json').read_text()))
 assert large['result']['execution']['dimension_limit'] == 4100
-# Scale the original incidence fibres, higher fillings and arity-three cells,
+# Scale the original incidence fibres, higher fillings and arity three cells,
 # rather than only adding isolated vertices to a fixed tiny topology.
 make(root / 'incidence-inputs', vertices=34, repetitions=2, modules=17)
 run('import-assays', '--spec', root / 'incidence-inputs/import.json', '--out', root / 'incidence-workspace')

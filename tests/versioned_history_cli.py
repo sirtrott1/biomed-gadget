@@ -1,4 +1,4 @@
-"""Publication identity, support and changing-population contracts."""
+"""Publication identity, support and changing population contracts."""
 import copy,importlib.util,json,shutil,subprocess,sys
 from pathlib import Path
 examples=Path(__file__).resolve().parents[1]/'examples/bioinformatics/versioned-history'
@@ -45,7 +45,7 @@ r.save(root/'authored/study.json',original)
 # Altering an external measurement meaning never becomes a coordinate transform.
 child=root/'authored/p1/study.json';child_bytes=child.read_text();d=json.loads(child_bytes);changed=copy.deepcopy(d);changed['fields'][0]['units']='other-unit';r.save(child,changed)
 modified=copy.deepcopy(original);modified['publications'][1]['study']['sha256']=r.sha(child);modified['publications'][1]['source_digest']=r.inspect(binary,root/'authored/p1')['source_digest'];r.save(root/'authored/study.json',modified);execute(q,True);child.write_text(child_bytes);r.save(root/'authored/study.json',original)
-# Publication-local labels can coincide while their exact source binding differs.
+# Publication local labels can coincide while their exact source binding differs.
 check(out['publication_bindings'][0]['field_semantics']['x']['id']==out['publication_bindings'][1]['field_semantics']['x']['id']);check(out['publication_bindings'][0]['source_digest']!=out['publication_bindings'][1]['source_digest'])
 # Original occurrence changes remain visible under a zero aggregate boundary.
 changes=out['result']['steps'][0]['source_changes'][1]['occurrence_changes'];check(any(c['key']=='1007' for c in changes));check(any(c['orientation_term']!='0' for c in changes));check(any(c['attachment_changed'] for c in changes));check(out['result']['steps'][1]['source_changes'][1]['removed_cell_keys']==['102'])

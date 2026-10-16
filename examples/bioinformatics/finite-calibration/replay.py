@@ -31,7 +31,7 @@ def run(binary, *args):
 
 
 def stage(root, observations, measurements, pairs, *, units='counts', origin=None):
-    """Stage every joint within-pair swap. No numerical model is calculated here."""
+    """Stage every joint within pair swap. No numerical model is calculated here."""
     if root.exists():
         raise ValueError('Choose a new input directory')
     root.mkdir(parents=True)
@@ -118,7 +118,7 @@ def stage(root, observations, measurements, pairs, *, units='counts', origin=Non
                           evidence=[]),
                  hypotheses=[dict(id=name, stratum='all', response='all.'+name, reduced='controls',
                                   statistic='fraction_of_reduced_residual') for name in measurements], alpha='1/20')
-    # Execution binds the law to the original retained assay-declaration bytes.
+    # Execution binds the law to the original retained assay declaration bytes.
     save(root/'query.json', query)
     return query
 
@@ -133,7 +133,7 @@ def authored(root):
 
 
 def expression(root, source, feature_file):
-    """Retain the complete count packet and select only researcher-declared gene IDs."""
+    """Retain the complete count packet and select only researcher declared gene IDs."""
     if root.exists():
         raise ValueError('Choose a new output directory')
     root.mkdir(parents=True)

@@ -1,4 +1,4 @@
-"""Native biomedical owners with independent original-coordinate comparisons."""
+"""Native biomedical owners with independent original coordinate comparisons."""
 import copy
 from fractions import Fraction as Q
 import hashlib

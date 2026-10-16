@@ -29,7 +29,7 @@ def make_example(root, vertices=3, repetitions=1, modules=1):
     shared = {role: [f'{role}-shared-{i}' for i in range(vertices)] for role in roles}
     orders = {role: shared[role][:] for role in roles}
     orders['left'] += [name('left', 'unique', m) for m in range(modules)]
-    # Deliberately change local order, names, and native grade-zero keys.
+    # Deliberately change local order, names, and native grade zero keys.
     orders['right'] = list(reversed(orders['right'])) + [name('right', 'unique', m) for m in range(modules)]
     relations, assays, source_fields = {}, [], {}
     for role in roles:
@@ -49,7 +49,7 @@ def make_example(root, vertices=3, repetitions=1, modules=1):
                 faces.append(relation(face, 2, [leg(ab), leg(bc), leg(ac, True)]))
                 edge_values.update({bc: '3', ac: '5', multi: '7'})
                 face_values[face] = '7' if role == 'left' else '11'
-        # The importer retains the original increasing-grade declaration order.
+        # The importer retains the original increasing grade declaration order.
         records += faces
         fields = []
         for repeat in range(repetitions):

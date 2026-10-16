@@ -147,7 +147,7 @@ struct FrameRequest : PreparedProjection {
     }
 };
 // A contrast family is a field on explicitly identified matched units.
-// The native constant-span projector retains its complete consensus and residual.
+// The native constant span projector retains its complete consensus and residual.
 std::optional<NativeRecord> paired(const ScientificStudy &study, const Inputs &in, const Json &query, bool validate,
             const std::shared_ptr<CpuResources> &resources,
             const runtime::ExecutionLease &lease) {
@@ -1245,7 +1245,7 @@ Value compare_structure_values(
     };
     const auto j = correspondence(grade.value);
     const auto old_hodge = old_study.hodge(grade), new_hodge = new_study.hodge(grade);
-    // Reuse the existing source-bound owners. Their harmonic complement
+    // Reuse the existing source bound owners. Their harmonic complement
     // avoids a second full harmonic frame and repeated Gram factorizations.
     const auto &old_p = old_prepared.sectors(grade), &new_p = new_prepared.sectors(grade);
     auto &old_green_plan = old_prepared.green(grade, lambda);

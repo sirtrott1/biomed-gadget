@@ -205,7 +205,7 @@ int main(int argc, char **argv) {
         check(read("id\tx\ty\na\t1.25\t0\nb\t0\t0\nc\t0\t0\n").columns[0].state(0) == Rational{5, 4},
               "decimal conversion changed");
         // Complete private columns can transfer ownership. A fully reported
-        // sparse support still follows the original full-support normalization.
+        // sparse support still follows the original full support normalization.
         const std::string complete = banner + "3 2 6\n3 2 0\n1 1 0\n3 1 -2\n2 2 7/3\n2 1 5\n1 2 9\n";
         write_text(root / "matrix.txt", complete);
         auto import = Json::parse(R"({"schema":"gadget.assays.import.v1","id":"intake","design":{"question":"Verify carrier-preserving intake","population":"authored fields","selection":"all","limitations":["fixture"]},"assays":[],"resources":[],"links":[]})");
@@ -308,7 +308,7 @@ int main(int argc, char **argv) {
                           "bound numerical value, zero or absence changed");
         }
         // Compressed/original resource artifacts are arbitrary bytes retained
-        // by the canonical publication, including after native-only relocation.
+        // by the canonical publication, including after native only relocation.
         const std::string opaque("\0\xff\x1f\x8b\0original", 13);
         write_text(root / "original.gz", opaque);
         write_text(root / "reads.fastq", "@read\nACGT\n+\nIIII\n@short\nNN\n+\n!!\n");

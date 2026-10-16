@@ -64,7 +64,7 @@ def execute(binary, study, protocol, destination, plan_steps=1, resume=False):
                   elapsed_seconds=None,plan_steps=plan_steps)
     started=time.monotonic();started_run=previous is None
     def checkpoint():
-        # These are batch-control declarations on an administrative witness.
+        # These are batch control declarations on an administrative witness.
         # Mathematical source/results stay owned by the referenced native plans.
         with tempfile.TemporaryDirectory(prefix='.checkpoint-',dir=destination) as stage:
             control=Path(stage)/'control.json';staged=Path(stage)/'control.rfcxs'

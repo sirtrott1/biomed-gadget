@@ -318,8 +318,8 @@ Json aggregate_impl(const Matrix &matrix, const Json &declaration, const Json &r
     rfc::runtime::CpuTileRunReport first_report, second_report;
     if (fused_sparse_maps) {
         // The declared carrier map acts on actual sparse field owners. The
-        // cross-field map accumulates its outputs without retaining a dense
-        // feature-by-observation intermediate or a copied source complex.
+        // cross field map accumulates its outputs without retaining a dense
+        // feature by observation intermediate or a copied source complex.
         const auto &carrier_map = native_features ? feature_map : observation_map;
         std::vector<rfc::numeric::ExactMatrix> local_maps;
         for (const auto &packet : publications)

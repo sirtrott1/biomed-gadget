@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure complete native actions and two lossless cause-word encodings."""
+"""Measure complete native actions and two lossless cause word encodings."""
 import argparse
 import copy
 import hashlib

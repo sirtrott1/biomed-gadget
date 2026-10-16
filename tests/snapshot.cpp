@@ -139,7 +139,7 @@ int main() {
             return owner.native_snapshot->source_grade(rfc::core::Grade{1});
         }();
         check(carrier.support_count() == 4, "native source carrier omitted retained coordinates");
-        // A relocated snapshot uses fixed artifact names and no original-root reads.
+        // A relocated snapshot uses fixed artifact names and no original root reads.
         fs::copy(root / "study", root / "relocated", fs::copy_options::recursive);
         check(load_snapshot(root / "relocated").source_digest == source.source_digest,
               "snapshot relocation failed");

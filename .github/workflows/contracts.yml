@@ -19,20 +19,39 @@ jobs:
       CMAKE_BUILD_PARALLEL_LEVEL: ${{ vars.GADGET_BUILD_JOBS || '1' }}
       SDK_URL: ${{ secrets.REXGRAPH_ARCHIVE_URL }}
       SDK_SHA256: ${{ vars.REXGRAPH_ARCHIVE_SHA256 }}
+      SDK_REPOSITORY: ${{ vars.REXGRAPH_ARCHIVE_REPOSITORY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Retrieve the private SDK archive
+        if: vars.REXGRAPH_ARCHIVE_REPOSITORY != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.REXGRAPH_ARCHIVE_REPOSITORY }}
+          ref: ${{ vars.REXGRAPH_ARCHIVE_REF }}
+          ssh-key: ${{ secrets.REXGRAPH_ARCHIVE_DEPLOY_KEY }}
+          persist-credentials: false
+          path: .rfc-download
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ clang pkg-config libgmp-dev libssl-dev libjson-c-dev python3-numpy python3-sympy python3-scipy python3-jsonschema
       - name: Fetch the qualified SDK
         shell: bash
         run: |
-          if test -z "$SDK_URL" || ! [[ "$SDK_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
-            echo '::error::Configure REXGRAPH_ARCHIVE_URL and REXGRAPH_ARCHIVE_SHA256 for the qualified SDK.'
+          if ! [[ "$SDK_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+            echo '::error::Configure REXGRAPH_ARCHIVE_SHA256 for the qualified SDK.'
             exit 1
           fi
-          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --output "$RUNNER_TEMP/rexgraph.zip" "$SDK_URL"
+          if test -n "$SDK_REPOSITORY"; then
+            test -f .rfc-download/rexgraph-sdk.zip
+            cp .rfc-download/rexgraph-sdk.zip "$RUNNER_TEMP/rexgraph.zip"
+            rm -rf .rfc-download
+          elif test -n "$SDK_URL"; then
+            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --output "$RUNNER_TEMP/rexgraph.zip" "$SDK_URL"
+          else
+            echo '::error::Configure a private SDK archive repository or HTTPS archive URL.'
+            exit 1
+          fi
           printf '%s  %s\n' "$SDK_SHA256" "$RUNNER_TEMP/rexgraph.zip" | sha256sum --check --strict
           python3 - "$RUNNER_TEMP/rexgraph.zip" "$RUNNER_TEMP/sdk" <<'PY'
           import pathlib, sys, zipfile

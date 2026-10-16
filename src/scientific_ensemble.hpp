@@ -54,9 +54,9 @@ struct WeightedFieldEnsemble {
         }
     }
 };
-// Direct sample-Gram evaluation of covariance-trace coupling. The two trace
+// Direct sample Gram evaluation of covariance trace coupling. The two trace
 // contractions are dual to its covariance expression; no eigensystem or
-// cross-carrier pairing is introduced. The caller retains both complete fields.
+// cross carrier pairing is introduced. The caller retains both complete fields.
 inline Rational weighted_field_coupling(const WeightedFieldEnsemble &left,
                                         const WeightedFieldEnsemble &right, const Vector &weights,
                                         const rfc::field::ExactMetric &metric) {

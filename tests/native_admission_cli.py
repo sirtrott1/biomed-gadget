@@ -1,4 +1,4 @@
-"""Source-sized admission and complete native results beyond former profiles."""
+"""Source sized admission and complete native results beyond former profiles."""
 import copy
 from fractions import Fraction as Q
 import hashlib
@@ -164,7 +164,7 @@ def main():
           'Every selected partition retained in declared order')
     cases.append(dict(case='selected_partition_admission', partitions=partition_cells))
 
-    # A primary membership relation exceeds the former whole-carrier/arity limits.
+    # A primary membership relation exceeds the former whole carrier/arity limits.
     m = 4111
     values = [Q(i % 13 - 6) for i in range(m)]
     relations = dict(relations=[dict(id='library', meaning='Declared source membership',
@@ -233,7 +233,7 @@ def main():
           'All closed path differences remain available beyond endpoint view')
     cases.append(dict(case='complete_realized_paths', paths=len(paths), steps=sum(len(p['steps']) for p in paths)))
 
-    # Grade is not arity: adjacent cancelling boundaries define an eight-grade tower.
+    # Grade is not arity: adjacent cancelling boundaries define an eight grade tower.
     higher = []
     for grade in range(1, 9):
         lower = 'v' if grade == 1 else f'r{grade-1}'
@@ -271,7 +271,7 @@ def main():
     cases.append(dict(case='authored_higher_grade', maximum_grade=8, retained_occurrences=16))
     for levels in [[Q(0)], list(map(Q,range(33)))]:
         selected_ws, selected_id = (chain_ws,'chain') if len(levels)==1 else (membership_ws,'membership')
-        # The 33-stage case uses a small complex to isolate the stage contract.
+        # The 33 stage case uses a small complex to isolate the stage contract.
         if len(levels)>1:
             small = assay('stages',['a','b'],['x'],'%%MatrixMarket matrix coordinate integer general\n2 1 0\n')
             selected_ws,selected_id = admit('stage-source',[small]),'stages'
@@ -290,7 +290,7 @@ def main():
               'Independent complete rational interval multiplicities')
     cases.append(dict(case='chain_and_persistence', source_cells=p+1, retained_occurrences=3, levels=33))
 
-    # Source-backed requests use the codec representation, not a fixed CLI MiB cap.
+    # Source backed requests use the codec representation, not a fixed CLI MiB cap.
     padded = root / 'complete-request.json'
     padded.write_text(' '*(8*1024*1024) + json.dumps(request) + '\n')
     transported = run('assay-query', '--workspace', selected_ws, '--request', padded)['result']
@@ -307,7 +307,7 @@ def main():
           'Large retained source gives exact measured result')
     cases.append(dict(case='retained_source_bytes',bytes=retained.stat().st_size))
 
-    # HTS records exceed the previous 100,000-record intake profile.
+    # HTS records exceed the previous 100,000 record intake profile.
     if capabilities['htslib_enabled']:
         count = 100001
         reference = dict(assembly='authored',sequence_sha256='sha256:'+hashlib.sha256(b'>chr\nA\n').hexdigest(),

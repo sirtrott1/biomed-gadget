@@ -21,13 +21,13 @@ def execute(study,query,fail=False):
     return json.loads(p.stdout)
 
 q,out=replay.history(binary,fixture,root/'history');checks+=verify.verify_history(root/'history')['checks'];study=root/'history/study'
-# The same admitted endpoints support the original general cross-moment owner.
+# The same admitted endpoints support the original general cross moment owner.
 moment=dict(operation='temporal_moment_change',context='baseline',other_context='followup',field='baseline.x',other_field='baseline.x',new_field='followup.x',new_other_field='followup.x',order=1,correspondence=q['correspondences'][0][1]);r=execute(study,moment)['result']
 check(Q(r['total']['rational'])==Q(48));check(Q(r['total']['rational'])==sum(Q(r[k]['rational']) for k in ('pullback_form','left_innovation','right_innovation','innovation_interaction')))
 without=copy.deepcopy(moment);without.pop('correspondence');execute(study,without,True)
 for mutate in [lambda v:v['correspondences'][0][1]['entries'].append(copy.deepcopy(v['correspondences'][0][1]['entries'][0])),lambda v:v['correspondences'][0][1]['entries'][0].update(row='gene:A'),lambda v:v['correspondences'][0][1].update(grade=0),lambda v:v['correspondences'][0][1].update(evidence=[]),lambda v:v['endpoints'][1].update(context='baseline'),lambda v:v.update(word=[dict(kind='diagonal_field',fields=['baseline.x','followup.G','final.x'])]),lambda v:v.update(word=[dict(kind='boundary'),dict(kind='boundary')]),lambda v:v.update(**{'lambda':'0'})]:
     bad=copy.deepcopy(q);mutate(bad);execute(study,bad,True)
-# Common-terminal accumulation is independent of the selected word.
+# Common terminal accumulation is independent of the selected word.
 check(out['result']['terminal_channels']==[dict(label='initial',field=['4','-1']),dict(label='innovation_0',field=['5','-4']),dict(label='innovation_1',field=['4','-2'])])
 # Opposing structural and amplitude changes cancel completely at the output.
 cancel=copy.deepcopy(q);cancel['endpoints']=cancel['endpoints'][:2];cancel['correspondences']=cancel['correspondences'][:1];cancel['word']=[dict(kind='boundary')];j=cancel['correspondences'][0][0];j['kind']='explicit';j['entries']=[dict(row='gene:'+name,column='gene:A',value=str(value)) for name,value in zip('ABC',(3,-2,-1))]

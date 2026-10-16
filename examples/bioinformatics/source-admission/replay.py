@@ -1,4 +1,4 @@
-"""Compare quoted and shared-span admission of complete declared input tables."""
+"""Compare quoted and shared span admission of complete declared input tables."""
 import argparse
 import hashlib
 import json

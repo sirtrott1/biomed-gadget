@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent rational checks of publication-indexed certificates."""
+"""Independent rational checks of publication indexed certificates."""
 import argparse,csv,hashlib,json
 from fractions import Fraction as Q
 from pathlib import Path
@@ -113,8 +113,8 @@ def clinical(root):
         original=rows[:sizes[t]];x=[Q(row['time']) for row in original];check(vector(e['field'])==x)
         staged=list(csv.DictReader((root/('input'+str(t))/'observations.csv').open()));check(staged==original)
         by={sex:[i for i,row in enumerate(original) if Q(row['sex'])==sex] for sex in (Q(1),Q(2))};sums={sex:sum((x[i] for i in ids),Q(0)) for sex,ids in by.items()};y=[sums[Q(row['sex'])]/(len(by[Q(row['sex'])])+1) for row in original];word_fields.append(y);check(vector(e['word_field'])==y)
-        # For the authored original sex-membership relation, independent
-        # projection gives its mean on each group and the within-group field.
+        # For the authored original sex membership relation, independent
+        # projection gives its mean on each group and the within group field.
         for g in e['declaration']['source_grades'][0]:check(g['label']==original[int(g['key'])-1]['source_row'])
         structure=r['steps'][t]['structure']['old'] if t<2 else r['steps'][-1]['structure']['new']
         coexact=[sums[Q(row['sex'])]/len(by[Q(row['sex'])]) for row in original]

@@ -1,4 +1,4 @@
-"""Lossless RCDB compression, native admission and file-budget contracts."""
+"""Lossless RCDB compression, native admission and file budget contracts."""
 from contextlib import closing
 import importlib.util
 import os

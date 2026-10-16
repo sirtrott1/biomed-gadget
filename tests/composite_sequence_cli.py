@@ -1,4 +1,4 @@
-"""Independent exact cover, exon-chain and observed-carrier qualification."""
+"""Independent exact cover, exon chain and observed carrier qualification."""
 from collections import Counter
 import hashlib
 import itertools
@@ -131,7 +131,7 @@ def main():
         check(len(r['read_walks'])==len(reads),'every original source read walk')
         for i,w in enumerate(r['read_walks']):
             check(w['reconstructed_sequence']==reads[i] and len(w['steps'])==len(reads[i])-k+1,'each source walk reconstructs its full source')
-        # Independent component/rank oracle is test-only; production uses native rank.
+        # Independent component/rank oracle is test only; production uses native rank.
         parent=list(range(len(r['nodes'])))
         def find(a):
             while parent[a]!=a:parent[a]=parent[parent[a]];a=parent[a]

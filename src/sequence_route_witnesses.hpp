@@ -18,10 +18,10 @@ struct CompleteRouteWitnesses {
     std::vector<bool> suffix_reachable;
     std::vector<std::size_t> unreachable_suffix_vertices;
 
-    // All objects must be reachable from start. Optional dead-end suffixes are
+    // All objects must be reachable from start. Optional dead end suffixes are
     // explicitly absent. Reuse is
     // confined to subpaths of actual native minimum routes, not relaxations or
-    // a replacement shortest-path implementation.
+    // a replacement shortest path implementation.
     CompleteRouteWitnesses(const rfc::view::DirectedGraphProjection &graph, std::uint32_t start,
                            std::uint32_t end, bool permit_dead_ends = false,
                            std::optional<rfc::path::RouteResult> initial = {}) {
@@ -127,8 +127,8 @@ struct CompleteRouteWitnesses {
                                                          negative_suffix),
                     "native complete suffix primal/dual certificate");
         } else {
-            // Dead-end suffix values are absent. The viable vertex/edge
-            // restriction is boundary-closed and retains original source maps.
+            // Dead end suffix values are absent. The viable vertex/edge
+            // restriction is boundary closed and retains original source maps.
             std::vector<std::size_t> vertices, edges;
             std::vector<std::optional<std::size_t>> vertex_map(prefix.size());
             for (std::size_t v = 0; v < prefix.size(); ++v)

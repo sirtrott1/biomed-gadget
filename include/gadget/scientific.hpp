@@ -118,7 +118,7 @@ class ScientificSession {
     NativeRecord apply_proposal_record(const NativeRecord &proposal);
     Json propose_annotations(const Json &annotations);
     Json native_cache_statistics() const;
-    // Counts source-bound preparations separately from immutable certificates.
+    // Counts source bound preparations separately from immutable certificates.
     Json temporal_preparation_statistics() const;
     Json native_response_preparation_statistics() const;
     Json native_hodge_preparation_statistics() const;
@@ -129,7 +129,7 @@ class ScientificSession {
     void clear_tensor_window_preparations();
     std::size_t preparation_count() const;
 };
-// Runtime-independent admission. Models may propose queries, bounded plans,
-// evidence-anchored annotations or a clarification; none mutate the source.
+// Runtime independent admission. Models may propose queries, bounded plans,
+// evidence anchored annotations or a clarification; none mutate the source.
 Json apply_scientific_proposal(ScientificSession &session, const Json &proposal);
 } // namespace gadget

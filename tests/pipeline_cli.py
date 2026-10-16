@@ -1,4 +1,4 @@
-"""Pipeline selection, derived-source dependencies, seals and independent exact fields."""
+"""Pipeline selection, derived source dependencies, seals and independent exact fields."""
 import copy
 import hashlib
 import json
@@ -177,7 +177,7 @@ answer=run('assay-query','--workspace',manifest,'--request',save('green.json',gr
 certificate=answer['result']['answers'][0]['certificate']
 assert certificate['residual_verified'] and certificate['green_iterations']==1
 # A requested concurrency is scheduled against actual native workers and the
-# selected partitions; it is not rejected by an unrelated four-job policy.
+# selected partitions; it is not rejected by an unrelated four job policy.
 many=request('native_query',assay='counts',query=dict(operation='coverage',field='all.A'),concurrent_jobs=8)
 answer=run('assay-query','--workspace',manifest,'--request',save('more-native-jobs.json',many),'--out',root/'more-native-jobs')
 assert answer['concurrent_jobs']==1 and answer['query']['concurrent_jobs']==8
@@ -258,7 +258,7 @@ for label,value in [('negative','-1'),('fractional','1/2')]:
     run('import-assays','--spec',save(label+'-import.json',{**cell_spec,'assays':[changed_assay]}),'--out',changed_workspace,fail=True)
     assert not changed_workspace.exists()
 
-# Physical-neighborhood materialization feeds the actual complete Green solve.
+# Physical neighborhood materialization feeds the actual complete Green solve.
 spatial=dict(schema='gadget.pipeline.default.v1',profile='spatial',question='Resolve a retained count field on the declared physical neighborhood',goals=[dict(id='neighbors',method='spatial_relations',parameters=dict(assay='cells',coordinates=['x','y'],frame='section',units='um',metric_diagonal=['1','1'],radius_squared='1',relation_type='physical.neighborhood',evidence='Declared coordinate frame and radius'),output=dict(id='physical',source_namespace='889300',design=design,channel='E')),dict(id='response',method='green_action',input='neighbors',parameters=dict(context='all',field='all.g1',**{'lambda':'1'}))])
 # Spatial operators require an observation carrier, rather than feature rows.
 spatial_assay={**cell_assay,'id':'cells','carrier':'observations','source_namespace':'889400'}
@@ -286,7 +286,7 @@ contrast_result=run('record-view','--input',contrast_archive,'--assay','contrast
 expected=[Fraction(2),Fraction(1),Fraction(2),Fraction(0),Fraction(1)]
 assert [Fraction(value) for value in contrast_result['contrasts'][0]['values']]==expected
 
-# Matched-unit counts are bounded by the admitted data, not a 32-pair constant.
+# Matched unit counts are bounded by the admitted data, not a 32 pair constant.
 pair_count=65
 samples=[f'{side}{i}' for i in range(pair_count) for side in ['L','R']]
 many_observations=source('many-observations.tsv','id\n'+'\n'.join(samples)+'\n')
@@ -328,7 +328,7 @@ for name,settings,source_manifest in [
 bad=copy.deepcopy(pseudobulk);bad['goals'][1]['normalization_evidence_field']='all.absent'
 run('pipeline','--workspace',cell_manifest,'--request',save('recipe-missing-evidence.json',bad),'--out',root/'recipe-missing-evidence',fail=True)
 assert not (root/'recipe-missing-evidence').exists() and not list(root.glob('.gadget-pipeline-*'))
-# Question-driven selection uses immutable recipe bindings, not model-written parameters.
+# Question driven selection uses immutable recipe bindings, not model written parameters.
 def intent(settings, purposes=None):
     entries=[]
     for i, original in enumerate(settings['goals']):
@@ -398,7 +398,7 @@ answer=run('recipe-proposal','--workspace',manifest,'--intent',missing_path,'--r
     '--prompt','Compare treatment expression','--out',root/'missing-design-run')
 assert answer['status']=='clarification' and not (root/'missing-design-run').exists()
 
-# Selection/dependency closure has no former 16-step or 32-field catalog cutoff.
+# Selection/dependency closure has no former 16 step or 32 field catalog cutoff.
 chain=dict(schema='gadget.pipeline.intent.v1',profile='rna_seq',assay='counts',recipes=[
     dict(id='check_'+str(i),purpose='Support checkpoint '+str(i),goal=dict(method='coverage',
          parameters=dict(fields=['all.A']),**(dict(depends_on=['check_'+str(i-1)]) if i else {}))) for i in range(300)])

@@ -175,7 +175,7 @@ def replay(binary, root, with_benchmark=False):
                                             '--request', save(root/f'{name}.assays-query.json',
                                               dict(schema='gadget.assays.query.v1', operation='native_query',
                                                    assay='measurements', query=declarations[name])))
-        # The owning assay certificate contains the source-bound scientific leaf.
+        # The owning assay certificate contains the source bound scientific leaf.
         receipts[name] = receipts[name]['result']['answers'][0]['certificate']
         save(root/f'{name}.certificate.json', receipts[name])
     question = 'How do the two continuous fields and the declared category terms represent the observed response within and across arms?'

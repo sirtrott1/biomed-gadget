@@ -45,7 +45,7 @@ for name,J,M in [('rank-loss',replay.matrix([[1,1],[0,0],[1,1]]),replay.identity
  else:raise AssertionError(name+' was admitted')
 p=subprocess.run([str(session),str(base)],check=True,capture_output=True,text=True)
 session_receipt=json.loads(p.stdout)
-# General assay-native recipes over the original imported source, not a substituted fixture.
+# General assay native recipes over the original imported source, not a substituted fixture.
 pipeline=root/'pipeline';pipeline.mkdir()
 for name,text in [('features.tsv','id\ng1\ng2\ng3\n'),('observations.tsv','id\nA\nB\n'),('counts.tsv','id\tA\tB\ng1\t2\t5\ng2\t0\t3\ng3\t7\t11\n')]:
  (pipeline/name).write_text(text)
@@ -71,7 +71,7 @@ assert result['result']['answers'][0]['certificate']['result']['split']['innovat
 assert result['result']['answers'][0]['certificate']['result']['split']['quadrance']=='34'
 method_answers.MEANINGS['metric_relative_novelty']='metric_relative_novelty'
 answer_checks=method_answers.qualify(binary,pipeline/'answers',original/'workspace.json',{'metric-change':(wrapped,result)})
-# A bound local proposal uses exactly the same runtime-independent admission.
+# A bound local proposal uses exactly the same runtime independent admission.
 proposal=dict(schema='gadget.scientific.agent.proposal.v1',action='query',query=q)
 replay.save(base/'proposal.json',proposal)
 p=subprocess.run([str(session),str(base),'workspace',str(original/'workspace.json')],check=True,capture_output=True,text=True)

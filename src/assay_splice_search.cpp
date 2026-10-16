@@ -452,7 +452,7 @@ AssayFieldsSource splice_search_fields_source(const ResourceImages &images, cons
                 continue;
             const auto lower = donor + min_gap,
                        upper = donor + std::min(max_gap, reference.size() - donor);
-            // Seed hits are retained in reference-offset order. Exact interval
+            // Seed hits are retained in reference offset order. Exact interval
             // lookup excludes only starts outside the declared intron range.
             const auto begin = std::lower_bound(
                 it->second.begin(), it->second.end(), lower,
@@ -549,7 +549,7 @@ AssayFieldsSource splice_search_fields_source(const ResourceImages &images, cons
             element(matches, m);
             ++counts[q.read];
         };
-        // Enumerate biological exon-chain declarations, preserving all ties.
+        // Enumerate biological exon chain declarations, preserving all ties.
         // Native routing supplies the independent global minimum on this DAG.
         struct Frame {
             std::size_t exon, next_link;

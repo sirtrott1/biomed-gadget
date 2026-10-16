@@ -6,7 +6,7 @@ import replay
 
 def measure_command(command, stdout=subprocess.DEVNULL):
     # Keep the measuring parent small and independent of input/binary reads.
-    # wait4 also sees pre-exec child residency, so a large orchestrator's heap
+    # wait4 also sees pre exec child residency, so a large orchestrator's heap
     # must not become the apparent peak of a small importer.
     if not hasattr(os, 'wait4'):
         raise RuntimeError('per-process resource measurement requires POSIX wait4')

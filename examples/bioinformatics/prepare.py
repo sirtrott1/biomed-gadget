@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package caller-declared axes and matrix bytes into a portable import specification."""
+"""Package caller declared axes and matrix bytes into a portable import specification."""
 import argparse
 import hashlib
 import json

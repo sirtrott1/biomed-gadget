@@ -24,8 +24,8 @@ def apply(m,x):
 def coupled(root):
     cert=json.loads((root/'joint.json').read_text());out=cert['result'];q=cert['query'];joint=out['joint_family'];coords=out['coordinate_carrier'];entities={c['id']:i for i,c in enumerate(coords)};n=len(coords);times=vector(q['times']);states=q['joint_family']['states'];weights=vector([s['weight'] for s in states]);check(sum(weights)==1);check(joint['declaration']==q['joint_family']);check(joint['native_constraints_checked']==1)
     # This fixture's native comparison relations explicitly retain alternating
-    # group memberships. Their exact grade-zero curl projector is the mean on
-    # each disjoint four-record membership relation; all other original
+    # group memberships. Their exact grade zero curl projector is the mean on
+    # each disjoint four record membership relation; all other original
     # directions remain in the harmonic field.
     groups=[list(range(0,n,2)),list(range(1,n,2))]
     def sectors(x):
@@ -68,8 +68,8 @@ def coupled(root):
         for pair in result['ensemble_coupling']:
             a,b=pair['left'],pair['right'];defined=variances[a]!=0 and variances[b]!=0;check(pair['defined']==defined)
             if not defined:check(pair['value'] is None);continue
-            # Full original-coordinate cross covariance, computed directly from
-            # the stated law rather than using native sample-Gram contractions.
+            # Full original coordinate cross covariance, computed directly from
+            # the stated law rather than using native sample Gram contractions.
             covariance=[[sum((w*s[a][i]*s[b][j] for w,s in zip(weights,centered)),Q(0)) for j in range(n)] for i in range(n)]
             gamma=sum((x*x for row in covariance for x in row),Q(0))/(variances[a]*variances[b]);check(Q(pair['value'])==gamma);check(0<=gamma<=1)
             if {a%4,b%4}=={2,3} and gamma>0:

@@ -21,25 +21,25 @@ follow RexGraph's external synchronization contract.
 
 Custom types belong in `TemporalEndpoint::declarations`: define the
 `DeclarationRegistry`, attach `TemporalDeclaredValue` records to actual cells
-or occurrences, bind source-aspect factors, and retain authored
+or occurrences, bind source aspect factors, and retain authored
 `TemporalSourceLayoutProgram` instructions. Persist the complete endpoint with
 RexGraph's native RFCXS codec. GADGET accepts that endpoint or its canonical
 binary directly, without recreating its topology from a semantic catalogue.
 
 Original input bytes are `RawByteSource` owners, including arbitrary binary,
-NUL bytes and invalid UTF-8. A provenance record is an authored native Product
+NUL bytes and invalid UTF8. A provenance record is an authored native Product
 with exact Integer factors for source identity, byte offset and byte length.
 `RawSpanDeclaration` names those stable factors and its actual type/version.
 `NativeStudy::raw_span` resolves the native value against its explicitly bound
 original bytes. The returned span owns both the bytes and the native accession;
-it survives source-file edits and destruction of the admitting wrapper. Raw
+it survives source file edits and destruction of the admitting wrapper. Raw
 sources require distinct declared identities even if their contents are equal.
 
 `decode_raw_span` applies an authored `CompiledLayout` directly to such a span
 through RexGraph's `decode_declared_bits`. Integer, Rational, Product, Alternative,
 Optional, Repeated and RationalTensor values use the canonical composite codec.
 The resulting value retains the actual layout, native accession and original
-bytes. This is declared-format processing, rather than a GADGET parser that
+bytes. This is declared format processing, rather than a GADGET parser that
 guesses or normalizes the source. Arbitrary external formats still need an
 explicit ingestion adapter or a matching declaration.
 
@@ -60,7 +60,7 @@ Those identities refer to an authored example declaration. They are not global
 GADGET keys. The caller supplies its actual declaration, data sources and
 instruction word. `PreparedNativeSourceProgram` reads the original packed
 aspect planes and executes the retained instructions with private scratch.
-It preserves inactive occurrences, occurrence order and final-word masks.
+It preserves inactive occurrences, occurrence order and final word masks.
 No adjacency construction or replacement algorithm is introduced.
 
 `execute_native_gluing` accepts a prepared native gluing plan, authentic field
@@ -74,7 +74,7 @@ Output publication namespaces remain explicit. This does not imply a signature
 recoding or transport of arbitrary declared stalk payloads through the pushout.
 
 The native contract executable exercises two different authored machine
-programs over 130 original occurrences, custom factor ordering, raw opaque-byte
+programs over 130 original occurrences, custom factor ordering, raw opaque byte
 provenance, immutable ownership, native byte detection/refusals and complete
 binary gluing replay. It writes RFCXS and RFCXA examples in its output directory:
 

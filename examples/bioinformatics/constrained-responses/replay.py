@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce physically constrained count, ordinal and measured-dose models."""
+"""Reproduce physically constrained count, ordinal and measured dose models."""
 import argparse
 import importlib.util
 from pathlib import Path

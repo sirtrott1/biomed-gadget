@@ -84,7 +84,7 @@ void native(const fs::path &root) {
     invalid.push(split);
     rejects([&] { study.source_target(target, invalid); });
     check(study.declaration().dump() == before, "annotation changed native declaration");
-    // The earlier cell-only interface also accepts source-sized mention counts.
+    // The earlier cell only interface also accepts source sized mention counts.
     auto proposal = Json::object(), mentions = Json::array();
     proposal.set("schema", Json::string("gadget.semantic.proposal.v1"));
     proposal.set("source_digest", Json::string(study.digest()));

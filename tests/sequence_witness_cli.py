@@ -1,4 +1,4 @@
-"""Independent full-grid dual/history and exhaustive compatibility-search contracts."""
+"""Independent full grid dual/history and exhaustive compatibility search contracts."""
 from fractions import Fraction as Q
 import hashlib
 import json

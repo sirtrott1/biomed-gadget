@@ -149,7 +149,7 @@ def qualify(binary, root, workspace, cases):
         rejected = admit(missing, out='missing')
         check(rejected['status'] == 'incompatible' and not (root / 'missing').exists())
         check(rejected['scientific_admission']['native']['unsat_core']['subset_minimal'])
-    # Purpose text cannot turn enumerated ranges, counts or routes into p-values.
+    # Purpose text cannot turn enumerated ranges, counts or routes into p values.
     invalid = copy.deepcopy(intent)
     invalid['recipes'][0]['purpose'] = 'Calibrated population p-values and statistical confidence'
     invalid['answer_contract']['requirements'][0]['observable'] = 'population_p_value'

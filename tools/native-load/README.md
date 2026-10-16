@@ -157,7 +157,7 @@ and final application validation. Repeated assays and partitions produce repeate
 stage names in execution order. A stage time starts after the preceding report;
 `total` measures the complete call, including reporting. The process peak is
 cumulative and cannot be attributed to one stage's retained allocations.
-Resource-only workspaces have no matrix stages. Imports retain all original
+Resource only workspaces have no matrix stages. Imports retain all original
 records, axes, support and coefficients; profiling does not select a subset.
 `import` includes the complete import and admission; `release` then destroys the
 returned workspace before `total` is reported.

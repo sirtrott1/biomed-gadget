@@ -38,6 +38,6 @@ class EvidenceStore {
     NativeRecord execute_record(const NativeRecord &query) const;
     Json execute(const Json &query) const;
 };
-// Non-numerical model observations retain input identities and remain prospective.
+// Non numerical model observations retain input identities and remain prospective.
 Json admit_observation(const Json &proposal, const std::string &source_digest, const Json &media);
 } // namespace gadget

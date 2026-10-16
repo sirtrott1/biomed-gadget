@@ -4,7 +4,7 @@
 #include <stop_token>
 
 namespace gadget {
-// Device policy belongs to the host, never to a model-authored query.
+// Device policy belongs to the host, never to a model authored query.
 struct ComputeOptions {
     std::size_t device_index{};
     bool allow_software_device{false};

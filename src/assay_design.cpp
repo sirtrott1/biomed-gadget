@@ -91,7 +91,7 @@ CompiledDesign compile_design(const Axis &axis, const Json &design, const std::s
             out.groups.push(group);
         }
     // Build categorical postings once for the queried columns. Intersect
-    // source-ordered row lists for each authored conjunction; do not rescan
+    // source ordered row lists for each authored conjunction; do not rescan
     // every row for every specimen or feature group.
     std::map<std::string, std::map<std::string, std::vector<std::size_t>>> postings;
     for (const auto &group : predicates)

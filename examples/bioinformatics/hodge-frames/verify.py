@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent source, frame and full-field checks using rational matrices."""
+"""Independent source, frame and full field checks using rational matrices."""
 import csv, ctypes, ctypes.util, hashlib, json, sys
 from pathlib import Path
 import sympy as S

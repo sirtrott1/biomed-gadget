@@ -1,4 +1,4 @@
-"""Independent original-row oracles for native legacy analysis."""
+"""Independent original row oracles for native legacy analysis."""
 import csv
 from fractions import Fraction as Q
 import hashlib

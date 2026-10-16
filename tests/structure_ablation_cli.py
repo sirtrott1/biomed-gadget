@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contract and source-admissibility checks for structural role ablations."""
+"""Contract and source admissibility checks for structural role ablations."""
 import copy
 import importlib.util
 import json
@@ -129,7 +129,7 @@ def main(binary, root):
     bad(lambda v:v.update(lattice_snapshots='yes'))
     bad(lambda v:v.update(unknown='member'))
     for v in variants:execute(v,True)
-    # All-grade deletion admits the zero carrier, rather than inventing a cell.
+    # All grade deletion admits the zero carrier, rather than inventing a cell.
     empty=copy.deepcopy(q);empty.pop('sheaf');empty.pop('comparisons')
     empty['roles']=[demo.cell_role('all',[c['id'] for grade in out['source']['cells'] for c in grade],'All explicitly identified source cells')]
     empty['ablations']=[dict(id='zero-carrier',remove_roles=['all'])]

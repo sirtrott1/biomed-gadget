@@ -34,8 +34,8 @@ class LocalAgent {
     LocalAgent(std::shared_ptr<const Workspace> study, LocalModelOptions options);
     LocalAgent(std::shared_ptr<const ScientificStudy> study, LocalModelOptions options);
     LocalAgent(const Json &pipeline_catalog, LocalModelOptions options);
-    // Accepts a pipeline intent or an explicit source-context request. Each
-    // profile re-admits proposals against the same immutable owning workspace.
+    // Accepts a pipeline intent or an explicit source context request. Each
+    // profile re admits proposals against the same immutable owning workspace.
     LocalAgent(std::shared_ptr<const AssayWorkspace> workspace, const Json &intent,
                LocalModelOptions options);
     LocalAgent(std::shared_ptr<const ScientificFacts> facts, LocalModelOptions options);

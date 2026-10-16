@@ -3,7 +3,7 @@
 #include <stdexcept>
 
 namespace gadget::scientific_detail {
-// One canonical projection owner for original-coordinate observed models.
+// One canonical projection owner for original coordinate observed models.
 // SDK actions supply every rank, kernel, Gram preparation and field application.
 struct PreparedObservedModel {
     rfc::numeric::ExactMatrix design, kernel;

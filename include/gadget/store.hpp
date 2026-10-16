@@ -13,7 +13,7 @@ enum class StudyPreparationStage {
     Renamed,
     ParentSynced
 };
-// Fault-injection seam for the application provenance preparation, before HEAD.
+// Fault injection seam for the application provenance preparation, before HEAD.
 using StudyPreparationHook = std::function<void(StudyPreparationStage)>;
 // Exclusive Linux local profile. Every operation opens the canonical coordinator.
 // Owning readers returned by load_store survive its closure and later publication.
@@ -40,7 +40,7 @@ class StudySnapshot {
     rfc::storage::DurableNativeRoot root() const;
     std::shared_ptr<const Workspace> workspace() const;
 };
-// One service process: owning readers, serialized writers, whole-root conflicts.
+// One service process: owning readers, serialized writers, whole root conflicts.
 // Active calls require service lifetime; StudySnapshot pins outlive it.
 class ConcurrentStudyStore {
     struct State;

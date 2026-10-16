@@ -95,7 +95,7 @@ class NativeRecord {
         rfc::storage::NativeSeriesLimits limits = native_data_limits());
     // Inspect retained byte identities without copying or materializing their payloads.
     static std::vector<std::uint64_t> source_keys(const rfc::storage::TemporalEndpoint &endpoint);
-    // Historical byte references require from_history; a bare endpoint must be self-contained.
+    // Historical byte references require from_history; a bare endpoint must be self contained.
     static NativeRecord from_endpoint(const rfc::storage::TemporalEndpoint &endpoint,
                                       std::uint64_t source_namespace);
     void write(const std::filesystem::path &path) const;

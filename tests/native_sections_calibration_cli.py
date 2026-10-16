@@ -114,7 +114,7 @@ def main(binary, consumer, root):
     stalks = [dict(grade=c['grade'], key=c['key'], axes=['all.A'] if c['grade'] == 1 else ['scalar'])
               for c in cells]
     maps = [dict(grade=o['grade'], key=o['key'], matrix=[['1']]) for o in occurrences]
-    # The complete retained chain supplies all two-step cancellations.
+    # The complete retained chain supplies all two step cancellations.
     local = dict(operation='local_sections', context='all', construction='cellular_sheaf',
                  stalks=stalks, maps=maps, metric='identity',
                  sections=[dict(id='source', grade=1, fields=['all.A'], quantity='declared_amplitude',

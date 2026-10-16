@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Admission, exact-model and source-contract checks for observed responses."""
+"""Admission, exact model and source contract checks for observed responses."""
 import copy,csv,importlib.util,json,shutil,subprocess,sys
 from fractions import Fraction as Q
 from pathlib import Path
@@ -45,7 +45,7 @@ def main(binary,root):
     for a,b in zip(original_events,[f for f in scaled['states'][0]['fits'] if f['response']=='events']):
         check(a['objective_represented']==b['objective_represented']);check(a['residual_quadrance']==b['residual_quadrance'])
         check(all(Q(v)/60==Q(w) for v,w in zip(a['represented']['sectors']['full'],b['represented']['sectors']['full'])))
-    # No-intercept and empty-column models retain valid native zero spans.
+    # No intercept and empty column models retain valid native zero spans.
     zero=copy.deepcopy(q);zero['model']=dict(intercept=False,terms=[]);zero.pop('dose_comparisons');empty=execute(zero)
     check(all(p['models'][1]['rank']==0 for p in empty['preparations']))
     check(all(Q(f['residual_quadrance'])>=0 for f in empty['states'][0]['fits']))
@@ -79,7 +79,7 @@ def main(binary,root):
     bad(lambda v:v['reference_law'].update(alpha='0'));bad(lambda v:v.update(green_parameter='0'))
     bad(lambda v:v['interpretation'].update(evidence=[dict(document='missing',start=0,end=1,text='x')]))
     for v in variants:execute(v,True)
-    # Categorical relabeling is an input declaration, not a numeric-distance change.
+    # Categorical relabeling is an input declaration, not a numeric distance change.
     recoded=root/'recoded';qq=demo.authored(recoded,1);qq.pop('reference_law')
     path=recoded/'inputs/observations.tsv'
     rows=list(csv.reader(path.open(),delimiter='\t'));conversion={'40':'-7','10':'9000','70':'2'}
@@ -91,7 +91,7 @@ def main(binary,root):
     rr=demo.execute(binary,recoded,qq)['result']['answers'][0]['certificate']['result']
     for a,b in zip([f for f in original['states'][0]['fits'] if f['response']=='state'],[f for f in rr['states'][0]['fits'] if f['response']=='state']):
         check(a['objective_input']==b['objective_input']);check(a['objective_represented']==b['objective_represented'])
-    # Actual observed-data admission, rather than only malformed query syntax.
+    # Actual observed data admission, rather than only malformed query syntax.
     for name,table,column,value in [('invalid-exposure','observations.tsv','exposure','0'),
                                     ('invalid-trials','measurements.tsv','trials','3/2'),
                                     ('invalid-count','measurements.tsv','events','-1'),
@@ -107,7 +107,7 @@ def main(binary,root):
         for d in v['responses']:d['evidence']=v['interpretation']['evidence']
         v.pop('dose_comparisons');v.pop('reference_law')
         execute(v,True,next((target/'workspace').rglob('study.json')))
-    # Count fields on grade-one primary relations retain gradient, curl and
+    # Count fields on grade one primary relations retain gradient, curl and
     # harmonic information, including the original higher filling.
     target=root/'grade-one';demo.authored(target,1)
     path=target/'inputs/relations.json';data=json.loads(path.read_text());ids=[d['id'] for d in data['relations'] if d['grade']==1]

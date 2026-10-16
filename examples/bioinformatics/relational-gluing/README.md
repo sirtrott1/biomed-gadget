@@ -12,10 +12,10 @@ identical values at corresponding interface cells. Disagreement refuses gluing.
 Use `assay_sections` for an explicitly declared metric compatibility analysis.
 
 This constructed example contains an interface edge, two triangular fillings,
-two three-way relations, repeated cancelling occurrences, an inactive occurrence
+two three way relations, repeated cancelling occurrences, an inactive occurrence
 and a supported zero occurrence. The right participant deliberately uses a
 different coordinate order and different names. Its explicit map supplies the
-correspondence. Grade-zero measurements, grade-one signals and grade-two signals
+correspondence. Grade zero measurements, grade one signals and grade two signals
 are separate sections. Boundary lineage continues to grade zero when requested.
 
 From the GADGET source directory, with the executable on `PATH`:
@@ -27,15 +27,15 @@ gadget assay-query --workspace workspace/workspace.json --request inputs/query.j
 gadget pipeline-prepare --workspace workspace/workspace.json --request inputs/pipeline.json
 ```
 
-The glued complex has five grade-zero cells, seven grade-one cells and two
-grade-two cells. It retains 20 grade-one occurrences and six grade-two occurrences.
+The glued complex has five grade zero cells, seven grade one cells and two
+grade two cells. It retains 20 grade one occurrences and six grade two occurrences.
 The shared edge's scalar value is 2. The two face signals are 7 and 11; their
 boundary contributes 18 on the shared edge because a chain boundary adds both
 incident contributions. Applying the next boundary gives supported zeros. This
 distinguishes pointwise section gluing from chain pushforward or boundary action.
 
 The compatibility result includes original publication namespaces and cutoffs,
-original byte-artifact bindings, inclusion maps for every original cell and occurrence, retained
+original byte artifact bindings, inclusion maps for every original cell and occurrence, retained
 attaching positions and aspects, exact coefficients, field meanings and ordered
 boundary certificates. Generated keys address the prospective glued complex;
 the inclusion maps address original publications. The result does not publish a
@@ -65,8 +65,8 @@ identities and full interface maps. For example:
 python3 examples/bioinformatics/relational-gluing/make_example.py --out incidence-inputs --modules 1000 --repetitions 8
 ```
 
-This diagram has 4,000 vertices, 7,000 grade-one relations, 2,000 grade-two fillings
-and 26,000 retained occurrences after gluing. It includes 2,000 three-way relations.
+This diagram has 4,000 vertices, 7,000 grade one relations, 2,000 grade two fillings
+and 26,000 retained occurrences after gluing. It includes 2,000 three way relations.
 The reference reconstructs the complete source maps, occurrence fibres and all
 section/boundary coordinates from the authored records. These constructed diagrams
 test software behavior; they are not biomedical datasets. Example defaults and
@@ -75,6 +75,6 @@ chosen benchmark sizes impose no application limits.
 C++ consumers can use `gadget::execute_native_gluing` from
 `<gadget/native_gluing.hpp>` to receive the owning native plan and complete native
 chain lineage directly. `native_gluing_endpoint` exports every retained chain as
-a source-grade tensor over the constructed relational complex. Persist it through
+a source grade tensor over the constructed relational complex. Persist it through
 RexGraph's RFCXS codec and persist the original input square through RFCXA;
 neither requires a JSON result. See [native data admission](../../native-data/README.md).

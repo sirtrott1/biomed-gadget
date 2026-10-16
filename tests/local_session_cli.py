@@ -1,4 +1,4 @@
-"""Caller-authored scientific switching retains weights and isolates prompt state."""
+"""Caller authored scientific switching retains weights and isolates prompt state."""
 import json
 import shutil
 import subprocess

@@ -1,4 +1,4 @@
-"""Independent exhaustive edit, exon-chain and read-cover expectations."""
+"""Independent exhaustive edit, exon chain and read cover expectations."""
 import hashlib
 import itertools
 import json

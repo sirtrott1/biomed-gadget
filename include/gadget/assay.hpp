@@ -10,7 +10,7 @@ namespace gadget {
 // Each assay's numerical storage is canonical RFCXS, not an application matrix format.
 Json bioinformatics_capabilities();
 Json inspect_bioinformatics_file(const fs::path &specification);
-// Native physical records retain source spans and typed source-grade columns.
+// Native physical records retain source spans and typed source grade columns.
 NativeRecord inspect_bioinformatics_record(const fs::path &specification);
 void import_assays(const fs::path &specification, const fs::path &destination);
 // Report completed import stages. An observer exception aborts the import and
@@ -80,7 +80,7 @@ class AssayWorkspace {
     const NativeRecord &native_publication() const;
     void write_native(const fs::path &path) const;
     std::string digest() const;
-    // A researcher-selected view of source identities and complete quoted spans.
+    // A researcher selected view of source identities and complete quoted spans.
     Json source_context(const Json &request) const;
     // Read the selected actual native partition through its original owner.
     Json read_source(const Json &request) const;
@@ -105,13 +105,13 @@ class AssayWorkspace {
     Json replay_derivation(const std::string &assay, const fs::path &destination,
                            std::shared_ptr<CpuResources> resources = {}) const;
     Json derivation_certificate(const std::string &assay) const;
-    // Writes bounded per-partition certificates for large assays, then seals a
+    // Writes bounded per partition certificates for large assays, then seals a
     // complete result index. Failed runs do not leave a published result directory.
     Json run(const Json &request, const fs::path &destination,
              std::shared_ptr<CpuResources> resources = {}) const;
     NativeRecord run_record(const NativeRecord &request, const fs::path &destination,
                             std::shared_ptr<CpuResources> resources = {}) const;
-    // Selects an actual admitted native partition for the existing model/work-graph interface.
+    // Selects an actual admitted native partition for the existing model/work graph interface.
     std::shared_ptr<const ScientificStudy> study(const std::string &assay,
                                                  std::size_t partition = 0) const;
 };

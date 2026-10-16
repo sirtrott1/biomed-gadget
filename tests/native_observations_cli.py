@@ -78,7 +78,7 @@ for name in ['unfilled-square', 'filled-square']:
                           '--query', replay.save(root/'self-query.json', {**query, 'publication': 'self'}))
     assert certificate['result'] == expected['result']
     assert certificate['field_semantics'] == expected['field_semantics']
-# The actual assay-native path, default/custom recipe, DAG and complete answer artifact.
+# The actual assay native path, default/custom recipe, DAG and complete answer artifact.
 pipeline = root/'pipeline'; pipeline.mkdir()
 features = pipeline/'features.tsv'; features.write_text('id\ng1\ng2\ng3\ng4\n')
 observations = pipeline/'observations.tsv'; observations.write_text('id\nA\nB\n')

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare certified physical fits with a floating-point constrained optimizer."""
+"""Compare certified physical fits with a floating point constrained optimizer."""
 import argparse
 import json
 from fractions import Fraction

@@ -60,7 +60,7 @@ def verify(root,certificate="certificate.json",output="independent-verification.
         checks+=1
     for j in range(2,len(grades)):check(B[j-1]*B[j]==s.zeros(len(grades[j-2]),len(grades[j])))
     blocks=[b['coordinates'] for b in out['exchange_blocks']]
-    # Match the native mixed-radix order: the first block changes fastest.
+    # Match the native mixed radix order: the first block changes fastest.
     assignments=[list(reversed(v)) for v in itertools.product(*(list(itertools.permutations(b)) for b in reversed(blocks)))]
     check(len(assignments)==math.prod(math.factorial(len(b)) for b in blocks))
     scenarios=query.get('uncertainty',{}).get('scenarios',[dict(id='observed',weight='1',fields=query['fields'])])

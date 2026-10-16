@@ -205,7 +205,7 @@ struct Compiler {
                     element=shape(key,D::alternative({},std::move(alternatives)));
                 }
                 // Cardinality is part of this admitted value's declaration. A host
-                // address-space maximum would declare nonexistent fixed-width
+                // address space maximum would declare nonexistent fixed width
                 // elements and can overflow native layout bounds before encoding.
                 const auto count=x.elements.size();
                 const auto type=shape("repeated/"+signature(element)+"/"+std::to_string(count),D::repeated({},element,count,count));

@@ -8,7 +8,7 @@ binary,producer,session,root=[Path(x).resolve() for x in sys.argv[1:]]
 shutil.rmtree(root,ignore_errors=True)
 replay.examples(binary,producer,root)
 records=[verify.verify(x) for x in sorted(root.iterdir()) if (x/'result.json').exists()]
-# A coordinator selects each actual foreign publication, never its own equal-size source.
+# A coordinator selects each actual foreign publication, never its own equal size source.
 coordinator=json.loads((root/'filled-square/study/study.json').read_text())
 coordinator['native']['path']='filled-square/study/'+coordinator['native']['path']
 for doc in coordinator['documents']:doc['path']='filled-square/study/'+doc['path']
@@ -63,7 +63,7 @@ for change in [lambda x:x.update(source_sequence='8'),lambda x:x.update(source_s
 p=subprocess.run([str(session),str(base)],capture_output=True,text=True)
 assert p.returncode==0,p.stderr
 replay.save(root/'session.json',json.loads(p.stdout))
-# Full-family rejection is required even when the defective interface or
+# Full family rejection is required even when the defective interface or
 # metric is remote from the selected grade.
 family_refusals=[]
 for name,template in [('remote-boundary','grade-three'),('unselected-metric','positive-metric')]:

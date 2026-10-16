@@ -21,7 +21,7 @@ void agrees(const Json &response, const Workspace &study, const Json &query) {
     check(response.at("status").text() == "executed", "model did not execute requested query");
     const auto proposed = response.at("proposal").at("query");
     auto effective = Json::parse(proposed.dump());
-    // The shipped typed-moment query defaults to first order. Preserve every
+    // The shipped typed moment query defaults to first order. Preserve every
     // other requested member and compare objects without depending on key order.
     if (query.at("operation").text() == "typed_moment" && !effective.has("order"))
         effective.set("order", Json::integer(1));

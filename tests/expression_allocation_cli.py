@@ -1,4 +1,4 @@
-"""Independent complete read-placement, allocation, coupling and replay oracles."""
+"""Independent complete read placement, allocation, coupling and replay oracles."""
 from fractions import Fraction as Q
 import copy
 import hashlib
@@ -167,7 +167,7 @@ run('derive-assays','--workspace',workspace,'--request',save('infeasible-derive.
 check(not (root/'infeasible-derived').exists(),'Infeasibility leaves no measured endpoint publication')
 
 
-# Equivalence-class files may use different candidate orders and repeated semantic
+# Equivalence class files may use different candidate orders and repeated semantic
 # classes: every original row stays in evidence while the declared map sums counts.
 def eqtext(ids, classes):return '\n'.join([str(len(ids)),str(len(classes)),*ids,*[str(len(p))+' '+ ' '.join(str(ids.index(i)) for i in p)+' '+str(n) for p,n in classes]])+'\n'
 eqs=[resource('one.eq','salmon_eq',eqtext(['A1','A2','B'],[(['A1','A2'],2),(['A1'],1),(['B'],1),(['A1','A2'],1)])),resource('two.eq','salmon_eq',eqtext(['B','A2','A1'],[(['A1'],2),(['A2'],2),(['B'],1)]))]
@@ -198,7 +198,7 @@ for trial in range(8):
             observed=set(evidence['classes'][evidence['observations'][i]['class_index']]['candidates'])
             check(observed==(expected or {'__unassigned__'}),'Independent random literal candidate universe')
 
-# Junction-compatible prealigned evidence through the same expression contract.
+# Junction compatible prealigned evidence through the same expression contract.
 if run('bioinformatics')['htslib_enabled']:
     genome=resource('genome.fa','fasta','>chr\n'+'A'*100+'\n')
     frame=dict(assembly='authored-genome',sequence_sha256=genome['source']['sha256'],coordinate_convention='zero_based_half_open',contigs=[dict(id='chr',length=100)])
@@ -218,7 +218,7 @@ if run('bioinformatics')['htslib_enabled']:
     ignored=copy.deepcopy(q);ignored['evidence_source']['junction_policy']='ignore';other=query('ignored-junctions',w,ignored)
     check(other['evidence_records'][0]['evidence']['allocation_request']['classes'] != allocation['classes'],'Declared overlap and exact transcript compatibility are different contracts')
     invalid=copy.deepcopy(q);invalid['evidence_source']['overlap']='any_aligned_base';query('invalid-junction-policy',w,invalid,fail=True)
-    # Exceed both former 10,000-feature and ten-million pair-comparison limits.
+    # Exceed both former 10,000 feature and ten million pair comparison limits.
     count=10003;seq=resource('large-genome.fa','fasta','>chr\n'+'A'*(count*2+1)+'\n');fr=copy.deepcopy(frame);fr['sequence_sha256']=seq['source']['sha256'];fr['contigs'][0]['length']=count*2+1
     large=resource('large-exons.gtf','gtf',''.join(f'chr\tfixture\texon\t{2*i+1}\t{2*i+1}\t.\t+\t.\ttranscript_id "t{i}";\n' for i in range(count)),reference=fr)
     sh='@HD\tVN:1.6\n@SQ\tSN:chr\tLN:'+str(count*2+1)+'\n@RG\tID:lane\tSM:s\n'
@@ -229,7 +229,7 @@ if run('bioinformatics')['htslib_enabled']:
     check(len(large_result['segments'])==1001 and large_result['execution']['candidate_feature_comparisons']==1001,'Complete interval join excludes disjoint geometry without pair ceiling')
     check(len(large_result['allocation_certificate']['result']['samples'][0]['bounds'])==count,'Complete target coordinate output')
 
-# Scientist recipes and fully detached-source replay.
+# Scientist recipes and fully detached source replay.
 settings=dict(schema='gadget.pipeline.default.v1',profile='rna_seq',question='Which gene counts and changes are identified while isoforms remain ambiguous?',goals=[dict(method='expression_allocations',id='expression',parameters={k:v for k,v in request.items() if k not in ['schema','operation']},output=dict(id='expression',source_namespace='900821',channel='E',design=dict(question='Inspect sharp assignment endpoints',population='Authored paired samples',selection='Every supplied read',limitations=['Bounds retain candidate ambiguity'])))])
 plan=run('pipeline-prepare','--workspace',workspace,'--request',save('pipeline.json',settings));save('plan.json',plan)
 run('pipeline','--workspace',workspace,'--request',root/'plan.json','--out',root/'pipeline-results')

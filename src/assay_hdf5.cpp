@@ -195,7 +195,7 @@ Matrix read_h5ad(const fs::path &root, const Json &spec) {
     (void)rfc::numeric::IndexDomain({nr, nc});
     const auto implicit = spec.at("implicit_entries").text();
     require(implicit == "measured_zero" || implicit == "unobserved", "H5AD implicit entries");
-    // Open the already hashed bytes, so admission cannot read a different on-disk revision.
+    // Open the already hashed bytes, so admission cannot read a different on disk revision.
     std::lock_guard lock(hdf5_mutex);
     Handle access(H5Pcreate(H5P_FILE_ACCESS), H5Pclose);
     require(H5Pset_fapl_core(access.id, 65536, false) >= 0 &&

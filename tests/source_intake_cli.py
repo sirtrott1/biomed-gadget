@@ -1,4 +1,4 @@
-"""Source-complete admission beyond previous ceilings and key range overlaps."""
+"""Source complete admission beyond previous ceilings and key range overlaps."""
 import copy
 import json
 import shutil

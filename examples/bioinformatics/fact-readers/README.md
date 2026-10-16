@@ -21,7 +21,7 @@ separately.
 
 The focused RNA selection reports geneA contrast bounds of one and the unresolved
 A1 allocation direction. The chromatin selection reports a physical residual
-`[3/2, -3/2, 0]`, residual quadrance 18, and eight independent zero-coverage
+`[3/2, -3/2, 0]`, residual quadrance 18, and eight independent zero coverage
 directions among the original interval variables. It also retains the native
 Green response and gradient, curl and harmonic quadrances. These are authored
 method examples; their carriers and metrics are described in the
@@ -30,9 +30,9 @@ method examples; their carriers and metrics are described in the
 The Green values are `3/26`, `-3/26` and zero on the three physical segments.
 The interval field has gradient quadrance `8/5`, curl quadrance zero and harmonic
 quadrance `207/5`. These values concern different declared carriers: the physical
-segment field and the original interval-variable field. Their owners and complete
+segment field and the original interval variable field. Their owners and complete
 queries remain in the receipts. A model does not equate these carriers or infer
-a biochemical feedback loop from the zero-coverage sector.
+a biochemical feedback loop from the zero coverage sector.
 
 Use `gadget read-facts` with the chosen entry's workspace, fact request and
 artifact root, a local GGUF and the literal question in that fact request. The
