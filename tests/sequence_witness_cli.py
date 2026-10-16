@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -201,6 +202,20 @@ def main():
         for budget in [0,1,2,12]:
             req=matching_request(rule,budget,junctions,2)
             matching_oracle(reads,refs,req,query('matching-'+rule+'-'+str(budget),mws,req))
+    literal_reads=dict(first='NCGTACGT',second='ACGTNCGT',both='NCGTNCGT',
+                       no_seed='NNG',all_unknown='NN',iupac='RY',short='N')
+    literal_refs=dict(repeated='ACGTACGTACGT',other='TGCAACGT')
+    literal_ws=workspace('literal-query-symbols',literal_reads,literal_refs)
+    for budget in [0,1,2,8]:
+        req=matching_request('literal',budget)
+        matching_oracle(literal_reads,literal_refs,req,
+            query('literal-query-symbols-'+str(budget),literal_ws,req))
+    mixed_refs=dict(literal='NCGTNCGT',iupac='RYACGT',dna='ACGTACGT')
+    mixed_ws=workspace('literal-reference-symbols',literal_reads,mixed_refs)
+    for budget in [0,1,2]:
+        req=matching_request('literal',budget)
+        matching_oracle(literal_reads,mixed_refs,req,
+            query('literal-reference-symbols-'+str(budget),mixed_ws,req))
     boundary_reads=dict(joined='AATT',contiguous='CCTT',short='AA',longer='AACCTTA')
     boundary_refs=dict(joined='AACCTT',contiguous='AATT')
     boundary_junctions=[dict(id='boundary-'+strand,contig='joined',donor=2,acceptor=4,
@@ -225,6 +240,18 @@ def main():
     check(int(result['candidate_universe'])*len(q)>50000000 and int(result['base_comparisons'])<50000000,
           'complete index proof covers universe beyond former comparison limit')
     check(result['index']['reference_base_visits']==len(r),'entire retained reference indexed without a sampled position set')
+    for offset in [5,len(q)//2+5]:
+        unknown=q[:offset]+'N'+q[offset+1:]
+        nws=workspace('long-read-symbol-'+str(offset),dict(q=unknown),dict(r=r))
+        req=matching_request('literal',1);req['strands']=['+']
+        result=query('long-read-symbol-'+str(offset),nws,req)
+        expected=[m.start() for m in re.finditer('(?='+re.escape(unknown).replace('N','[ACGT]')+')',r)]
+        check([m['blocks'][0][0] for m in result['matches']]==expected and expected==[25000],
+              'complete independent literal-symbol placement family')
+        check(all(m['mismatches']=='1' for m in result['matches']),
+              'literal unknown retains its native mismatch count')
+        check(int(result['base_comparisons'])<int(result['candidate_universe'])*len(q),
+              'literal unknown retains indexed candidate filtering')
 
     many={f'q{i}':'ACGTCAGT' for i in range(1025)}
     ws_many=workspace('many-queries',many,dict(r='TTTTTTTTTT'))

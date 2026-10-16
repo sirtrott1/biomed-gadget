@@ -186,6 +186,13 @@ AssayFieldsSource reference_match_fields_source(const ResourceImages &images, co
     };
     sequence::SeedIndex index;
     std::vector<Oriented> oriented;
+    const auto dna_only = [](const auto &bases) {
+        return std::all_of(bases.begin(), bases.end(),
+                           [](char c) { return sequence::dna(c) >= 0; });
+    };
+    const bool dna_reference = ambiguity == "literal" &&
+        std::all_of(references.begin(), references.end(),
+                    [&](const auto &reference) { return dna_only(reference.bases); });
     for (std::size_t q = 0; q < queries.size(); ++q) {
         require(!queries[q].bases.empty(), "reference query is empty");
         for (const auto &strand : strands) {
@@ -197,8 +204,7 @@ AssayFieldsSource reference_match_fields_source(const ResourceImages &images, co
                        {}};
             v.indexed =
                 ambiguity == "literal" && max_mismatches < v.bases.size() &&
-                std::all_of(
-                    v.bases.begin(), v.bases.end(), [](char c) { return sequence::dna(c) >= 0; });
+                (dna_reference || dna_only(v.bases));
             if (v.indexed) {
                 // At most k mismatches leave one of k+1 disjoint seeds intact.
                 // Shortening a seed to the intrinsic uint64 capacity preserves
@@ -209,6 +215,9 @@ AssayFieldsSource reference_match_fields_source(const ResourceImages &images, co
                     const auto offset =
                         rfc::machine::checked_size_mul(part, v.bases.size()) / parts;
                     const auto seed = v.bases.substr(offset, length);
+                    // On a DNA reference, a literal outside ACGT necessarily mismatches.
+                    // Such a seed cannot be the intact seed of an admitted placement.
+                    if (!dna_only(seed)) continue;
                     index.request(seed);
                     v.seeds.emplace_back(offset, seed);
                 }
