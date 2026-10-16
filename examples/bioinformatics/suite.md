@@ -228,8 +228,12 @@ of `k + 1` disjoint seeds is unchanged in every acceptable placement. The existi
 injective two-bit index retains every requested seed hit. A seed is shortened
 when needed to fit its intrinsic 64-bit representation; this preserves the
 necessary condition. Full query-length native mismatch actions verify every
-candidate. IUPAC queries, nonliteral rules and `k >= m` use the full contiguous
-placement universe. Every declared-junction placement is checked in full.
+candidate. On a completely ACGT reference, a literal query symbol outside ACGT
+necessarily consumes a mismatch. A seed containing that symbol cannot be the
+intact seed of an admitted placement, so it is omitted without discarding the
+query. Ambiguous literal queries on references containing ambiguous tokens,
+nonliteral rules and `k >= m` use the full contiguous placement universe.
+Every declared-junction placement is checked in full.
 
 `literal` means equal tokens and `possible` means a nonempty IUPAC intersection.
 This method's established `definite` rule requires the query's IUPAC set to be
