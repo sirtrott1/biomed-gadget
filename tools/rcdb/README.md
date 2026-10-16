@@ -22,12 +22,13 @@ python3.14 -m venv .venv-rcdb
 ```
 
 The hash check covers the six project wheels; third-party dependencies above
-are installed separately. The profile does not fetch or embed the independent
-SDK, install another Python platform's native wheels or alter a model's native
-engine identity. Its native Python binding retains its qualified SDK snapshot.
-GADGET's separately built C++ reader must pass the adapter contracts against
-that installed Python profile. Rebuilding a Python native binding against a
-different SDK requires its own qualification and checkpoint compatibility checks.
+are installed separately. This profile includes rebuilt core, native binding
+and RCQL wheels with the updated algebraic certificate and affine transport
+providers. The native binding and GADGET use the same complete SDK header
+inventory. The SDK remains an independent dependency. GADGET's separately built
+C++ reader must pass the adapter contracts against the installed Python profile.
+Rebuilding a native binding against another SDK requires its own qualification
+and checkpoint compatibility checks.
 
 Run the adapter contracts with this environment's interpreter. A noneditable
 wheel installation allows imports to be checked from outside the source checkouts:
@@ -52,6 +53,14 @@ project import paths and versions. It does not rebuild dependencies, change mode
 engine receipts or establish compatibility with an older checkpoint. A retained
 Python runtime qualified against another SDK will refuse this same-SDK check;
 retain that runtime for its existing model records.
+
+Existing model checkpoints retain their original native engine identity. The
+current graded transport provider refuses execution of a checkpoint requiring a
+different engine. Its explicit `replay_graded_stalk_transport_model(state, source)`
+API can produce a new state by replaying the original observations and checking
+the complete retained transport family against the current provider. Preserve
+the original checkpoint, source bytes and runtime; replay does not rewrite them
+or automatically migrate stored records.
 
 These native publication contracts require the Python core and storage/query
 packages. Zstandard tests also require `zstandard`; zlib is built into Python.
