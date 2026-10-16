@@ -3,6 +3,7 @@
 #include <gadget/biomedical.hpp>
 #include <gadget/execution.hpp>
 #include <gadget/facts.hpp>
+#include <gadget/homology_diagram.hpp>
 #include <gadget/model.hpp>
 #include <gadget/native_pattern.hpp>
 #include <gadget/pipeline.hpp>
@@ -40,6 +41,8 @@ int main(int argc, char **argv) {
                    "       native-record --input FILE --out FILE.rfcxs\n"
                    "       record-view --input FILE\n"
                    "       replay-scientific --record FILE.rfcxs --out-record FILE.rfcxs\n"
+                   "       homology-diagram --spec FILE --out FILE.rfcxs\n"
+                   "       replay-homology --record FILE.rfcxs --out FILE.rfcxs\n"
                    "       pattern-query --study FILE --model FILE.rfcxs --request FILE --out FILE.rfcxs\n"
                    "       replay-pattern --record FILE.rfcxs --out FILE.rfcxs\n"
                    "       native-study --study FILE --out FILE.rfcxs\n"
@@ -152,6 +155,8 @@ int main(int argc, char **argv) {
             {"native-record", {"--input","--out"}},
             {"record-view", {"--input","--member","--format","--assay"}},
             {"replay-scientific", {"--record", "--out-record"}},
+            {"homology-diagram", {"--spec", "--out"}},
+            {"replay-homology", {"--record", "--out"}},
             {"pattern-query", {"--study", "--model", "--request", "--out"}},
             {"replay-pattern", {"--record", "--out"}},
             {"native-study", {"--study","--out"}},
@@ -705,6 +710,14 @@ int main(int argc, char **argv) {
             const auto replayed = gadget::replay_scientific_record(
                 gadget::NativeRecord::read(required("--record")), gadget::CpuResources::local());
             replayed.write(required("--out-record"));
+            return 0;
+        }
+        if (command == "homology-diagram") {
+            gadget::run_homology_diagram(required("--spec")).write(required("--out"));
+            return 0;
+        }
+        if (command == "replay-homology") {
+            gadget::replay_homology_diagram(gadget::NativeRecord::read(required("--record"))).write(required("--out"));
             return 0;
         }
         if(command=="record-view") {

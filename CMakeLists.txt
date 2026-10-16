@@ -116,7 +116,7 @@ set(gadget_core_sources src/record_view.cpp src/io.cpp src/pager.cpp src/measure
 list(APPEND gadget_core_sources src/assay_alignment.cpp src/assay_search.cpp src/assay_assembly.cpp src/assay_constraints.cpp src/assay_constraint_factors.cpp src/assay_persistence.cpp src/structure.cpp)
 list(APPEND gadget_core_sources src/assay_indexed_alignment.cpp src/assay_splice_search.cpp src/assay_read_reconstruction.cpp src/assay_batch.cpp)
 list(APPEND gadget_core_sources src/pipeline.cpp src/pipeline_answers.cpp src/assay_controlled_coverage.cpp src/assay_native_derivation.cpp src/assay_native_resource.cpp src/assay_field.cpp src/assay_sections.cpp src/assay_gluing.cpp)
-list(APPEND gadget_core_sources src/source_context.cpp src/scientific_source.cpp src/scientific_compact.cpp src/claims.cpp src/facts.cpp)
+list(APPEND gadget_core_sources src/source_context.cpp src/scientific_source.cpp src/scientific_compact.cpp src/claims.cpp src/facts.cpp src/homology_diagram.cpp)
 list(APPEND gadget_core_sources src/research_ensemble.cpp src/scientific_reference.cpp src/scientific_result_fields.cpp src/research_structural_calibration.cpp)
 list(APPEND gadget_core_sources src/research_ablation.cpp src/research_response.cpp src/research_temporal.cpp src/research_joint_endpoints.cpp src/research_factored.cpp)
 list(APPEND gadget_core_sources src/scientific_native_response.cpp src/scientific_native_hodge.cpp src/scientific_native_observation.cpp src/scientific_native_novelty.cpp)
@@ -448,6 +448,16 @@ if(BUILD_TESTING)
   add_test(NAME gadget_query_resource_contracts COMMAND gadget_query_resource_tests
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/legacy-mini" "${GADGET_TEST_DATA_DIR}/query-resource-contracts")
   set_tests_properties(gadget_query_resource_contracts PROPERTIES TIMEOUT 120)
+  add_executable(gadget_homology_diagram_tests tests/homology_diagram.cpp)
+  target_link_libraries(gadget_homology_diagram_tests PRIVATE gadget::core)
+  target_compile_options(gadget_homology_diagram_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME gadget_homology_diagram_contracts COMMAND gadget_homology_diagram_tests
+    "${GADGET_TEST_DATA_DIR}/homology-diagram-contracts")
+  add_test(NAME gadget_homology_diagram_cli_contracts COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/homology_diagram_cli.py" "$<TARGET_FILE:gadget>"
+    "$<TARGET_FILE:gadget_homology_diagram_tests>" "${GADGET_TEST_DATA_DIR}/homology-diagram-cli-contracts")
+  set_tests_properties(gadget_homology_diagram_contracts gadget_homology_diagram_cli_contracts
+    PROPERTIES TIMEOUT 120)
   add_executable(gadget_native_biomedical_fields_tests tests/native_biomedical_fields.cpp)
   target_link_libraries(gadget_native_biomedical_fields_tests PRIVATE gadget::core)
   target_compile_options(gadget_native_biomedical_fields_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
