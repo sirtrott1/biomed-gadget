@@ -1,3 +1,4 @@
+#include "memory_observation.hpp"
 #include <algorithm>
 #include <gadget/snapshot.hpp>
 #include <rfc/core/axioms.hpp>
@@ -438,7 +439,7 @@ Workspace load_snapshot(const fs::path &requested) {
             "artifact must be a regular file");
     const ReadOnlyMappedFile archive(root / "study.rfcxs");
     auto limits = native_data_limits();
-    if (const auto room = rfc::runtime::detect_hardware().advisory_memory_headroom())
+    if (const auto room = gadget::hardware_detail::memory_headroom())
         limits.temporal.declarations.max_materialized_bytes = std::max<std::size_t>(1, *room);
     const auto publication = NativeRecord::decode(archive.bytes(), limits);
     require(publication.at("schema").text()=="gadget.workspace.native.v1","unsupported native workspace declaration");

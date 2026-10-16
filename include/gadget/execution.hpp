@@ -54,7 +54,8 @@ class QuerySession {
     std::unique_ptr<State> state_;
 
   public:
-    explicit QuerySession(std::shared_ptr<const Workspace> source);
+    explicit QuerySession(std::shared_ptr<const Workspace> source,
+                          std::shared_ptr<CpuResources> resources = {});
     ~QuerySession();
     QuerySession(const QuerySession &) = delete;
     QuerySession &operator=(const QuerySession &) = delete;

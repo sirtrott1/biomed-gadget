@@ -237,6 +237,13 @@ int main(int argc, char **argv) {
         const auto next = std::make_shared<const Workspace>(load_snapshot(root / "updated"));
         LocalModelOptions options;
         options.model = argv[1];
+        const auto hardware = rfc::runtime::detect_hardware();
+        rfc::runtime::CpuResourcePolicy policy;
+        policy.worker_limit = hardware.allowed_cpus.size();
+        policy.declared_buffer_byte_limit = rfc::machine::checked_size(
+            hardware.advisory_memory_headroom().value());
+        options.resources = std::make_shared<CpuResources>(hardware, policy,
+            [] { return rfc::runtime::detect_hardware(); });
         bool invalid_profile = false;
         try {
             LocalAgent rejected_planner(
@@ -259,6 +266,56 @@ int main(int argc, char **argv) {
               "repeated model query rebuilt context");
         check(repeated.at("performance").at("prefix_tokens_reused").integer() > 0,
               "repeated model query did not restore canonical prompt state");
+        {
+            const auto requested = Json::parse(
+                R"({"operation":"green","context":"AD","realization":"support","grade":0,"field":"AD.G","lambda":"1","mode":"numerical"})");
+            const std::string constrained_prompt =
+                "Return action query using exactly this query without changing its parameters: " +
+                requested.dump();
+            const auto permitted = agent.ask(constrained_prompt);
+            write_text(root / "assigned-positive.json", permitted.dump() + "\n");
+            check(permitted.at("status").text() == "executed",
+                  "legacy model did not execute the declared numerical Green query");
+            const auto proposed = permitted.at("proposal").at("query");
+            auto effective = Json::parse(proposed.dump());
+            auto expected = Json::parse(requested.dump());
+            // Compare exact decimal values and the existing reporting default.
+            // Keep the original proposal and complete source calculation unchanged.
+            effective.set("lambda", Json::string(exact_decimal(proposed.at("lambda").text()).get_str()));
+            if (!effective.has("top_k")) effective.set("top_k", Json::integer(10));
+            expected.set("top_k", Json::integer(10));
+            check(json_object_equal(effective.raw(), expected.raw()),
+                  "legacy model changed the declared numerical Green controls");
+            check(permitted.at("certificate").dump() == execute_query(*original, proposed).dump(),
+                  "legacy model numerical Green differs from the original source calculation");
+            const auto bytes = options.resources->coordinator().available_declared_buffer_bytes();
+            auto delegated = rfc::runtime::CpuResourceCoordinator::delegate(
+                options.resources->coordinator().reserve(options.threads, 1));
+            auto assigned = options.resources->assigned(delegated);
+            bool limited = false;
+            try {
+                (void)agent.ask_assigned(constrained_prompt, {}, assigned);
+            } catch (const rfc::runtime::ExecutionLimitExceeded &error) {
+                const Execution reference(*original, "AD", "support", options.resources);
+                const auto n = reference.boundary().domain_size();
+                const auto required = rfc::machine::checked_size_mul(
+                    rfc::machine::checked_size_mul(n, n), sizeof(double));
+                check(error.resource() == "declared buffer bytes" &&
+                          error.required() == required && error.limit() == 1,
+                      "legacy model reported the wrong assigned resource refusal");
+                limited = true;
+                auto refusal = Json::object();
+                refusal.set("resource", Json::string(error.resource()));
+                refusal.set("required", Json::string(std::to_string(error.required())));
+                refusal.set("limit", Json::string(std::to_string(error.limit())));
+                write_text(root / "assigned-refusal.json", refusal.dump() + "\n");
+            }
+            check(limited, "legacy model bypassed its actual assigned dense byte limit");
+            check(assigned->coordinator().available_workers() == options.threads &&
+                      assigned->coordinator().available_declared_buffer_bytes() == 1 &&
+                      options.resources->coordinator().available_declared_buffer_bytes() == bytes - 1,
+                  "legacy assigned query retained or bypassed its resources");
+        }
         bool rejected = false;
         try {
             agent.bind(nullptr);

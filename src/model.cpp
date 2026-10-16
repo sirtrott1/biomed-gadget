@@ -12,6 +12,7 @@
 #include <json-schema-to-grammar.h>
 #include <limits>
 #include <llama.h>
+#include <llama-ext.h>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <openssl/evp.h>
@@ -22,6 +23,57 @@
 
 namespace gadget {
 namespace {
+using Reservation = rfc::runtime::CpuResourceCoordinator::Reservation;
+std::size_t model_buffer_bytes(const llama_context *context) {
+    std::size_t bytes{};
+    for (const auto &[type, memory] : llama_get_memory_breakdown(context)) {
+        (void)type;
+        for (const auto size : {memory.model, memory.context, memory.compute})
+            bytes = rfc::machine::checked_size_add(bytes, size);
+    }
+    return bytes;
+}
+std::size_t model_buffer_bound(const llama_context *context, std::size_t file_bytes, bool mapped) {
+    auto bytes = model_buffer_bytes(context);
+    if (!mapped) return bytes;
+    const auto cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    if (!cpu) throw std::runtime_error("local model admission requires a CPU backend");
+    const auto default_type = ggml_backend_dev_buffer_type(cpu);
+    std::size_t default_weights{};
+    for (const auto &[type, memory] : llama_get_memory_breakdown(context))
+        if (type == default_type)
+            default_weights = rfc::machine::checked_size_add(default_weights, memory.model);
+    // Repacked tensors can coexist with a mapping spanning the original file.
+    // The allocation simulator counts the separate default buffers instead.
+    if (file_bytes > default_weights)
+        bytes = rfc::machine::checked_size_add(bytes, file_bytes - default_weights);
+    return bytes;
+}
+void model_phase(CpuResources &resources, Reservation &reservation, std::size_t workers,
+                 std::size_t bytes) {
+    (void)resources.readmit();
+    if (bytes > resources.coordinator().policy().declared_buffer_byte_limit)
+        throw rfc::runtime::ExecutionLimitExceeded("local model declared buffer bytes", bytes,
+            resources.coordinator().policy().declared_buffer_byte_limit);
+    resources.coordinator().resize(reservation, workers, bytes);
+}
+struct DecodeScope {
+    llama_context *context;
+    std::stop_token stop;
+    explicit DecodeScope(llama_context *value, std::stop_token token) : context(value), stop(token) {
+        llama_set_abort_callback(context, [](void *data) {
+            return static_cast<DecodeScope *>(data)->stop.stop_requested();
+        }, this);
+    }
+    void check() const {
+        if (stop.stop_requested())
+            throw rfc::runtime::ExecutionCancelled{};
+    }
+    ~DecodeScope() {
+        llama_synchronize(context);
+        llama_set_abort_callback(context, nullptr, nullptr);
+    }
+};
 bool catalog_task(const std::string &task) {
     return task == "pipeline_planner" || task == "recipe_planner" || task == "source_annotator" ||
            task == "fact_reader" || task == "evidence_planner";
@@ -383,6 +435,9 @@ struct LocalAgent::State {
     std::optional<NativeRecord> evidence_request, evidence_proposal;
     std::unique_ptr<ScientificSession> scientific_queries;
     RetainedRecord source_page;
+    // Destruction releases these bytes only after the decoder and its buffers.
+    std::optional<Reservation> model_memory;
+    std::size_t fitted_bytes{}, extra_bytes{}, projector_bytes{};
     std::unique_ptr<llama_model, decltype(&llama_model_free)> model{nullptr, llama_model_free};
     std::unique_ptr<llama_context, decltype(&llama_free)> context{nullptr, llama_free};
 #if GADGET_HAS_MULTIMODAL
@@ -417,7 +472,7 @@ struct LocalAgent::State {
           recipe_intent(std::move(intent)), facts(std::move(admitted_facts)),
           evidence_store(std::move(evidence)), evidence_request(std::move(context_request)) {
         auto identity=Json::object();
-        resources = CpuResources::local();
+        resources = options.resources ? options.resources : CpuResources::local();
         if (scientific) {
             scientific_queries =
                 std::make_unique<ScientificSession>(scientific, resources, options.compute);
@@ -425,7 +480,7 @@ struct LocalAgent::State {
                 (void)scientific_prompt(*scientific, options.compact_catalog,
                                         options.paged_catalog);
         } else if (!catalog_task(options.task))
-            queries = std::make_unique<QuerySession>(study);
+            queries = std::make_unique<QuerySession>(study, resources);
         if (options.paged_catalog && (!scientific || options.task != "planner"))
             throw std::invalid_argument("paged catalogue requires a scientific planner");
         const auto load_started = std::chrono::steady_clock::now();
@@ -465,8 +520,10 @@ struct LocalAgent::State {
         // Exclude other cooperating tasks while weights are being loaded.
         if (options.threads > resources->coordinator().capacity())
             throw std::invalid_argument("model threads exceed CPU capacity");
-        auto loading_workers = resources->reserve(resources->coordinator().capacity());
         options.model = fs::canonical(options.model);
+        (void)resources->readmit();
+        model_memory.emplace(resources->coordinator().reserve(resources->coordinator().capacity(),
+            rfc::machine::checked_size(fs::file_size(options.model))));
         static std::once_flag initialized;
         std::call_once(initialized, [] {
             llama_backend_init();
@@ -481,14 +538,6 @@ struct LocalAgent::State {
         auto parameters = llama_model_default_params();
         parameters.n_gpu_layers = options.gpu_layers;
         parameters.check_tensors = true;
-        model.reset(llama_model_load_from_file(options.model.c_str(), parameters));
-        if (!model)
-            throw std::runtime_error("llama.cpp could not load local GGUF model");
-        if (file_size != fs::file_size(options.model) ||
-            file_time != fs::last_write_time(options.model))
-            throw std::runtime_error("local model changed during loading");
-        if (llama_model_has_encoder(model.get()) || !llama_model_has_decoder(model.get()))
-            throw std::invalid_argument("local agent requires a text decoder model");
         auto settings = llama_context_default_params();
         settings.n_ctx = options.context_tokens;
         settings.n_batch = 512;
@@ -496,6 +545,43 @@ struct LocalAgent::State {
         settings.n_threads = settings.n_threads_batch = static_cast<std::int32_t>(options.threads);
         settings.no_perf = false;
         settings.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+        {
+            auto estimate_parameters = parameters;
+            estimate_parameters.no_alloc = true;
+            estimate_parameters.use_mmap = false;
+            estimate_parameters.use_mlock = false;
+            const auto estimate_model = std::unique_ptr<llama_model, decltype(&llama_model_free)>(
+                llama_model_load_from_file(options.model.c_str(), estimate_parameters), llama_model_free);
+            if (!estimate_model)
+                throw std::runtime_error("llama.cpp could not inspect local model allocations");
+            if (llama_model_has_encoder(estimate_model.get()) || !llama_model_has_decoder(estimate_model.get()))
+                throw std::invalid_argument("local agent requires a text decoder model");
+            const auto estimate_context = std::unique_ptr<llama_context, decltype(&llama_free)>(
+                llama_init_from_model(estimate_model.get(), settings), llama_free);
+            if (!estimate_context)
+                throw std::runtime_error("llama.cpp could not inspect local context allocations");
+            fitted_bytes = model_buffer_bound(estimate_context.get(),
+                rfc::machine::checked_size(file_size), parameters.use_mmap);
+            // The upstream breakdown omits the decoder's separate logits buffer.
+            extra_bytes = rfc::machine::checked_size_mul(
+                llama_vocab_n_tokens(llama_model_get_vocab(estimate_model.get())), sizeof(float));
+            extra_bytes = rfc::machine::checked_size_add(extra_bytes,
+                rfc::machine::checked_size_mul(settings.n_batch, sizeof(std::int32_t)));
+            if (options.cache_prompt) {
+                extra_bytes = rfc::machine::checked_size_add(extra_bytes,
+                    rfc::machine::checked_size_mul(options.prompt_cache_mib, 1024u * 1024u));
+                extra_bytes = rfc::machine::checked_size_add(extra_bytes,
+                    rfc::machine::checked_size_mul(options.context_tokens, sizeof(llama_token)));
+            }
+            model_phase(*resources, *model_memory, resources->coordinator().capacity(),
+                        rfc::machine::checked_size_add(fitted_bytes, extra_bytes));
+        }
+        model.reset(llama_model_load_from_file(options.model.c_str(), parameters));
+        if (!model)
+            throw std::runtime_error("llama.cpp could not load local GGUF model");
+        if (file_size != fs::file_size(options.model) ||
+            file_time != fs::last_write_time(options.model))
+            throw std::runtime_error("local model changed during loading");
         context.reset(llama_init_from_model(model.get(), settings));
         if (!context)
             throw std::runtime_error("llama.cpp could not initialize local decoding context");
@@ -509,6 +595,16 @@ struct LocalAgent::State {
             p.use_gpu = false;
             p.n_threads = options.threads;
             p.print_timings = true;
+            const auto usage = mtmd_get_memory_usage(options.projector.c_str(), p);
+            if (usage.empty())
+                throw std::runtime_error("llama.cpp could not inspect projector allocations");
+            for (const auto &[device, bytes] : usage) {
+                (void)device;
+                projector_bytes = rfc::machine::checked_size_add(projector_bytes, bytes);
+            }
+            extra_bytes = rfc::machine::checked_size_add(extra_bytes, projector_bytes);
+            model_phase(*resources, *model_memory, resources->coordinator().capacity(),
+                        rfc::machine::checked_size_add(fitted_bytes, extra_bytes));
             projector.reset(mtmd_init_from_file(options.projector.c_str(), model.get(), p));
             if (!projector || !mtmd_support_vision(projector.get()))
                 throw std::invalid_argument(
@@ -769,6 +865,20 @@ struct LocalAgent::State {
             "chat_template_sha256",
             Json::string("sha256:" + sha256(common_chat_templates_source(templates.get()))));
         identity.set("system_info", Json::string(llama_print_system_info()));
+        const auto reported_bytes = model_buffer_bytes(context.get());
+        fitted_bytes = std::max(fitted_bytes, reported_bytes);
+        model_phase(*resources, *model_memory, 0,
+                    rfc::machine::checked_size_add(fitted_bytes, extra_bytes));
+        auto memory = Json::object();
+        memory.set("llama_buffer_bound_bytes", Json::string(std::to_string(fitted_bytes)));
+        memory.set("llama_reported_buffer_bytes", Json::string(std::to_string(reported_bytes)));
+        memory.set("projector_estimated_bytes", Json::string(std::to_string(projector_bytes)));
+        memory.set("additional_reserved_bytes", Json::string(std::to_string(extra_bytes)));
+        memory.set("declared_bytes", Json::string(std::to_string(model_memory->declared_buffer_bytes())));
+        memory.set("scope", Json::string("llama model/context/compute buffers with mapped file bound, logits and configured "
+            "prompt cache capacity; projector estimate where present; excludes general heap, "
+            "source owners and external processes; retained until decoder destruction"));
+        identity.set("memory", memory);
         identity.set("load_seconds",
                      Json::number(std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                                                 load_started)
@@ -830,7 +940,7 @@ void LocalAgent::bind(std::shared_ptr<const Workspace> study) {
         throw std::invalid_argument("pipeline planners bind their immutable workspace catalog");
     if (state_->scientific_profile)
         throw std::invalid_argument("use bind_scientific for this agent profile");
-    auto queries = std::make_unique<QuerySession>(study);
+    auto queries = std::make_unique<QuerySession>(study, state_->resources);
     (void)catalog(*study);
     std::lock_guard lock(state_->mutex);
     state_->study = std::move(study);
@@ -865,21 +975,24 @@ Json LocalAgent::ask(const std::string &prompt, const std::vector<fs::path> &ima
     return ask_assigned(prompt, images, {});
 }
 Json LocalAgent::ask_assigned(const std::string &prompt, const std::vector<fs::path> &images,
-                              std::shared_ptr<CpuResources> assigned) {
-    return ask_assigned_impl(prompt, images, std::move(assigned), nullptr);
+                              std::shared_ptr<CpuResources> assigned, std::stop_token stop) {
+    return ask_assigned_impl(prompt, images, std::move(assigned), nullptr, stop);
 }
 NativeRecord LocalAgent::ask_record(const std::string &prompt, const std::vector<fs::path> &images) {
     return ask_assigned_record(prompt, images, {});
 }
 NativeRecord LocalAgent::ask_assigned_record(const std::string &prompt,
-    const std::vector<fs::path> &images, std::shared_ptr<CpuResources> assigned) {
+    const std::vector<fs::path> &images, std::shared_ptr<CpuResources> assigned, std::stop_token stop) {
     std::optional<NativeRecord> response;
-    (void)ask_assigned_impl(prompt, images, std::move(assigned), &response);
+    (void)ask_assigned_impl(prompt, images, std::move(assigned), &response, stop);
     return std::move(response.value());
 }
 Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<fs::path> &images,
-    std::shared_ptr<CpuResources> assigned, std::optional<NativeRecord> *native_response) {
+    std::shared_ptr<CpuResources> assigned, std::optional<NativeRecord> *native_response,
+    std::stop_token stop) {
     state_->process();
+    if (stop.stop_requested())
+        throw rfc::runtime::ExecutionCancelled{};
     if (prompt.empty() || prompt.find('\0') != std::string::npos)
         throw std::invalid_argument("local prompt must be nonempty without NUL");
     std::lock_guard lock(state_->mutex);
@@ -896,9 +1009,15 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
                                                                state_->options.compute);
     auto *scientific_queries =
         assigned_queries ? assigned_queries.get() : state_->scientific_queries.get();
+    std::unique_ptr<QuerySession> assigned_legacy;
+    if (assigned && state_->study)
+        assigned_legacy = std::make_unique<QuerySession>(state_->study, assigned);
+    auto *legacy_queries = assigned_legacy ? assigned_legacy.get() : state_->queries.get();
     const auto started = std::chrono::steady_clock::now();
     std::optional<rfc::runtime::CpuResourceCoordinator::Reservation> neural_workers;
     neural_workers.emplace(resources->reserve(state_->options.threads));
+    DecodeScope decoding(state_->context.get(), stop);
+    decoding.check();
     auto media = Json::array();
     std::vector<RawByteSource> original_images;
 #if GADGET_HAS_MULTIMODAL
@@ -1124,8 +1243,10 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
         prompt_tokens = mtmd_helper_get_n_tokens(chunks.get());
         if (prompt_tokens + state_->options.output_tokens > llama_n_ctx(state_->context.get()))
             throw std::invalid_argument("image plus text exceeds local context budget");
-        if (mtmd_helper_eval_chunks(state_->projector.get(), state_->context.get(), chunks.get(), 0,
-                                    0, 512, true, &next_position))
+        const auto status = mtmd_helper_eval_chunks(state_->projector.get(), state_->context.get(),
+                                                    chunks.get(), 0, 0, 512, true, &next_position);
+        decoding.check();
+        if (status)
             throw std::runtime_error("SDK image/text decoding failed");
 #endif
     } else {
@@ -1145,10 +1266,13 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
             throw std::runtime_error("local prompt tokenization failed");
         auto decode = [&](std::size_t begin, std::size_t end) {
             for (auto offset = begin; offset < end; offset += 512) {
+                decoding.check();
                 auto batch = llama_batch_get_one(
                     tokens.data() + offset,
                     static_cast<std::int32_t>(std::min<std::size_t>(512, end - offset)));
-                if (llama_decode(state_->context.get(), batch))
+                const auto status = llama_decode(state_->context.get(), batch);
+                decoding.check();
+                if (status)
                     throw std::runtime_error("local prompt decoding failed");
             }
         };
@@ -1241,6 +1365,7 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
     std::uint32_t output_tokens = 0;
     bool completed = false;
     for (; output_tokens < state_->options.output_tokens; ++output_tokens) {
+        decoding.check();
         auto token = llama_sampler_sample(sampler.get(), state_->context.get(), -1);
         if (llama_vocab_is_eog(vocabulary, token)) {
             completed = true;
@@ -1264,10 +1389,17 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
             generated.append(piece.data(), size);
         auto batch = llama_batch_get_one(&token, 1);
         batch.pos = &next_position;
-        if (llama_decode(state_->context.get(), batch))
+        const auto status = llama_decode(state_->context.get(), batch);
+        decoding.check();
+        if (status)
             throw std::runtime_error("local generation decoding failed");
         ++next_position;
     }
+    llama_synchronize(state_->context.get());
+    decoding.check();
+    state_->fitted_bytes = std::max(state_->fitted_bytes, model_buffer_bytes(state_->context.get()));
+    model_phase(*state_->resources, *state_->model_memory, 0,
+                rfc::machine::checked_size_add(state_->fitted_bytes, state_->extra_bytes));
     neural_workers.reset();
     const auto execution_started = std::chrono::steady_clock::now();
     auto result = Json::object();
@@ -1281,7 +1413,7 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
     } else {
         try {
             std::optional<rfc::runtime::CpuResourceCoordinator::Reservation> legacy_worker;
-            if (!state_->scientific)
+            if (!state_->scientific && !state_->study)
                 legacy_worker.emplace(resources->reserve(1));
             if (state_->options.task == "evidence_planner") {
                 const auto proposed = Json::parse(generated);
@@ -1317,7 +1449,7 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
                     ? admit_observation(Json::parse(generated), state_->scientific->digest(), media)
                 : state_->scientific
                     ? apply_scientific_proposal(*scientific_queries, Json::parse(generated))
-                    : apply_model_proposal(*state_->queries, Json::parse(generated));
+                    : apply_model_proposal(*legacy_queries, Json::parse(generated));
         } catch (const std::invalid_argument &error) {
             result.set("status", Json::string("rejected"));
             result.set("error", Json::string(error.what()));
@@ -1355,6 +1487,8 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
     performance.set("prefix_tokens_reused", Json::integer(reused));
     performance.set("evaluated_prompt_tokens", Json::integer(prompt_tokens - reused));
     performance.set("prompt_cache_bytes", Json::integer(state_->prefix_state.size()));
+    performance.set("model_declared_bytes", Json::string(std::to_string(
+        state_->model_memory->declared_buffer_bytes())));
     performance.set("generated_tokens", Json::integer(output_tokens));
     performance.set("prompt_ms", Json::number(timings.t_p_eval_ms));
     performance.set("generation_ms", Json::number(timings.t_eval_ms));
@@ -1369,7 +1503,7 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
     performance.set("prepared_contexts",
                     Json::integer(catalog_task(state_->options.task) ? 0
                                   : state_->scientific ? scientific_queries->preparation_count()
-                                                       : state_->queries->preparation_count()));
+                                                       : legacy_queries->preparation_count()));
     result.set("performance", performance);
     result.set("response_sha256", Json::string("sha256:" + sha256(result.dump())));
     if (native_response) {

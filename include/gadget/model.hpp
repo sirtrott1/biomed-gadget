@@ -1,6 +1,7 @@
 #pragma once
 #include <gadget/execution.hpp>
 #include <gadget/scientific.hpp>
+#include <stop_token>
 
 namespace gadget {
 class AssayWorkspace;
@@ -17,6 +18,7 @@ struct LocalModelOptions {
     std::string task{"planner"};
     ComputeOptions compute;
     fs::path projector;
+    std::shared_ptr<CpuResources> resources;
 };
 // Admission stays independent of the model decoder and available without llama.
 Json apply_model_proposal(QuerySession &session, const Json &proposal);
@@ -26,7 +28,7 @@ class LocalAgent {
     std::unique_ptr<State> state_;
     Json ask_assigned_impl(const std::string &prompt, const std::vector<fs::path> &images,
                           std::shared_ptr<CpuResources> resources,
-                          std::optional<NativeRecord> *native_response);
+                          std::optional<NativeRecord> *native_response, std::stop_token stop);
 
   public:
     LocalAgent(std::shared_ptr<const Workspace> study, LocalModelOptions options);
@@ -52,12 +54,12 @@ class LocalAgent {
     Json ask(const std::string &prompt);
     Json ask(const std::string &prompt, const std::vector<fs::path> &images);
     Json ask_assigned(const std::string &prompt, const std::vector<fs::path> &images,
-                      std::shared_ptr<CpuResources> resources);
+                      std::shared_ptr<CpuResources> resources, std::stop_token stop = {});
     // Scientific query and plan responses retain their actual native execution.
     // Other responses are source bound control records with no numerical import.
     NativeRecord ask_record(const std::string &prompt, const std::vector<fs::path> &images = {});
     NativeRecord ask_assigned_record(const std::string &prompt, const std::vector<fs::path> &images,
-                                    std::shared_ptr<CpuResources> resources);
+                                    std::shared_ptr<CpuResources> resources, std::stop_token stop = {});
     // Latest admitted evidence proposal, retaining its actual source and request.
     // A rejected generation does not replace a previously admitted publication.
     std::optional<NativeRecord> prospective_publication() const;

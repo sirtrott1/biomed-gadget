@@ -95,6 +95,13 @@ int main(int argc, char **argv) {
         graph.set("workers", Json::integer(static_cast<std::int64_t>(workers)));
         d.set("entry", graph);
         check(execute_workflow(study, d, {}, resources).at("status").text() == "complete");
+        {
+            auto resident = resources->coordinator().reserve(1, 4096);
+            resources->coordinator().resize(resident, 0, 4096);
+            const auto free = resources->coordinator().available_declared_buffer_bytes();
+            check(execute_workflow(study, d, {}, resources).at("status").text() == "complete");
+            check(resources->coordinator().available_declared_buffer_bytes() == free);
+        }
         auto call = Json::parse(
             R"({"id":"recur","type":"call","definition":"loop","budget":20,"on_exhausted":{}})");
         call.set("on_exhausted", leaf("base"));

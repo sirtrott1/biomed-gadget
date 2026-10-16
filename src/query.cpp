@@ -263,24 +263,34 @@ Json execute_query(const Workspace &source, const Json &query) {
 }
 struct QuerySession::State {
     std::shared_ptr<const Workspace> source;
+    std::shared_ptr<CpuResources> resources;
     std::string manifest_hash;
     mutable std::mutex mutex;
     std::map<std::pair<std::string, std::string>, std::unique_ptr<Execution>> owners;
-    explicit State(std::shared_ptr<const Workspace> study) : source(std::move(study)) {
+    State(std::shared_ptr<const Workspace> study, std::shared_ptr<CpuResources> cpu)
+        : source(std::move(study)), resources(cpu ? std::move(cpu) : CpuResources::local()) {
         if (!source || !source->native_snapshot)
             throw std::invalid_argument("query sessions require an owning immutable native study");
         manifest_hash = "sha256:" + sha256(source->manifest().dump());
     }
 };
-QuerySession::QuerySession(std::shared_ptr<const Workspace> source)
-    : state_(std::make_unique<State>(std::move(source))) {}
+QuerySession::QuerySession(std::shared_ptr<const Workspace> source,
+                           std::shared_ptr<CpuResources> resources)
+    : state_(std::make_unique<State>(std::move(source), std::move(resources))) {}
 QuerySession::~QuerySession() = default;
 Json QuerySession::execute(const Json &query) {
     std::lock_guard lock(state_->mutex);
+    std::optional<rfc::runtime::CpuResourceCoordinator::Reservation> worker;
+    const bool numerical_green = query.at("operation").text() == "green" &&
+        query.has("mode") && query.at("mode").text() == "numerical";
+    // Numerical Green owns its existing dense phase reservation, including the caller.
+    if (numerical_green) (void)state_->resources->readmit();
+    else worker.emplace(state_->resources->reserve(1));
     auto provider = [&](const std::string &context, const std::string &realization) -> Execution & {
         auto &owner = state_->owners[{context, realization}];
         if (!owner)
-            owner = std::make_unique<Execution>(*state_->source, context, realization);
+            owner = std::make_unique<Execution>(*state_->source, context, realization,
+                                                 state_->resources);
         return *owner;
     };
     return execute_query_prepared(*state_->source, query, provider, state_->manifest_hash);

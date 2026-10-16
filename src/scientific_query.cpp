@@ -1,3 +1,4 @@
+#include "memory_observation.hpp"
 #include "research_ablation.hpp"
 #include "scientific_ablation_fields.hpp"
 #include "scientific_source_snapshot.hpp"
@@ -53,7 +54,7 @@ using namespace scientific_detail;
 using namespace rfc::storage;
 const std::size_t coordinate_limit = std::numeric_limits<std::size_t>::max();
 std::size_t field_memory_headroom() {
-    const auto room=rfc::runtime::detect_hardware().advisory_memory_headroom();
+    const auto room=gadget::hardware_detail::memory_headroom();
     require(room && *room,"native field services require observed memory headroom");
     return rfc::machine::checked_size(*room);
 }

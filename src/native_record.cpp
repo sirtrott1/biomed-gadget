@@ -1,3 +1,4 @@
+#include "memory_observation.hpp"
 #include <cerrno>
 #include <cstring>
 #include <gadget/native_record.hpp>
@@ -960,17 +961,17 @@ storage::PinnedNativeAccession NativeRecord::access(
 }
 NativeRecord NativeRecord::read(const std::filesystem::path &path) {
     auto limits=native_data_limits();
-    if(const auto room=runtime::detect_hardware().advisory_memory_headroom())limits.temporal.declarations.max_materialized_bytes=std::max<std::size_t>(1,*room);
+    if(const auto room=gadget::hardware_detail::memory_headroom())limits.temporal.declarations.max_materialized_bytes=std::max<std::size_t>(1,*room);
     const storage::ReadOnlyMappedFile file(path);
     return decode(file.bytes(),limits);
 }
 std::optional<NativeRecord> NativeRecord::read_if_record(const std::filesystem::path &path) {
-    auto limits=native_data_limits();
-    if(const auto room=runtime::detect_hardware().advisory_memory_headroom())
-        limits.temporal.declarations.max_materialized_bytes=std::max<std::size_t>(1,*room);
     const storage::ReadOnlyMappedFile file(path);
     const auto bytes=file.bytes();
     if(detect_native_data(bytes)!=NativeDataFormat::TemporalSeries)return {};
+    auto limits=native_data_limits();
+    if(const auto room=gadget::hardware_detail::memory_headroom())
+        limits.temporal.declarations.max_materialized_bytes=std::max<std::size_t>(1,*room);
     const auto series=storage::decode_native_series(bytes,limits);
     const auto publication=series.tail();
     if(!publication.endpoint().declarations)return {};

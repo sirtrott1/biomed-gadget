@@ -607,7 +607,7 @@ struct Runner {
                 std::vector<rfc::runtime::WorkJob> jobs;
                 std::vector<rfc::runtime::WorkKey> keys;
                 std::vector<WorkflowValue> outputs(steps.size());
-                const auto buffer = scope->coordinator().policy().declared_buffer_byte_limit /
+                const auto buffer = scope->coordinator().available_declared_buffer_bytes() /
                                     std::min(workers, steps.size());
                 // Count owning handles; transitive publication and optional
                 // presentation storage is outside this cooperative quota.
