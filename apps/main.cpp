@@ -160,7 +160,7 @@ int main(int argc, char **argv) {
             {"devices", {}},
             {"workflow",
              {"--study", "--workspace", "--assay", "--partition", "--request", "--models",
-              "--evidence", "--patterns", "--compute-device", "--allow-software-device","--out"}},
+              "--evidence", "--patterns", "--compute-device", "--allow-software-device","--out", "--view"}},
             {"audit", {"--input", "--snapshot", "--store", "--study", "--measurements"}},
             {"analyze", {"--input", "--snapshot", "--store", "--measurements", "--out"}},
             {"query", {"--input", "--snapshot", "--store", "--study", "--measurements", "--query","--out"}},
@@ -440,6 +440,23 @@ int main(int argc, char **argv) {
                 workspace.execute_record(request.native()).write(required("--out-record"));
                 return 0;
             }
+            if (options.contains("--out") && request.at("operation").text() != "native_query") {
+                const auto destination = gadget::fs::absolute(required("--out"));
+                if (gadget::fs::exists(destination))
+                    throw std::invalid_argument("assay result destination already exists");
+                const auto publication = workspace.execute_record(request.native());
+                gadget::fs::create_directories(destination.parent_path());
+                if (!gadget::fs::create_directory(destination))
+                    throw std::invalid_argument("assay result creation conflict");
+                try {
+                    publication.write(destination / "result.rfcxs");
+                } catch (...) {
+                    gadget::fs::remove_all(destination);
+                    throw;
+                }
+                std::cout << gadget::render_record_view(publication.at("result")).dump() << '\n';
+                return 0;
+            }
             std::cout << (options.contains("--out")
                 ? gadget::render_record_view(workspace.run_record(request.native(),required("--out")).at("result"))
                 : workspace.execute(static_cast<gadget::Json>(request)))
@@ -510,6 +527,11 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (command == "workflow") {
+            const auto view = options.contains("--view") ? options.at("--view") : "full";
+            if (view != "full" && view != "receipt")
+                throw std::invalid_argument("workflow view must be full or receipt");
+            if (view == "receipt" && !options.contains("--out"))
+                throw std::invalid_argument("workflow receipt view requires --out");
             std::shared_ptr<const gadget::ScientificStudy> study;
             if (options.contains("--workspace")) {
                 if (options.contains("--study"))
@@ -642,7 +664,20 @@ int main(int argc, char **argv) {
                 const auto publication = gadget::execute_workflow_record(study, request.native(),
                     callbacks, gadget::CpuResources::local(), compute, evidence.get());
                 publication.write(required("--out"));
-                result = gadget::workflow_record_view(publication);
+                if (view == "receipt") {
+                    const auto retained = publication.at("result");
+                    result = gadget::Json::object();
+                    result.set("schema", gadget::Json::string("gadget.scientific.workflow.summary.v1"));
+                    for (const auto &name : {"source_digest", "workflow_sha256", "status", "error", "evidence_digest"})
+                        if (retained.has(name))
+                            result.set(name, gadget::render_record_view(retained.at(name)));
+                    result.set("source_namespace", gadget::Json::string(std::to_string(publication.source_namespace())));
+                    result.set("native_result", gadget::Json::string(required("--out")));
+                    result.set("trace_events", gadget::Json::integer(static_cast<std::int64_t>(retained.at("trace").size())));
+                    result.set("scope", gadget::Json::string("Execution metadata; complete fields and trace remain in native_result"));
+                } else {
+                    result = gadget::workflow_record_view(publication);
+                }
             } else {
                 result = gadget::execute_workflow(study, request.native(), callbacks,
                     gadget::CpuResources::local(), compute, evidence.get());

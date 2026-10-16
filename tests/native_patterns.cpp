@@ -3,6 +3,8 @@
 #include <gadget/native_pattern.hpp>
 #include <gadget/workflow.hpp>
 #include <rfc/learning/context_transport_pattern_bank_codec.hpp>
+#include <algorithm>
+#include <span>
 #include <iostream>
 
 namespace {
@@ -156,7 +158,16 @@ bool mutate(N &value,const std::string &name,const N &replacement) {
     return false;
 }
 }
-int main() try {
+int main(int argc, char **argv) try {
+    if (argc == 3 && std::string_view(argv[1]) == "--view-workflow") {
+        const auto record = NativeRecord::read(argv[2]);
+        const auto original = read_text(argv[2]);
+        check(std::ranges::equal(record.encode(), std::as_bytes(std::span(original.data(), original.size()))),
+              "complete native workflow archive changed on decode");
+        std::cout << workflow_record_view(record).dump() << '\n';
+        return 0;
+    }
+    check(argc == 1, "unexpected native pattern test arguments");
     const fs::path root = GADGET_PATTERN_TEST_BUILD;
     fs::remove_all(root); fs::create_directories(root);
     example::scientific_study(root/"source");

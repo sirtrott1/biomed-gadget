@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Native workflow execution summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "source_digest", "workflow_sha256", "status", "source_namespace", "native_result", "trace_events", "scope"],
+  "properties": {
+    "schema": {"const": "gadget.scientific.workflow.summary.v1"},
+    "source_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "workflow_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "evidence_digest": {"type": "string"},
+    "status": {"enum": ["complete", "failed"]},
+    "error": {"type": "string"},
+    "source_namespace": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+    "native_result": {"type": "string", "minLength": 1},
+    "trace_events": {"type": "integer", "minimum": 0},
+    "scope": {"type": "string"}
+  }
+}

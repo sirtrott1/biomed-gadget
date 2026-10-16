@@ -148,3 +148,25 @@ with identical support share a prepared exact solve. Native CPU tiles execute
 independent section actions with joined completion and one caller-inclusive
 reservation. The factorized system has the constraint rank as its dimension;
 complete source fields and result coordinates are retained.
+
+## Read the retained sections
+
+An assay query can write its complete owning native result with `--out-record`.
+Use the generic section reading to inspect its original observations, exact
+compatible and residual fields, missing coordinates, declared costs and complete
+coefficient families:
+
+```sh
+build/presets/cpu/gadget assay-query --workspace workspace/workspace.rfcxs \
+  --request examples/bioinformatics/assay-sections/query.json \
+  --out-record sections.rfcxs
+python3 tools/render_assay_sections.py --gadget build/presets/cpu/gadget \
+  --operation sections.rfcxs --out section-reading
+```
+
+Open `section-reading/report.html`. Every declared observation appears once in
+source order; its index is not biological time or an inferred spatial coordinate.
+Charts convert values only for display. Tables preserve exact rational values
+and absence, and the report links to the unchanged native owner and its byte hash.
+Keep that native file with the reading when relocating results. No plotting or
+model package is required by this reading tool.

@@ -93,3 +93,12 @@ Ask a reader to use the displayed selection's original path for any proposed
 claim. `check_claims` compares the claim against the complete native dependency.
 A display selection cannot change source support, create a new measurement or
 reduce the mathematical calculation.
+
+## Native output and a small execution receipt
+
+Pass `--out result.rfcxs --view receipt` to `gadget workflow` to retain the complete
+native result and trace while printing only execution metadata. The receipt names
+the source, declaration and native output. This avoids expanding the numerical
+results into a compatibility display when a caller only needs completion status.
+The default `--view full` keeps the complete JSON display. A receipt requires
+`--out`; it does not replace any mathematical field in that archive.
