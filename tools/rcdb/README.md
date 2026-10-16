@@ -4,15 +4,37 @@
 publication reader. It imports RCDB and RCQL from the active Python environment.
 It does not install either package or implement their storage codecs.
 
-Use matching RexGraph, RCDB and RCQL releases. The current package profile uses
-`rexgraph`, `rexgraph-rcdb` and `rexgraph-rcql` version 1.3.1. Build and
-install these independent distributions in a dedicated environment, then run
-the adapter contracts with that environment's interpreter. A noneditable wheel
-installation allows imports to be checked from outside the source checkouts:
+The qualified CPython 3.14 Linux x86_64 profile is recorded in
+[`requirements.lock`](requirements.lock). It selects six exact independent
+wheels: RexGraph core, native bindings, RCDB, RCQL, Agent and System. Package
+versions alone do not identify these fixes: core, RCDB, RCQL, Agent and System
+still use version 1.3.1. Obtain the matching wheels from the independent
+RexGraph distribution and install them in a dedicated environment:
 
 ```sh
-python -m pip show rexgraph rexgraph-rcdb rexgraph-rcql
-python -I -c "import rexgraph, rcdb, rcql; print(rexgraph.__file__, rcdb.__file__, rcql.__file__)"
+python3.14 -m venv .venv-rcdb
+.venv-rcdb/bin/python -m pip install \
+  'numpy>=2' 'threadpoolctl>=3' 'scipy>=1.13' 'pandas>=2.2.2' \
+  'safetensors>=0.3' 'fastapi>=0.110' 'uvicorn>=0.29'
+.venv-rcdb/bin/python -m pip install --no-index --no-deps --require-hashes \
+  --find-links /absolute/path/to/rexgraph-wheels -r tools/rcdb/requirements.lock
+.venv-rcdb/bin/python -m pip check
+```
+
+The hash check covers the six project wheels; third-party dependencies above
+are installed separately. The profile does not fetch or embed the independent
+SDK, install another Python platform's native wheels or alter a model's native
+engine identity. Its native Python binding retains its qualified SDK snapshot.
+GADGET's separately built C++ reader must pass the adapter contracts against
+that installed Python profile. Rebuilding a Python native binding against a
+different SDK requires its own qualification and checkpoint compatibility checks.
+
+Run the adapter contracts with this environment's interpreter. A noneditable
+wheel installation allows imports to be checked from outside the source checkouts:
+
+```sh
+.venv-rcdb/bin/python -m pip show rexgraph rexgraph-cpp-bindings rexgraph-rcdb rexgraph-rcql rexgraph-agent rexgraph-system
+.venv-rcdb/bin/python -I -c "import rexgraph, rexgraph_cpp, rcdb, rcql, agent, system; print(*(m.__file__ for m in (rexgraph, rexgraph_cpp, rcdb, rcql, agent, system)), sep='\n')"
 ```
 
 These native publication contracts require the Python core and storage/query
