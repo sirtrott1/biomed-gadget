@@ -1,8 +1,16 @@
 # RCDB and RCQL
 
-`gadget_rcdb.py` connects an installed RexGraph Python stack to GADGET's native
-publication reader. It imports RCDB and RCQL from the active Python environment.
-It does not install either package or implement their storage codecs.
+`gadget_rcdb.py` connects the RexGraph Python packages to GADGET's compiled
+application and native publication reader. It imports Core, RCDB and RCQL from
+the active Python environment and uses their format, storage and query
+interfaces. Native GADGET analysis and replay run through the compiled GADGET
+executable. The adapter does not install dependencies or implement their storage
+codecs.
+
+The independent `rexgraph_cpp` bindings expose C++ SDK operations to Python.
+Agent and System provide optional services and a browser application. The main
+GADGET C++ application uses the SDK directly; these Python integrations have
+their own installation and qualification profiles.
 
 The qualified CPython 3.14 Linux x86_64 profile is recorded in
 [`requirements.lock`](requirements.lock). It selects six exact independent
