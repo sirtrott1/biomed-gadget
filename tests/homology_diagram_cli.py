@@ -3,12 +3,17 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 
 cli, producer, destination = sys.argv[1:]
-root = Path(destination).resolve()
-root.mkdir(parents=True, exist_ok=True)
-subprocess.run([producer, str(root / 'original')], check=True)
-shutil.copytree(root / 'original', root / 'relocated inputs', dirs_exist_ok=True)
+destination = Path(destination).resolve()
+destination.mkdir(parents=True, exist_ok=True)
+root = Path(tempfile.mkdtemp(prefix='run-', dir=destination))
+produced = subprocess.run([producer, str(root / 'original')], check=True,
+                          capture_output=True, text=True)
+fixtures = Path(json.loads(produced.stdout)['fixtures'])
+assert fixtures.is_relative_to(root / 'original')
+shutil.copytree(fixtures, root / 'relocated inputs')
 for product in ['rational_zigzag', 'integral_modules', 'rational-positive']:
     spec = root / 'relocated inputs' / (product + '.json')
     original = spec.with_suffix('.rfcxs')

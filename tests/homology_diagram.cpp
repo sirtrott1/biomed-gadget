@@ -32,7 +32,9 @@ std::string specification(const std::string& product){return
     "\"evidence\":\"Authored exact torsion chain map, including retained inactive and zero occurrences\"}";}
 }
 int main(int argc,char** argv){try{
-    check(argc==2,"destination required");const fs::path root=fs::absolute(argv[1]);fs::create_directories(root);
+    check(argc==2,"destination required");const fs::path destination=fs::absolute(argv[1]);fs::create_directories(destination);
+    fs::path root;
+    do {root=destination/std::to_string(new_native_record_namespace());} while(!fs::create_directory(root));
     const std::vector<NativeRecord> sources{source(900,4),source(901,2)};
     sources[0].write(root/"four.rfcxs");sources[1].write(root/"two.rfcxs");
     auto resources=CpuResources::local();
@@ -92,5 +94,6 @@ int main(int argc,char** argv){try{
     {auto held=one->reserve(1);bool refused=false;
         try{(void)homology_diagram_record(request,sources,one);}catch(const rfc::runtime::CpuResourceBusy&){refused=true;}check(refused,"busy caller reservation ignored");}
     (void)homology_diagram_record(request,sources,one);check(one->coordinator().available_workers()==1,"caller worker not released");
-    std::cout<<"native homology source bytes, fields, torsion, paths and replay passed\n";
+    auto receipt=Json::object();receipt.set("status",Json::string("PASS"));receipt.set("fixtures",Json::string(root.string()));
+    std::cout<<receipt.dump_compact()<<'\n';
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
