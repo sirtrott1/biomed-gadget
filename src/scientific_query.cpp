@@ -3327,6 +3327,7 @@ struct ScientificSession::State {
             operation != "source_structure_ablation" && operation != "observed_response_model" &&
             operation != "constrained_response_model" && operation != "hodge_frame_decomposition" &&
             operation != "linear_response_observation" && operation != "metric_relative_novelty" &&
+            operation != "structure_transition" && operation != "temporal_field_history" &&
             operation != "green_response")
             serial.emplace(resources->reserve(1));
         if (operation == "metric_relative_novelty") {

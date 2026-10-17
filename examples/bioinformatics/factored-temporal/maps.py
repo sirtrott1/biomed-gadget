@@ -77,7 +77,7 @@ class Expansion:
                     raise ValueError('singular solve')
                 value = S.diag(*[1 / a[j, j] for j in range(a.rows)])
             else:
-                value = a.inv(method='DM')
+                value = a.inv()
             if a * value != S.eye(rows):
                 raise ValueError('nonzero complete inverse residual')
         else:
@@ -99,8 +99,8 @@ class Expansion:
 
 
 def encode(m):
-    return dict(rows=m.rows, columns=m.cols,
-                entries=[dict(row=i, column=j, value=str(v))
+    return dict(rows=int(m.rows), columns=int(m.cols),
+                entries=[dict(row=int(i), column=int(j), value=str(v))
                          for (i, j), v in sorted(m.todok().items()) if v])
 
 

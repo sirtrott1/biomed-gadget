@@ -1,4 +1,5 @@
 #include "../examples/scientific/fixture.hpp"
+#include <algorithm>
 #include <future>
 #include <gadget/model.hpp>
 #include <gadget/resources.hpp>
@@ -180,9 +181,13 @@ int main() {
               "native two-coordinate boundary");
         auto tiled = query(
             R"({"operation":"native_boundary","field_set":"synthetic.assays","backend":"cpu_tiles","workers":4,"tile_rows":1})");
+        const auto tiled_workers =
+            std::min<std::size_t>(4, CpuResources::local()->coordinator().capacity());
+        tiled.set("workers", Json::integer(tiled_workers));
         auto parallel = session.execute(tiled);
         check(parallel.at("result").dump() == first.at("result").dump() &&
-                  parallel.at("execution").at("launched_threads").integer() == 3 &&
+                  parallel.at("execution").at("launched_threads").integer() ==
+                      static_cast<std::int64_t>(tiled_workers - 1) &&
                   parallel.at("execution").at("completed_tiles").integer() == 6,
               "canonical P4 tiles disagree with serial action");
         ScientificSession cache_tiled(study);
@@ -202,7 +207,8 @@ int main() {
               "parallel cache failed exact result/producer reuse");
         check(cache_tiled.execute(cached).at("execution").at("result_reused").boolean(),
               "serial request did not share canonical parallel result");
-        for (auto workers : {1, 2}) {
+        for (std::size_t workers = 1; workers <= std::min<std::size_t>(2, tiled_workers);
+             ++workers) {
             auto variant = Json::parse(tiled.dump());
             variant.set("workers", Json::integer(workers));
             check(session.execute(variant).at("result").dump() == first.at("result").dump(),
@@ -218,6 +224,19 @@ int main() {
         resource_policy.tile_limit = 20000;
         auto resources = std::make_shared<CpuResources>(*observed, resource_policy,
                                                         [observed] { return *observed; });
+        auto single_observed = std::make_shared<rfc::runtime::HardwareInventory>(*observed);
+        single_observed->allowed_cpus.resize(1);
+        auto single_policy = resource_policy;
+        single_policy.worker_limit = 1;
+        auto single_resources = std::make_shared<CpuResources>(
+            *single_observed, single_policy, [single_observed] { return *single_observed; });
+        ScientificSession single_worker(study, single_resources);
+        check(single_worker.execute(structure).at("result").at("total").dump() ==
+                  structural.at("result").at("total").dump() &&
+                  single_worker.execute(factored_structure).at("result").at("total").dump() ==
+                      structural.at("result").at("total").dump() &&
+                  single_resources->coordinator().available_workers() == 1,
+              "structure display reserved its caller twice or retained a worker");
         ScientificSession coordinated(study, resources);
         auto parallel_controlled = Json::parse(controlled.dump());
         parallel_controlled.set("workers", Json::integer(2));
@@ -292,7 +311,10 @@ int main() {
                   "overbooked P5 call published a certificate");
         }
         check(resources->coordinator().available_workers() == 2, "P5 reservation leaked");
-        rejects([&] { coordinated.execute(tiled); }, "unadmitted fixed CPU worker count executed");
+        auto overbooked = Json::parse(tiled.dump());
+        overbooked.set("workers", Json::integer(3));
+        rejects([&] { coordinated.execute(overbooked); },
+                "unadmitted fixed CPU worker count executed");
         observed->cpu_model = "changed observations";
         rejects([&] { coordinated.execute(automatic); }, "stale P5 hardware/calibration admitted");
         observed->cpu_model = "two declared test cores";
@@ -302,14 +324,22 @@ int main() {
         gpu.set("backend", Json::string("gpu"));
         rejects([&] { session.execute(gpu); }, "unqualified GPU backend admitted");
         std::vector<std::future<void>> readers;
-        for (unsigned i = 0; i < 4; ++i)
+        auto reader_query = Json::parse(tiled.dump());
+        reader_query.set("workers", Json::integer(1));
+        for (unsigned i = 0; i < 4; ++i) {
+            if (readers.size() == tiled_workers) {
+                for (auto &reader : readers)
+                    reader.get();
+                readers.clear();
+            }
             readers.push_back(std::async(
-                std::launch::async, [study, tiled, expected = first.at("result").dump()] {
+                std::launch::async, [study, reader_query, expected = first.at("result").dump()] {
                     ScientificSession independent(study);
                     for (unsigned repeat = 0; repeat < 3; ++repeat)
-                        check(independent.execute(tiled).at("result").dump() == expected,
+                        check(independent.execute(reader_query).at("result").dump() == expected,
                               "concurrent immutable sessions changed native result");
                 }));
+        }
         for (auto &reader : readers)
             reader.get();
         auto plan = Json::object();

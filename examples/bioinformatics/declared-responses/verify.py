@@ -60,7 +60,7 @@ def verify(root):
         if 'metric' in maps:assert matrix(maps['metric'])==new['M']
     J=matrix(q['comparisons']['ambient']['map']);K=matrix(q['comparisons']['source']['map']);KA=matrix(oq['observation']['comparison']['map']);lam=S.Rational(q['lambda'])
     u=vector(r['publications']['old']['input_values']);v=vector(r['publications']['new']['input_values'])
-    G=(S.eye(old['L'].rows)+lam*old['L']).inv(method='DM');H=(S.eye(new['L'].rows)+lam*new['L']).inv(method='DM')
+    G=(S.eye(old['L'].rows)+lam*old['L']).inv();H=(S.eye(new['L'].rows)+lam*new['L']).inv()
     g=G*old['I']*u;h=H*new['I']*v;EI=new['I']*K-J*old['I'];EL=new['L']*J-J*old['L'];z=v-K*u
     terms=[H*EI*u,H*new['I']*z,-lam*H*EL*g]
     coordinates=0
