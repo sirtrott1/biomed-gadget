@@ -76,6 +76,13 @@ class NativeRecord {
                                        NativeRecordValue value,
                                        std::vector<RawByteSource> added_sources = {},
                                        std::vector<rfc::storage::TemporalCarrier> added_carriers = {});
+    // Publish added fields and the admitted request in one construction.
+    // Retain the complete request owner and remap its original byte identities.
+    static NativeRecord publish_field_operation(const NativeRecord &source,
+        std::uint64_t source_namespace, std::vector<rfc::storage::TemporalTensor> fields,
+        NativeRecordValue value, std::vector<RawByteSource> added_sources,
+        std::vector<rfc::storage::TemporalCarrier> added_carriers,
+        const NativeRecord &request);
     // Publish declarations after an actual owning history. Unchanged source
     // fields stay in its original base; the canonical frame retains the update.
     static NativeRecord annotate(const NativeRecordValue &value,

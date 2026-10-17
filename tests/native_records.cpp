@@ -125,9 +125,10 @@ void added_source_operations(const NativeRecord &source) {
     check(source.encode() == before, "operation mutated its original source");
     check(out.publication_history()->last_sequence() == source.publication_history()->last_sequence() + 1,
           "operation introduced an intermediate publication");
-    const auto verify = [&](const NativeRecord &record) {
-        check(record.historical_publication(source.endpoint()->sequence).encode() == before,
-              "operation changed the original complete prefix");
+    const auto verify = [&](const NativeRecord &record, std::size_t added_fields = 0) {
+        if (!added_fields)
+            check(record.historical_publication(source.endpoint()->sequence).encode() == before,
+                  "operation changed the original complete prefix");
         check(NativeRecord::decode(record.at("request_publication").bytes()).encode() == enclosing.encode(),
               "selected request lost its whole original owner");
         check(std::ranges::equal(record.at("request").at("evidence").bytes(), request_bytes),
@@ -144,17 +145,76 @@ void added_source_operations(const NativeRecord &source) {
         check(storage::encode_rfcx(record.endpoint()->source).bytes ==
                   storage::encode_rfcx(source.endpoint()->source).bytes &&
                   record.endpoint()->carriers == source.endpoint()->carriers &&
-                  record.endpoint()->tensors.size() == source.endpoint()->tensors.size(),
+                  record.endpoint()->tensors.size() == source.endpoint()->tensors.size() + added_fields,
               "operation changed its original complex, carriers or fields");
-        for (std::size_t i = 0; i < source.endpoint()->tensors.size(); ++i)
-            check(storage::temporal_endpoint_detail::tensor_equal(
-                      record.endpoint()->tensors[i], source.endpoint()->tensors[i]),
+        for (const auto &original : source.endpoint()->tensors) {
+            const auto found = std::ranges::find_if(record.endpoint()->tensors,
+                [&](const auto &candidate) { return candidate.key == original.key; });
+            check(found != record.endpoint()->tensors.end() &&
+                      storage::temporal_endpoint_detail::tensor_equal(*found, original),
                   "operation changed complete field support or coefficients");
+        }
     };
     verify(out);
     const auto restarted = NativeRecord::decode(out.encode());
     verify(restarted);
     check(restarted.encode() == out.encode(), "operation changed on complete replay");
+    auto added_field = source.endpoint()->tensors.front();
+    added_field.key = 1;
+    while (std::ranges::any_of(source.endpoint()->tensors,
+               [&](const auto &field) { return field.key == added_field.key; }))
+        ++added_field.key;
+    added_field.tensor = numeric::SparseRationalTensor(numeric::IndexDomain::linear(3),
+        numeric::StructuralSupport::sparse(3, {0, 2}),
+        numeric::SparseRationalVector(3, {{2, numeric::Rational{-11, 17}}}));
+    auto archive_key = added_key + 1;
+    while (std::ranges::any_of(original_sources,
+               [&](const auto &raw) { return raw.key() == archive_key; }))
+        ++archive_key;
+    const auto archive = source.archive_source(archive_key);
+    auto field_result = std::get<N::Object>(result().data);
+    field_result.members.emplace_back("source_publication",
+        N(N::ByteSpan{archive.key(), 0, archive.bytes().size(), false}));
+    const auto field_operation = NativeRecord::publish_field_operation(source,
+        new_native_record_namespace(), {added_field}, N(std::move(field_result)),
+        {RawByteSource(added_key, extra), archive}, {}, request);
+    check(field_operation.source_namespace() != source.source_namespace() &&
+              field_operation.endpoint()->sequence == source.endpoint()->sequence &&
+              field_operation.publication_history()->segment_count() == 0,
+          "field operation did not publish its own complete base");
+    const auto verify_field = [&](const NativeRecord &publication) {
+        verify(publication, 1);
+        check(NativeRecord::decode(publication.at("result").at("source_publication").bytes()).encode()
+                  == before,
+              "field operation changed the original complete history archive");
+        const auto field = publication.encoded_tensor(added_field.key);
+        check(field && field->tensor().value(0) == numeric::Rational{0} &&
+                  !field->tensor().value(1) &&
+                  field->tensor().value(2) == numeric::Rational{-11, 17},
+              "field operation lost added coefficients or zero versus missing support");
+    };
+    verify_field(field_operation);
+    const auto reopened_field = NativeRecord::decode(field_operation.encode());
+    verify_field(reopened_field);
+    check(reopened_field.encode() == field_operation.encode(),
+          "field operation changed on complete replay");
+    rejects([&] {
+        (void)NativeRecord::publish_field_operation(source, source.source_namespace(),
+            {added_field}, result(), {RawByteSource(added_key, extra)}, {}, request);
+    });
+    rejects([&] {
+        (void)NativeRecord::publish_field_operation(source, new_native_record_namespace(),
+            {source.endpoint()->tensors.front()}, result(),
+            {RawByteSource(added_key, extra)}, {}, request);
+    });
+    rejects([&] {
+        (void)NativeRecord::publish_field_operation(source, new_native_record_namespace(),
+            {added_field}, result(), {RawByteSource(original_sources.front().key(), extra)}, {}, request);
+    });
+    rejects([&] {
+        (void)NativeRecord::publish_field_operation(source, new_native_record_namespace(),
+            {added_field}, result(), {}, {}, request);
+    });
     rejects([&] {
         (void)retain_operation(source, {RawByteSource(original_sources.front().key(), extra)}, request, result());
     });

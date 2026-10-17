@@ -11,6 +11,10 @@ class ResultValue {
     ResultValue(const Json &control) : value_(import_record_view(control)) {}
     static ResultValue object() {return ResultValue(NativeRecordValue(NativeRecordValue::Object{}));}
     static ResultValue array() {return ResultValue(NativeRecordValue(NativeRecordValue::Array{}));}
+    static ResultValue packed(std::size_t count,
+        std::function<void(const std::function<void(NativeRecordValue)> &)> emit) {
+        return ResultValue(NativeRecordValue(NativeRecordValue::PackedArray{count, std::move(emit)}));
+    }
     static ResultValue string(std::string value) {return ResultValue(NativeRecordValue(std::move(value)));}
     static ResultValue boolean(bool value) {return ResultValue(NativeRecordValue(value));}
     static ResultValue count(std::size_t value) {
@@ -278,11 +282,27 @@ class ResultFields {
             }
         }
     }
+    ResultValue retain_staged(ResultValue value) {
+        return ResultValue(consume_staged(std::move(value).release()));
+    }
     NativeRecord finish(ResultValue view) {
         return finish_wrapped(std::move(view), {}, {});
     }
     NativeRecord finish_wrapped(ResultValue view, NativeRecordValue::Object wrapper,
                                 std::string member) {
+        return finish_final(std::move(view), std::move(wrapper), std::move(member), {}, nullptr);
+    }
+    NativeRecord finish_metadata(ResultValue view, NativeRecordValue::Object metadata) {
+        return finish_final(std::move(view), {}, {}, std::move(metadata), nullptr);
+    }
+    NativeRecord finish_operation(ResultValue view, NativeRecordValue::Object wrapper,
+        std::string member, NativeRecordValue::Object metadata, const NativeRecord &request) {
+        return finish_final(std::move(view), std::move(wrapper), std::move(member),
+            std::move(metadata), &request);
+    }
+  private:
+    NativeRecord finish_final(ResultValue view, NativeRecordValue::Object wrapper,
+        std::string member, NativeRecordValue::Object metadata, const NativeRecord *request) {
         view = ResultValue(consume_staged(std::move(view).release()));
         bindings_ = ResultValue(consume_staged(std::move(bindings_).release()));
         auto root = ResultValue::object();
@@ -294,6 +314,11 @@ class ResultFields {
             original_bytes.push(ResultValue(NativeRecordValue(
                 NativeRecordValue::ByteSpan{bytes.key(), 0, bytes.bytes().size(), false})));
         root.set("source_bytes", std::move(original_bytes));
+        for (auto &[name, value] : metadata.members) {
+            if (name == "schema" || name == "view" || name == "bindings" || name == "source_bytes")
+                throw std::invalid_argument("scientific metadata shadows a field declaration");
+            root.set(std::move(name), ResultValue(std::move(value)));
+        }
         std::vector<rfc::storage::TemporalTensor> fields;
         for (auto i = original_fields_; i < endpoint_.tensors.size(); ++i)
             fields.push_back(std::move(endpoint_.tensors[i]));
@@ -310,6 +335,10 @@ class ResultFields {
         // Complete immutable archives now own the child publications. Their
         // decoded preparation caches end before the final publication allocates.
         archived_.clear();
+        if (request)
+            return NativeRecord::publish_field_operation(source_, new_native_record_namespace(),
+                std::move(fields), std::move(value), std::move(publications_),
+                std::move(carriers), *request);
         return NativeRecord::publish_fields(source_, new_native_record_namespace(), std::move(fields),
             std::move(value), std::move(publications_), std::move(carriers));
     }

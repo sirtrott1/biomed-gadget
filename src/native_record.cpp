@@ -757,6 +757,27 @@ NativeRecord NativeRecord::publish_fields(const NativeRecord &source, std::uint6
     return create_owned(std::move(value), ns, std::move(added_sources), std::move(endpoint),
                         &source);
 }
+NativeRecord NativeRecord::publish_field_operation(const NativeRecord &source, std::uint64_t ns,
+    std::vector<storage::TemporalTensor> fields, NativeRecordValue value,
+    std::vector<RawByteSource> added_sources, std::vector<storage::TemporalCarrier> added_carriers,
+    const NativeRecord &request) {
+    require(ns != source.source_namespace(), "field publication requires a new namespace");
+    auto sources = source.raw_sources();
+    std::set<std::uint64_t> keys;
+    for (const auto &bytes : sources) keys.insert(bytes.key());
+    for (const auto &bytes : added_sources) {
+        require(keys.insert(bytes.key()).second, "field operation byte source identity collides");
+        sources.push_back(bytes);
+    }
+    auto operation = operation_value(sources, added_sources, request, std::move(value));
+    auto endpoint = *source.endpoint();
+    endpoint.carriers.insert(endpoint.carriers.end(), std::make_move_iterator(added_carriers.begin()),
+                             std::make_move_iterator(added_carriers.end()));
+    endpoint.tensors.insert(endpoint.tensors.end(), std::make_move_iterator(fields.begin()),
+                            std::make_move_iterator(fields.end()));
+    return checked_operation(create_owned(std::move(operation.value), ns, std::move(added_sources),
+        std::move(endpoint), &source), operation.request_sources);
+}
 NativeRecord NativeRecord::create_owned(NativeRecordValue value,std::uint64_t ns,
     std::vector<RawByteSource> sources,storage::TemporalEndpoint endpoint,
     const NativeRecord *retained_parent,std::optional<storage::NativeTemporalSeries> history,

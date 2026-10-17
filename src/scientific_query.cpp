@@ -2976,7 +2976,7 @@ struct ScientificSession::State {
         lease.check_cancelled();
         return native.derive(std::move(root));
     }
-    NativeRecord native_boundary_fields(const Json &query) {
+    NativeRecord native_boundary_fields(const Json &query, const NativeRecord *request = nullptr) {
         const auto name = query.at("field_set").text();
         const auto analysis = native_analysis(name);
         std::shared_ptr<const Vector> values_pin;
@@ -3140,29 +3140,46 @@ struct ScientificSession::State {
             inputs.push(std::move(item));
         }
         action.set("inputs", std::move(inputs));
-        auto outputs = ResultValue::array();
-        auto output = ResultValue::array();
-        for (const auto &binding : analysis.binding().outputs()) {
-            auto row = ResultValue::object();
-            row.set("entity", ResultValue(source.cell_record(binding.cell).at("id")));
-            row.set("carrier", ResultValue::string(std::to_string(binding.carrier)));
-            row.set("coordinate_system", ResultValue::string(std::to_string(binding.coordinates)));
-            const auto field = publication.cell_vector(
+        std::vector<ResultValue> output_fields;
+        output_fields.reserve(analysis.binding().outputs().size());
+        for (const auto &binding : analysis.binding().outputs())
+            output_fields.push_back(publication.cell_vector(
                 Vector(values.data() + binding.offset, values.data() + binding.offset + binding.dimension),
-                binding.carrier, binding.cell, "vector_objects");
-            row.set("values", field);
-            row.set("support", ResultValue::string("complete; supported zero and cancellation retained"));
-            output.push(std::move(row));
-            auto item = ResultValue::object();
-            item.set("cell_grade", ResultValue::count(binding.cell.grade.value));
-            item.set("cell_key", ResultValue::count(binding.cell.key));
-            item.set("carrier", ResultValue::count(binding.carrier));
-            item.set("coordinate_system", ResultValue::count(binding.coordinates));
-            item.set("offset", ResultValue::count(binding.offset));
-            item.set("dimension", ResultValue::count(binding.dimension));
-            item.set("field", field);
-            outputs.push(std::move(item));
-        }
+                binding.carrier, binding.cell, "vector_objects"));
+        std::vector<ResultValue> coefficients;
+        coefficients.reserve(analysis.binding().occurrences().size());
+        for (const auto &binding : analysis.binding().occurrences())
+            coefficients.push_back(publication.retain_staged(publication.stage_scalar(binding.coefficient)));
+        std::vector<ResultValue> binding_coefficients;
+        binding_coefficients.reserve(coefficients.size());
+        for (const auto &binding : analysis.binding().occurrences())
+            binding_coefficients.push_back(publication.retain_staged(publication.stage_scalar(binding.coefficient)));
+        auto output = ResultValue::packed(output_fields.size(), [&](const auto &emit) {
+            std::size_t index = 0;
+            for (const auto &binding : analysis.binding().outputs()) {
+                auto row = ResultValue::object();
+                row.set("entity", ResultValue(source.cell_record(binding.cell).at("id")));
+                row.set("carrier", ResultValue::string(std::to_string(binding.carrier)));
+                row.set("coordinate_system", ResultValue::string(std::to_string(binding.coordinates)));
+                row.set("values", output_fields.at(index++));
+                row.set("support", ResultValue::string("complete; supported zero and cancellation retained"));
+                emit(std::move(row).release());
+            }
+        });
+        auto outputs = ResultValue::packed(output_fields.size(), [&](const auto &emit) {
+            std::size_t index = 0;
+            for (const auto &binding : analysis.binding().outputs()) {
+                auto item = ResultValue::object();
+                item.set("cell_grade", ResultValue::count(binding.cell.grade.value));
+                item.set("cell_key", ResultValue::count(binding.cell.key));
+                item.set("carrier", ResultValue::count(binding.carrier));
+                item.set("coordinate_system", ResultValue::count(binding.coordinates));
+                item.set("offset", ResultValue::count(binding.offset));
+                item.set("dimension", ResultValue::count(binding.dimension));
+                item.set("field", output_fields.at(index++));
+                emit(std::move(item).release());
+            }
+        });
         execution.set("profile", Json::string(report.profile));
         execution.set("implementation", Json::string(report.implementation));
         execution.set("backend", Json::string("exact_cpu"));
@@ -3184,39 +3201,46 @@ struct ScientificSession::State {
         execution.set("decisions", decisions);
 
         view.set("field_set", ResultValue(source.field_sets.at(name).declaration));
-        auto retained = ResultValue::array(), occurrences = ResultValue::array();
-        for (const auto &binding : analysis.binding().occurrences()) {
-            auto occurrence = ResultValue::object();
-            occurrence.set("grade", ResultValue::count(binding.occurrence.upper_grade.value));
-            occurrence.set("key", ResultValue::string(std::to_string(binding.occurrence.key.value)));
-            occurrence.set("upper", ResultValue(source.cell_record(binding.upper).at("id")));
-            occurrence.set("lower", ResultValue(source.cell_record(binding.lower).at("id")));
-            occurrence.set("active", ResultValue::boolean(binding.active));
-            auto coefficient = publication.stage_scalar(binding.coefficient);
-            coefficient.set("display", ResultValue::string("rational_object"));
-            occurrence.set("coefficient", std::move(coefficient));
-            occurrence.set("map", binding.map ? ResultValue::string(std::to_string(*binding.map)) : ResultValue{});
-            occurrence.set("map_role", ResultValue::string(!binding.map ? "declared_constant_identity" :
-                (binding.role == TemporalTensorRole::RealizedIncidenceMap ? "realized_incidence" : "coefficient_independent")));
-            occurrence.set("evidence", ResultValue(source.evidence(source.occurrence_record(binding.occurrence).at("evidence"))));
-            retained.push(std::move(occurrence));
-            auto item = ResultValue::object();
-            item.set("grade", ResultValue::count(binding.occurrence.upper_grade.value));
-            item.set("key", ResultValue::count(binding.occurrence.key.value));
-            item.set("upper_grade", ResultValue::count(binding.upper.grade.value));
-            item.set("upper_key", ResultValue::count(binding.upper.key));
-            item.set("lower_grade", ResultValue::count(binding.lower.grade.value));
-            item.set("lower_key", ResultValue::count(binding.lower.key));
-            item.set("input_carrier", ResultValue::count(binding.input_carrier));
-            item.set("output_carrier", ResultValue::count(binding.output_carrier));
-            item.set("source_offset", ResultValue::count(binding.source_offset));
-            item.set("target_offset", ResultValue::count(binding.target_offset));
-            item.set("active", ResultValue::boolean(binding.active));
-            item.set("coefficient", publication.stage_scalar(binding.coefficient));
-            item.set("map", binding.map ? publication.stored(*binding.map, "declared_map") : ResultValue{});
-            item.set("role", ResultValue::count(static_cast<std::size_t>(binding.role)));
-            occurrences.push(std::move(item));
-        }
+        auto retained = ResultValue::packed(coefficients.size(), [&](const auto &emit) {
+            std::size_t index = 0;
+            for (const auto &binding : analysis.binding().occurrences()) {
+                auto occurrence = ResultValue::object();
+                occurrence.set("grade", ResultValue::count(binding.occurrence.upper_grade.value));
+                occurrence.set("key", ResultValue::string(std::to_string(binding.occurrence.key.value)));
+                occurrence.set("upper", ResultValue(source.cell_record(binding.upper).at("id")));
+                occurrence.set("lower", ResultValue(source.cell_record(binding.lower).at("id")));
+                occurrence.set("active", ResultValue::boolean(binding.active));
+                auto coefficient = coefficients.at(index++);
+                coefficient.set("display", ResultValue::string("rational_object"));
+                occurrence.set("coefficient", std::move(coefficient));
+                occurrence.set("map", binding.map ? ResultValue::string(std::to_string(*binding.map)) : ResultValue{});
+                occurrence.set("map_role", ResultValue::string(!binding.map ? "declared_constant_identity" :
+                    (binding.role == TemporalTensorRole::RealizedIncidenceMap ? "realized_incidence" : "coefficient_independent")));
+                occurrence.set("evidence", ResultValue(source.evidence(source.occurrence_record(binding.occurrence).at("evidence"))));
+                emit(std::move(occurrence).release());
+            }
+        });
+        auto occurrences = ResultValue::packed(coefficients.size(), [&](const auto &emit) {
+            std::size_t index = 0;
+            for (const auto &binding : analysis.binding().occurrences()) {
+                auto item = ResultValue::object();
+                item.set("grade", ResultValue::count(binding.occurrence.upper_grade.value));
+                item.set("key", ResultValue::count(binding.occurrence.key.value));
+                item.set("upper_grade", ResultValue::count(binding.upper.grade.value));
+                item.set("upper_key", ResultValue::count(binding.upper.key));
+                item.set("lower_grade", ResultValue::count(binding.lower.grade.value));
+                item.set("lower_key", ResultValue::count(binding.lower.key));
+                item.set("input_carrier", ResultValue::count(binding.input_carrier));
+                item.set("output_carrier", ResultValue::count(binding.output_carrier));
+                item.set("source_offset", ResultValue::count(binding.source_offset));
+                item.set("target_offset", ResultValue::count(binding.target_offset));
+                item.set("active", ResultValue::boolean(binding.active));
+                item.set("coefficient", binding_coefficients.at(index++));
+                item.set("map", binding.map ? publication.stored(*binding.map, "declared_map") : ResultValue{});
+                item.set("role", ResultValue::count(static_cast<std::size_t>(binding.role)));
+                emit(std::move(item).release());
+            }
+        });
         action.set("outputs", std::move(outputs));
         action.set("occurrences", std::move(occurrences));
         publication.bind(std::move(action));
@@ -3226,16 +3250,24 @@ struct ScientificSession::State {
             ResultValue::string("native rational B_k field action; complete declared fibers and "
                          "occurrence maps, with retained inactive and repeated occurrences"));
         view.set("result", std::move(output));
-        const auto native = publication.finish(std::move(view));
-        auto root = native.materialize_value();
-        std::get<NativeRecordValue::Object>(root.data).members.emplace_back("execution", import_record_view(execution));
-        return native.derive(std::move(root));
+        NativeRecordValue::Object metadata{{{"execution", import_record_view(execution)}}};
+        if (request) {
+            const auto original = publication.publication(owner->native_publication()).at("publication");
+            NativeRecordValue::Object wrapper{{
+                {"schema", NativeRecordValue(std::string("gadget.scientific.result.fields.v1"))},
+                {"certificate", import_record_view(certificate(query))},
+                {"source_study_publication", std::move(ResultValue(original)).release()}}};
+            return publication.finish_operation(std::move(view), std::move(wrapper), "fields",
+                std::move(metadata), *request);
+        }
+        return publication.finish_metadata(std::move(view), std::move(metadata));
 
     }
     NativeRecord record(const NativeRecord &query, const Json &admitted) {
         using N = NativeRecordValue;
         const auto operation = admitted.at("operation").text();
         require(has_native_scientific_publisher(operation), "scientific operation has no native publisher");
+        if (operation == "native_boundary") return native_boundary_fields(admitted, &query);
         const auto fields = [&] {
             if (operation == "inspect" || operation == "coverage" || operation == "provenance")
                 return source_fields(admitted);

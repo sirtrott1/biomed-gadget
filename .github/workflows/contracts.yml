@@ -81,6 +81,8 @@ jobs:
         run: |
           cmake --build --preset cpu --target gadget_native --parallel 1
           cmake --build --preset cpu
+      - name: Report execution resources
+        run: build/presets/cpu/gadget resources
       - name: Test
         run: ctest --preset cpu --output-junit contracts.xml
       - name: Verify dependency inputs
