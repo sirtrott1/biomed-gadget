@@ -24,6 +24,7 @@ struct NativeRecordValue {
         std::optional<rfc::storage::StableCellKey> cell;
         std::optional<rfc::storage::StableOccurrenceKey> occurrence;
         std::shared_ptr<const NativeRecordValue> payload;
+        bool packed{};
     };
     using Data = std::variant<std::monostate, bool, rfc::numeric::Integer,
         rfc::numeric::Rational, std::string, Object, Array, ByteSpan, Decimal,
@@ -42,6 +43,7 @@ class NativeRecord {
     const rfc::composite::DeclaredValue *value_{};
     std::shared_ptr<const rfc::composite::DeclaredValue> value_owner_;
     bool root_view_{};
+    const rfc::storage::TemporalDeclaredValue *binding_{};
     NativeRecordValue copy_value(const std::map<std::uint64_t,std::uint64_t> &,bool) const;
     NativeRecord(std::shared_ptr<const State>, rfc::composite::DeclarationId,
                  const rfc::composite::DeclaredValue *,

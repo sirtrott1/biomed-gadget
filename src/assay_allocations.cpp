@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "genomic_detail.hpp"
 #include "source_grade_fields.hpp"
 #include <gadget/record_view.hpp>
@@ -351,8 +352,8 @@ Json assay_detail::allocation_analysis(const Json &request, std::shared_ptr<CpuR
     output.set("source_digest", Json::string("sha256:" + sha256(request.dump())));
     output.set("result", result);
     output.set("arithmetic", Json::string("rational"));
-    output.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-    output.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
+    output.set("rexgraph_sha256", Json::string(gadget::build::rexgraph_sha256()));
+    output.set("gadget_sha256", Json::string(gadget::build::source_sha256()));
     auto certificate = seal(output, "certificate_sha256");
     if (retained) {
         endpoint.carriers.push_back({1,

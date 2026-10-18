@@ -562,6 +562,15 @@ void import_table(const fs::path &specification, const fs::path &destination) {
     // source admission, which still owns the whole complex and exact fields.
     std::vector<Row>().swap(rows);
     std::vector<std::size_t>().swap(token_ends);
+    declaration = Json{};
+    cells = Json{};
+    occurrences = Json{};
+    fields = Json{};
+    contexts = Json{};
+    stalks = Json{};
+    set_fields = Json{};
+    set = Json{};
+    sets = Json{};
     {
         ScientificStudy admitted(stage / "study.json");
         write_text(stage / "admission.json", admitted.catalog().dump() + "\n");

@@ -7,6 +7,7 @@
 #include <gadget/model.hpp>
 #include <gadget/native_pattern.hpp>
 #include <gadget/pipeline.hpp>
+#include <gadget/process.hpp>
 #include <gadget/resources.hpp>
 #include <gadget/store.hpp>
 #include <gadget/table.hpp>
@@ -14,6 +15,8 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
 [[maybe_unused]] void object_keys(const gadget::Json &object, const std::set<std::string> &required,
@@ -92,6 +95,7 @@ int main(int argc, char **argv) {
                    "       workflow [--evidence DIRECTORY]; ask|session [--task "
                    "planner|observer|claim_reader]\n"
                    "       compute options: [--compute-device 0] [--allow-software-device off]\n"
+                   "       process memory: [--memory-mib N] or GADGET_MEMORY_MIB\n"
                    "       store-init --snapshot STUDY --out NEW_DIRECTORY\n"
                    "       store-status --store DIRECTORY [--transaction DECIMAL_ID]\n"
                    "       store-publish --store DIRECTORY --snapshot STUDY --request FILE\n";
@@ -194,6 +198,7 @@ int main(int argc, char **argv) {
             allowed.at(name).insert("--mmproj");
         if (!allowed.contains(command))
             throw std::invalid_argument("unknown command: " + command);
+        allowed.at(command).insert("--memory-mib");
         std::map<std::string, std::string> options;
         for (int i = 2; i < argc; ++i) {
             const std::string option = argv[i];
@@ -208,6 +213,20 @@ int main(int argc, char **argv) {
                 throw std::invalid_argument("empty argument: " + option);
             options.emplace(option, value);
         }
+        std::optional<std::size_t> memory_bytes;
+        const auto memory_option = options.find("--memory-mib");
+        const char *memory_env = std::getenv("GADGET_MEMORY_MIB");
+        if (memory_option != options.end() || memory_env) {
+            const std::string_view value = memory_option != options.end()
+                ? std::string_view(memory_option->second) : std::string_view(memory_env);
+            std::size_t mib{};
+            const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), mib);
+            if (error != std::errc{} || end != value.data() + value.size() || !mib ||
+                mib > std::numeric_limits<std::size_t>::max() / (1024 * 1024))
+                throw std::invalid_argument("process memory requires a positive MiB count");
+            memory_bytes = mib * 1024 * 1024;
+        }
+        (void)gadget::limit_process_memory(memory_bytes);
         auto required = [&](const std::string &option) -> const std::string & {
             if (!options.contains(option))
                 throw std::invalid_argument(command + " requires " + option);
@@ -701,8 +720,7 @@ int main(int argc, char **argv) {
         }
         if (command == "import-table") {
             gadget::import_table(required("--spec"), required("--out"));
-            gadget::ScientificStudy study(gadget::fs::path(required("--out")) / "study.json");
-            std::cout << study.catalog().dump() << '\n';
+            std::cout << gadget::read_text(gadget::fs::path(required("--out")) / "admission.json");
             return 0;
         }
         if(command=="native-record") {gadget::read_record(required("--input")).native().write(required("--out"));return 0;}
@@ -1012,6 +1030,9 @@ int main(int argc, char **argv) {
         std::cerr << result.dump() << '\n';
         return 3;
 #endif
+    } catch (const std::bad_alloc &) {
+        std::fputs("gadget: process memory budget exhausted; reduce retained work or select --memory-mib within available memory\n", stderr);
+        return 2;
     } catch (const std::exception &e) {
         std::cerr << "gadget: " << e.what() << '\n';
         return 2;

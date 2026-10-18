@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "scientific_result_fields.hpp"
 #include <algorithm>
 #include <array>
@@ -577,8 +578,8 @@ void analyze(const Workspace &w, const fs::path &requested) {
         summary.set("snapshot", w.snapshot_origin);
     if (w.store_origin.has("root"))
         summary.set("store", w.store_origin);
-    summary.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-    summary.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
+    summary.set("rexgraph_headers_sha256", Json::string(gadget::build::rexgraph_sha256()));
+    summary.set("gadget_sources_sha256", Json::string(gadget::build::source_sha256()));
     summary.set(
         "numerical_contract",
         Json::string("p0/p1 moments exact; higher moments and full gene sweep use declared "
@@ -607,8 +608,8 @@ void analyze(const Workspace &w, const fs::path &requested) {
     auto completion = Json::object();
     completion.set("schema", Json::string("gadget.artifacts.v1"));
     completion.set("source_digest", Json::string(w.source_digest));
-    completion.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-    completion.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
+    completion.set("rexgraph_headers_sha256", Json::string(gadget::build::rexgraph_sha256()));
+    completion.set("gadget_sources_sha256", Json::string(gadget::build::source_sha256()));
     auto artifacts = Json::array();
     std::vector<fs::path> paths;
     for (const auto &entry : fs::recursive_directory_iterator(destination))
@@ -627,8 +628,8 @@ void analyze(const Workspace &w, const fs::path &requested) {
     native_summary.set("source_digest", V::string(w.source_digest));
     if (w.snapshot_origin.has("study_digest")) native_summary.set("snapshot", V(render_record_view(w.snapshot_origin.native())));
     if (w.store_origin.has("root")) native_summary.set("store", V(render_record_view(w.store_origin.native())));
-    native_summary.set("rexgraph_headers_sha256", V::string(GADGET_REXGRAPH_SHA256));
-    native_summary.set("gadget_sources_sha256", V::string(GADGET_SOURCE_SHA256));
+    native_summary.set("rexgraph_headers_sha256", V::string(gadget::build::rexgraph_sha256()));
+    native_summary.set("gadget_sources_sha256", V::string(gadget::build::source_sha256()));
     native_summary.set("numerical_contract", V::string(summary.at("numerical_contract").text()));
     native_summary.set("audit", V(w.audit.native().unbound_value()));
     native_summary.set("certificates", std::move(native_certificates));

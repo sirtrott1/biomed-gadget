@@ -18,15 +18,23 @@ std::string native_declaration_digest(const NativeRecord &record);
 // is generated only for the existing external views and adapter calls.
 class RetainedRecord {
     std::optional<NativeRecord> record_;
+    std::optional<std::size_t> index_;
+    RetainedRecord(NativeRecord parent, std::size_t index)
+        :record_(std::move(parent)),index_(index) {}
   public:
     RetainedRecord() = default;
     RetainedRecord(const Json &view) :record_(admit_record_view(view)) {}
     RetainedRecord(NativeRecord record) :record_(std::move(record)) {}
-    RetainedRecord &operator=(const Json &view) {record_=admit_record_view(view);return *this;}
-    operator Json() const {return record_?render_record_view(*record_):Json{};}
-    const NativeRecord &native() const {return record_.value();}
+    RetainedRecord &operator=(const Json &view) {record_=admit_record_view(view);index_.reset();return *this;}
+    operator Json() const {return record_?render_record_view(native()):Json{};}
+    NativeRecord native() const {return index_?record_.value().at(*index_):record_.value();}
     RetainedRecord member(std::string_view name) const {return native().at(name);}
-    RetainedRecord element(std::size_t index) const {return native().at(index);}
+    RetainedRecord element(std::size_t index) const {
+        auto parent=native();
+        if(parent.kind()!=NativeRecordKind::Array || index>=parent.size())
+            throw std::out_of_range("native array selection outside declared cardinality");
+        return {std::move(parent),index};
+    }
     bool has(const std::string &name) const {return record_ && native().has(name);}
     RetainedRecord at(const std::string &name) const {return member(name);}
     RetainedRecord at(std::size_t index) const {return element(index);}

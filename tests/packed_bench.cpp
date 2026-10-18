@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include <algorithm>
 #include <gadget/compute.hpp>
 #include <iostream>
@@ -74,8 +75,8 @@ int main(int argc, char **argv) {
         report.set("instructions", Json::integer(program.instruction_count()));
         report.set("hardware", resources->report());
         report.set("samples", records);
-        report.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-        report.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
+        report.set("rexgraph_headers_sha256", Json::string(gadget::build::rexgraph_sha256()));
+        report.set("gadget_sources_sha256", Json::string(gadget::build::source_sha256()));
         std::cout << report.dump() << '\n';
         return 0;
     } catch (const std::exception &e) {

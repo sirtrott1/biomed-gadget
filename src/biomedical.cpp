@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "scientific_detail.hpp"
 #include "scientific_result_fields.hpp"
 #include <cmath>
@@ -1305,8 +1306,8 @@ NativeRecord EvidenceStore::execute_record(const NativeRecord &input) const {
     cert.set("snapshot_sha256", R(state_->receipt.native().at("snapshot_sha256").materialize_value()));
     cert.set("native_sha256", R(state_->receipt.native().at("native_sha256").materialize_value()));
     auto execution = R::object();
-    execution.set("gadget_sources_sha256", R::string(GADGET_SOURCE_SHA256));
-    execution.set("rexgraph_headers_sha256", R::string(GADGET_REXGRAPH_SHA256));
+    execution.set("gadget_sources_sha256", R::string(gadget::build::source_sha256()));
+    execution.set("rexgraph_headers_sha256", R::string(gadget::build::rexgraph_sha256()));
     cert.set("compiled_sources", execution);
     cert.set("query", R(query));
     cert.set("result", result);

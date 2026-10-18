@@ -19,6 +19,7 @@
 #include <unistd.h>
 #if GADGET_HAS_MULTIMODAL
 #include <mtmd-helper.h>
+#include "projector.hpp"
 #endif
 
 namespace gadget {
@@ -595,6 +596,7 @@ struct LocalAgent::State {
             p.use_gpu = false;
             p.n_threads = options.threads;
             p.print_timings = true;
+            p.cb_eval = detail::initialize_projector_scratch;
             const auto usage = mtmd_get_memory_usage(options.projector.c_str(), p);
             if (usage.empty())
                 throw std::runtime_error("llama.cpp could not inspect projector allocations");

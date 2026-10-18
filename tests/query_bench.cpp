@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include <chrono>
 #include <gadget/execution.hpp>
 #include <gadget/store.hpp>
@@ -48,8 +49,8 @@ int main(int argc, char **argv) {
             "fresh_query_seconds",
             Json::number(std::chrono::duration<double>(fresh_completed - fresh_started).count()));
         report.set("prepared_contexts", Json::integer(session.preparation_count()));
-        report.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-        report.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
+        report.set("rexgraph_headers_sha256", Json::string(gadget::build::rexgraph_sha256()));
+        report.set("gadget_sources_sha256", Json::string(gadget::build::source_sha256()));
         write_text(argv[3], report.dump() + "\n");
         std::cout << report.dump() << '\n';
         return 0;

@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "scientific_detail.hpp"
 #include <chrono>
 #include <gadget/compute.hpp>
@@ -201,7 +202,7 @@ PackedResult PackedOperation::execute(CpuResources &resources, const Json &query
         timing.set("total_ns", Json::string(std::to_string(mixed.timings.total_ns)));
         result.execution.set("native_timings", timing);
         result.execution.set("rexgraph_backend_sources_sha256",
-                             Json::string(GADGET_REXGRAPH_BACKEND_SHA256));
+                             Json::string(gadget::build::backend_sha256()));
 #else
         throw std::invalid_argument("Vulkan compute is disabled in this build");
 #endif

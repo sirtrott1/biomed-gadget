@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "memory_observation.hpp"
 #include <algorithm>
 #include <gadget/snapshot.hpp>
@@ -347,7 +348,7 @@ NativeRecord capture_workspace(const Workspace &w) {
     TemporalEndpoint endpoint(*w.complex);
     auto metadata = capture_metadata(w, endpoint);
     using N=NativeRecordValue;
-    auto creator=Json::object();creator.set("rexgraph_headers_sha256",Json::string(GADGET_REXGRAPH_SHA256));creator.set("gadget_sources_sha256",Json::string(GADGET_SOURCE_SHA256));
+    auto creator=Json::object();creator.set("rexgraph_headers_sha256",Json::string(gadget::build::rexgraph_sha256()));creator.set("gadget_sources_sha256",Json::string(gadget::build::source_sha256()));
     N::Array original_files;std::vector<RawByteSource> raw_sources;
     require(w.raw_sources.size()==w.files.size(),"original source bytes were not retained at admission");
     for(std::size_t i=0;i<w.files.size();++i) {

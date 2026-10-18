@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include <algorithm>
 #include <chrono>
 #include <gadget/relational.hpp>
@@ -437,8 +438,8 @@ void run_relational_audit(const fs::path &input, const fs::path &output, std::si
     result.set("schema", Json::string("gadget.relational.audit.v1"));
     result.set("input_sha256", Json::string(sha256(bytes)));
     result.set("declaration", packet);
-    result.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-    result.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
+    result.set("rexgraph_headers_sha256", Json::string(gadget::build::rexgraph_sha256()));
+    result.set("gadget_sources_sha256", Json::string(gadget::build::source_sha256()));
     result.set("topology", top);
     result.set("native_lattice", lattice);
     result.set("fields", observations);

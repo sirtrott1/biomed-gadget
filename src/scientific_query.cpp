@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "memory_observation.hpp"
 #include "research_ablation.hpp"
 #include "scientific_ablation_fields.hpp"
@@ -88,7 +89,7 @@ struct PreparedContext {
 } // namespace
 struct ScientificSession::State {
     std::shared_ptr<const ScientificStudy> owner;
-    std::optional<RawByteSource> original_publication;
+    mutable std::optional<RawByteSource> original_publication;
     const ScientificStudy::State &source;
     std::map<std::string, PreparedContext> contexts;
     std::map<std::string, std::unique_ptr<State>> publication_sessions;
@@ -240,7 +241,7 @@ struct ScientificSession::State {
                 rfc::core::Grade{*grade}, values, true, resources, nullptr);
             return Json::object();
         }
-        scientific_detail::ResultFields publication(owner->native_publication());
+        scientific_detail::ResultFields publication(result_source());
         scientific_detail::ResultFieldContext binding(publication, owner->native_publication(),
             prepared.to_ambient, std::pair<std::size_t, std::uint64_t>{*grade, *tensor(ids.at(0).text()).output});
         auto result = research_detail::relational_field_ensemble(
@@ -375,7 +376,7 @@ struct ScientificSession::State {
                 *prepared.study, query, grade, values, blocks, true, resources, nullptr);
             return Json::object();
         }
-        scientific_detail::ResultFields publication(owner->native_publication());
+        scientific_detail::ResultFields publication(result_source());
         scientific_detail::ResultFieldContext binding(publication, owner->native_publication(),
             prepared.to_ambient, std::pair<std::size_t, std::uint64_t>{grade.value, *tensor(first).output});
         auto result = research_detail::structural_reference_calibration(
@@ -497,7 +498,7 @@ struct ScientificSession::State {
                 nullptr, &operands, true);
             return owner->native_publication();
         }
-        scientific_detail::ResultFields publication(owner->native_publication());
+        scientific_detail::ResultFields publication(result_source());
         auto analysis = scientific_detail::analyze_local_section_fields(*prepared.study, declaration,
             &publication, &operands);
         auto source_binding = scientific_detail::ResultValue::object();
@@ -645,7 +646,7 @@ struct ScientificSession::State {
                 roles, witness, sheaf, true, resources, owner->native_publication(), sheaf_operands, nullptr);
             return Json::object();
         }
-        scientific_detail::ResultFields publication(owner->native_publication());
+        scientific_detail::ResultFields publication(result_source());
         research_detail::AblationFields axes(publication, owner->native_publication());
         const auto &source_axes = axes.source(*prepared.study);
         auto inputs = scientific_detail::ResultValue::array();
@@ -673,12 +674,25 @@ struct ScientificSession::State {
         if (native) { *native = result; return Json{}; }
         return scientific_detail::result_fields_view(result);
     }
+    NativeRecord result_source() const {
+        const auto endpoint = source.history->tail().pin();
+        if (!NativeRecord::source_keys(*endpoint).empty())
+            return owner->native_publication();
+        auto originals = owner->native_publication().raw_sources();
+        using N = NativeRecordValue;
+        N source_owner(N::Object{});
+        // Preparation retains the generating cutoff and original byte owners.
+        // The operation wrapper retains the complete input publication once.
+        return NativeRecord::create_from_endpoint(std::move(source_owner),
+            source.history->source_namespace(), std::move(originals),
+            *endpoint);
+    }
     NativeRecord field_summary_fields(const Json &query) {
         using namespace scientific_detail;
         auto reservation = cpu().reserve(1);
         const auto id = query.at("field").text();
         const auto &input_field = tensor(id);
-        ResultFields publication(owner->native_publication());
+        ResultFields publication(result_source());
         Vector values;
         std::vector<std::size_t> coordinates;
         input_field.tensor.support().for_each_active([&](std::size_t i) {
@@ -825,7 +839,7 @@ struct ScientificSession::State {
         const auto prepared = packed.at(identity)->prepared();
         auto derived = packed.at(identity)->execute(cpu(), query);
         derived.execution.set("prepared_operation_reused", Json::boolean(reused));
-        ResultFields publication(owner->native_publication());
+        ResultFields publication(result_source());
         const auto carrier = *first.output, size = first.tensor.domain().logical_size();
         const auto bits = [&](const rfc::machine::PackedBits &mask) {
             require(mask.size() == size, "packed native field domain");
@@ -917,7 +931,7 @@ struct ScientificSession::State {
         }
         const auto &window = retain ? windows.at(cache_key) : *transient;
         const auto summary = window.summarize(availability,lease);
-        ResultFields publication(owner->native_publication());
+        ResultFields publication(result_source());
         auto view = ResultValue::object(), observations = ResultValue::array();
         std::vector<std::size_t> source_coordinates;
         const auto size = window.domain().logical_size(), window_axis = publication.axis(size);
@@ -1344,7 +1358,7 @@ struct ScientificSession::State {
                 meanings, coordinates, true, resources, nullptr);
             return Json::object();
         }
-        scientific_detail::ResultFields publication(owner->native_publication());
+        scientific_detail::ResultFields publication(result_source());
         scientific_detail::ResultFieldContext binding(publication, owner->native_publication(),
             prepared.to_ambient, std::pair<std::size_t, std::uint64_t>{grade->value, *output});
         auto view = research_detail::observed_response_model(*prepared.study, query, *grade, fields,
@@ -2522,8 +2536,8 @@ struct ScientificSession::State {
         result.set("source_sequence", Json::string(std::to_string(source.directory->sequence())));
         if (source.declaration.at("native").has("cutoff"))
             result.set("native_history", source.history_metadata());
-        result.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-        result.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
+        result.set("rexgraph_headers_sha256", Json::string(gadget::build::rexgraph_sha256()));
+        result.set("gadget_sources_sha256", Json::string(gadget::build::source_sha256()));
         result.set("query", query);
         result.set("design", source.declaration.at("design"));
         result.set(
@@ -2660,7 +2674,8 @@ struct ScientificSession::State {
         auto lease = supplied_lease.value_or(source_execution_lease("scientific-native-source"));
         lease.check_cancelled();
         rfc::runtime::admit_execution({1, 0, 0, 0, 0}, lease.policy());
-        ResultFields fields(owner->native_publication());
+        const auto publication_source = result_source();
+        ResultFields fields(publication_source);
         const auto endpoint = source.directory->pin_snapshot();
         auto binding = R::object();
         binding.set("kind", R::string("original_source"));
@@ -2676,7 +2691,7 @@ struct ScientificSession::State {
             records = rfc::machine::checked_size_add(records, source.operators.size());
             records = rfc::machine::checked_size_add(records, source.contexts.size());
             rfc::runtime::admit_execution({rfc::machine::checked_size_add(records, 1), 0, 0, records, 0}, lease.policy());
-            auto sources = owner->native_publication().raw_sources();
+            auto sources = publication_source.raw_sources();
             auto value = source.catalog_value(sources);
             fields.retain_sources(std::move(sources));
             view = R(std::move(value));
@@ -3119,7 +3134,7 @@ struct ScientificSession::State {
         }
         const auto &values = *values_pin;
         check_values(values);
-        ResultFields publication(owner->native_publication());
+        ResultFields publication(result_source());
         auto view = ResultValue::object();
         view.set("schema", ResultValue::string("gadget.scientific.native.boundary.result.v1"));
         auto action = ResultValue::object();
@@ -3336,12 +3351,17 @@ struct ScientificSession::State {
             source_key = std::max(source_key, rfc::machine::checked_size_add(bytes.key(), 1));
         if (!original_publication)
             original_publication.emplace(owner->native_publication().archive_source(1));
-        auto bytes = original_publication->rekey(source_key);
+        const auto source_bytes = fields.raw_sources();
+        const auto existing = std::find_if(source_bytes.begin(), source_bytes.end(),
+            [&](const auto &bytes) { return bytes.shares_owner(*original_publication); });
+        std::vector<RawByteSource> added;
+        if (existing != source_bytes.end()) source_key = existing->key();
+        else added.push_back(original_publication->rekey(source_key));
         N value(N::Object{{{"schema", N(std::string("gadget.scientific.result.fields.v1"))},
             {"certificate", import_record_view(certificate(admitted))},
             {"fields", fields.unbound_value()},
-            {"source_study_publication", N(N::ByteSpan{source_key, 0, bytes.bytes().size(), false})}}});
-        const auto retained = fields.derive(std::move(value), {std::move(bytes)});
+            {"source_study_publication", N(N::ByteSpan{source_key, 0, original_publication->bytes().size(), false})}}});
+        const auto retained = fields.derive(std::move(value), std::move(added));
         return retain_operation(retained, query, retained.unbound_value());
     }
     Json run(const Json &query, std::optional<rfc::runtime::ExecutionLease> native_lease = {}) {

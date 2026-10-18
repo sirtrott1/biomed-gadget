@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "genomic_detail.hpp"
 #include <rfc/runtime/work_graph.hpp>
 
@@ -111,8 +112,8 @@ NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRec
         {"result", published.unbound_value()},
         {"workspace_publication", N(N::ByteSpan{key, 0, workspace_size, false})},
         {"arithmetic", N(std::string("rational"))},
-        {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-        {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+        {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+        {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
     return retain_operation(published, request, std::move(certificate));
 }
 Json query_batch_fields_view(const NativeRecord &record) {

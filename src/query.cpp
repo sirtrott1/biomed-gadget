@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -107,8 +108,8 @@ static Json execute_query_prepared(const Workspace &w, const Json &query,
         certificate.set("snapshot", w.snapshot_origin);
     if (w.store_origin.has("root"))
         certificate.set("store", w.store_origin);
-    certificate.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-    certificate.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
+    certificate.set("rexgraph_headers_sha256", Json::string(gadget::build::rexgraph_sha256()));
+    certificate.set("gadget_sources_sha256", Json::string(gadget::build::source_sha256()));
     certificate.set("query", query);
     certificate.set("mathematical_definition", Json::string(definitions.at(operation)));
     certificate.set("source_manifest_sha256", Json::string(manifest_hash));

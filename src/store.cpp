@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include <charconv>
 #include <gadget/store.hpp>
 #include <limits>
@@ -377,8 +378,8 @@ Json certificate(const native::DurableNativeRoot &root, const Workspace &workspa
     result.set("root", root_json(root));
     result.set("source_digest", Json::string(workspace.source_digest));
     result.set("snapshot", workspace.snapshot_origin);
-    result.set("rexgraph_headers_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-    result.set("gadget_sources_sha256", Json::string(GADGET_SOURCE_SHA256));
+    result.set("rexgraph_headers_sha256", Json::string(gadget::build::rexgraph_sha256()));
+    result.set("gadget_sources_sha256", Json::string(gadget::build::source_sha256()));
     return result;
 }
 Json certificate(native::DurableNativeStore &store, const Workspace &workspace) {

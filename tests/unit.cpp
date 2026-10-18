@@ -80,6 +80,23 @@ int main() {
             const auto replay=gadget::NativeRecord::decode(array.native().encode());
             check(replay.size()==2 && std::ranges::equal(replay.at(0).bytes(),bytes) &&
                       replay.at(1).integer()==7,"native append preserves opaque values through replay");
+            const auto selected = [&] {
+                const auto packed = source.derive(N(N::PackedArray{2, [](const auto &emit) {
+                    for (int i=0;i<2;++i)
+                        emit(N(N::Object{{{"id",N(numeric::Integer{i})},
+                            {"items",N(N::Array{{N(numeric::Integer{i})}})}}}));
+                }}));
+                return gadget::RetainedRecord(gadget::NativeRecord::decode(packed.encode())).element(1);
+            }();
+            check(selected.at("id").integer()==1,"deferred selection lost its publication owner");
+            auto edited=selected;
+            edited.set("id",gadget::Json::integer(9));
+            check(edited.at("id").integer()==9 && selected.at("id").integer()==1,
+                  "editing a deferred selection changed its source or retained the old index");
+            auto items=selected.at("items");
+            items.push(gadget::Json::integer(7));
+            check(items.size()==2 && items.at(1).integer()==7 && selected.at("items").size()==1,
+                  "appending to a selected array changed its source or lost its decoded owner");
         }
         check(exact_decimal("1.27e-30") ==
                   numeric::Rational("127/100000000000000000000000000000000"),

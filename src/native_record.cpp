@@ -144,6 +144,12 @@ struct Compiler {
     static std::string signature(ID id) {
         return std::to_string(id.name_space)+":"+std::to_string(id.key)+":"+std::to_string(id.version);
     }
+    void enable_packing() {
+        if (!packed_values) {
+            defs.push_back(definitions(true, true).back());
+            packed_values = true;
+        }
+    }
     V pack(NativeRecordValue input, std::size_t depth) {
         auto [type, value] = compile(std::move(input), depth);
         if (!layouts.contains(type))
@@ -169,7 +175,11 @@ struct Compiler {
             else if constexpr(std::is_same_v<T,std::string>) return {text_type,text(x)};
             else if constexpr(std::is_same_v<T,NativeRecordValue::Owned>) {
                 require(static_cast<bool>(x.payload),"owned declaration requires its complete payload");
-                auto [type,value]=compile(*x.payload,depth+1);
+                auto [type,value]=[&]() -> std::pair<ID,V> {
+                    if (!x.packed) return compile(*x.payload, depth + 1);
+                    enable_packing();
+                    return {packed_value_type, pack(*x.payload, depth + 1)};
+                }();
                 while(value_keys.contains(next_value)) {require(next_value!=std::numeric_limits<std::uint64_t>::max(),"owned value identity exhausted");++next_value;}
                 const auto key=next_value;value_keys.insert(key);
                 owned_values.push_back({key,type,x.block,0,x.cell,x.occurrence,std::move(value)});
@@ -214,10 +224,7 @@ struct Compiler {
                 return {type,V::repeated(std::move(values))};
             } else if constexpr(std::is_same_v<T,NativeRecordValue::PackedArray>) {
                 require(static_cast<bool>(x.emit), "packed array requires an owning producer");
-                if (!packed_values) {
-                    defs.push_back(definitions(true, true).back());
-                    packed_values = true;
-                }
+                enable_packing();
                 std::vector<V> values;
                 values.reserve(x.count);
                 x.emit([&](NativeRecordValue item) {
@@ -553,6 +560,8 @@ NativeRecord::NativeRecord(std::shared_ptr<const State> state,ID type,const V *v
                           std::shared_ptr<const V> owner)
     :state_(std::move(state)),type_(type),value_(value),value_owner_(std::move(owner)),
       root_view_(value==state_->root) {
+    if (const auto found = state_->owners.find(value_); found != state_->owners.end())
+        binding_ = found->second;
     std::set<std::uint64_t> visited;
     std::set<State::PackedAddress> packed;
     while(type_==owned_reference_type || type_==packed_value_type) {
@@ -568,6 +577,8 @@ NativeRecord::NativeRecord(std::shared_ptr<const State> state,ID type,const V *v
         const auto &target=*state_->values.at(key);
         require(target.type==ID{unsigned_value(p.at(1)),unsigned_value(p.at(2)),unsigned_value(p.at(3))},"owned value reference type mismatch");
         type_=target.type;value_=&target.value;
+        const auto binding = state_->owners.find(value_);
+        binding_ = binding == state_->owners.end() ? nullptr : binding->second;
     }
 }
 std::optional<NativeRecord> NativeRecord::parent() const {
@@ -617,9 +628,9 @@ NativeRecordValue NativeRecord::copy_value(const std::map<std::uint64_t,std::uin
     }
     throw std::invalid_argument("unknown native record constructor");
     }();
-    if(retain_owner)if(const auto found=state_->owners.find(value_);found!=state_->owners.end()) {
-        const auto *value=found->second;
-        return N(N::Owned{value->block,value->cell,value->occurrence,std::make_shared<const N>(std::move(payload))});
+    if(retain_owner && binding_) {
+        return N(N::Owned{binding_->block,binding_->cell,binding_->occurrence,
+            std::make_shared<const N>(std::move(payload)),binding_->type == packed_value_type});
     }
     return payload;
 }
@@ -816,7 +827,8 @@ NativeRecord NativeRecord::create_owned(NativeRecordValue value,std::uint64_t ns
     if(observer)observer("source_declarations");
     auto [type,data]=compiler.compile(std::move(value));
     if(observer)observer("composite_values");
-    sources.push_back(RawByteSource::adopt_fresh(compiler.pool,std::move(compiler.text_bytes)));
+    if (!compiler.text_spans.empty() || compiler.packed_values || !compiler.text_bytes.empty())
+        sources.push_back(RawByteSource::adopt_fresh(compiler.pool,std::move(compiler.text_bytes)));
     auto all_definitions=declarations.registry.definitions();
     std::set<ID> ids;for(const auto &d:all_definitions)ids.insert(d.id);
     for(auto &d:compiler.defs) {

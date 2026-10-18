@@ -113,20 +113,20 @@ jobs:
         run: |
           sdk_root="$RUNNER_TEMP/sdk/rexgraph-cpp/rexgraphcpp"
           if test -f "$sdk_root/lib/cmake/RFC/RFCConfig.cmake"; then
-            cmake --preset cpu -DGADGET_USE_INSTALLED_RFC=ON -DCMAKE_PREFIX_PATH="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3
+            cmake --preset contracts -DGADGET_USE_INSTALLED_RFC=ON -DCMAKE_PREFIX_PATH="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3 -DGADGET_COMPILE_JOBS="$CMAKE_BUILD_PARALLEL_LEVEL"
           else
             test -f "$sdk_root/CMakeLists.txt"
-            cmake --preset cpu -DREXGRAPH_SOURCE_DIR="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3
+            cmake --preset contracts -DREXGRAPH_SOURCE_DIR="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3 -DGADGET_COMPILE_JOBS="$CMAKE_BUILD_PARALLEL_LEVEL"
           fi
       - name: Build
         id: build
         run: |
-          cmake --build --preset cpu --target gadget_native --parallel 1
-          cmake --build --preset cpu
+          cmake --build --preset contracts --target gadget_native --parallel 1
+          cmake --build --preset contracts --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
       - name: Report execution resources
         run: build/presets/cpu/gadget resources
       - name: Test
-        run: ctest --preset cpu --parallel 2 --output-junit contracts.xml
+        run: ctest --preset contracts --parallel 2 --output-junit contracts.xml
       - name: Verify dependency inputs
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 tools/check_dependency.py --build build/presets/cpu --rexgraph "$RUNNER_TEMP/sdk/rexgraph-cpp/rexgraphcpp" --report build/presets/cpu/dependency.json

@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "assay_coverage_detail.hpp"
 #include "assay_detail.hpp"
 #include "assay_field_detail.hpp"
@@ -909,8 +910,8 @@ std::shared_ptr<const AssayWorkspace> import_assay_workspace(
         manifest.set("assays", admitted_assays);
         manifest.set("resources", admitted_resources);
         manifest.set("links", links);
-        manifest.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
-        manifest.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
+        manifest.set("gadget_sha256", Json::string(gadget::build::source_sha256()));
+        manifest.set("rexgraph_sha256", Json::string(gadget::build::rexgraph_sha256()));
         manifest = seal(manifest, "manifest_sha256");
         write_text(destination / "workspace.json", manifest.dump() + "\n");
         auto publication = publish_native_workspace(destination,manifest,admitted_sources);
@@ -1507,8 +1508,8 @@ std::shared_ptr<const AssayWorkspace> AssayWorkspace::bind_workspaces(
     receipt.set("request", request);
     receipt.set("sources", sources);
     receipt.set("native_assays", native_bindings);
-    receipt.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
-    receipt.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
+    receipt.set("gadget_sha256", Json::string(gadget::build::source_sha256()));
+    receipt.set("rexgraph_sha256", Json::string(gadget::build::rexgraph_sha256()));
     receipt = seal(receipt, "certificate_sha256");
     fs::create_directories(fs::absolute(destination).parent_path());
     const auto stage = private_directory(fs::absolute(destination).parent_path(), ".gadget-bind-");
@@ -1627,8 +1628,8 @@ std::shared_ptr<const AssayWorkspace> AssayWorkspace::bind_workspaces(
     manifest.set("assays", admitted);
     manifest.set("resources", physical);
     manifest.set("links", request.at("links"));
-    manifest.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
-    manifest.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
+    manifest.set("gadget_sha256", Json::string(gadget::build::source_sha256()));
+    manifest.set("rexgraph_sha256", Json::string(gadget::build::rexgraph_sha256()));
     manifest = seal(manifest, "manifest_sha256");
     write_text(stage / "workspace.json", manifest.dump() + "\n");
     auto publication = publish_native_workspace(stage,manifest,bound_sources);
@@ -1833,8 +1834,8 @@ Json AssayWorkspace::execute(const Json &request, std::shared_ptr<CpuResources> 
     output.set("source_digest", Json::string(digest()));
     output.set("result", result);
     output.set("arithmetic", Json::string("rational"));
-    output.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
-    output.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
+    output.set("gadget_sha256", Json::string(gadget::build::source_sha256()));
+    output.set("rexgraph_sha256", Json::string(gadget::build::rexgraph_sha256()));
     if (operation == "relational_gluing") {
         // The gluing adapter builds fresh native observations and uses detached
         // source pages/declarations. Capture the caller's query above, then seal
@@ -2425,8 +2426,8 @@ NativeRecord AssayWorkspace::execute_coverage(const NativeRecord &request,
             {"result",std::move(fields.declaration)},
             {"workspace_publication",N(N::ByteSpan{key,0,size,false})},
             {"arithmetic",N(std::string("rational"))},
-            {"gadget_sha256",N(std::string(GADGET_SOURCE_SHA256))},
-            {"rexgraph_sha256",N(std::string(GADGET_REXGRAPH_SHA256))}
+            {"gadget_sha256",N(std::string(gadget::build::source_sha256()))},
+            {"rexgraph_sha256",N(std::string(gadget::build::rexgraph_sha256()))}
         }});
         fields.sources.push_back(std::move(owner));
         return retain_operation(std::move(fields.endpoint),source_namespace.value_or(new_native_record_namespace()),std::move(fields.sources),request,std::move(certificate));
@@ -2460,8 +2461,8 @@ NativeRecord AssayWorkspace::execute_spatial(const NativeRecord &request,
     N certificate(N::Object{{{"schema", N(std::string("gadget.assay.result.native.v1"))},
         {"query", import_record_view(query)}, {"source_digest", N(digest())},
         {"result", std::move(fields.declaration)}, {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
-        {"arithmetic", N(std::string("rational"))}, {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-        {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+        {"arithmetic", N(std::string("rational"))}, {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+        {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
     return retain_operation(std::move(fields.endpoint),
                             source_namespace.value_or(new_native_record_namespace()),
                             std::move(fields.sources), request, std::move(certificate));
@@ -2526,8 +2527,8 @@ AssayWorkspace::execute_assignment(const NativeRecord &request,
                              {"result", std::move(fields.declaration)},
                              {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
                              {"arithmetic", N(std::string("rational"))},
-                             {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-                             {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+                             {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+                             {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
     return retain_operation(std::move(fields.endpoint),
                             source_namespace.value_or(new_native_record_namespace()),
                             std::move(fields.sources), request, std::move(certificate));
@@ -2626,8 +2627,8 @@ AssayWorkspace::execute_aggregation(const NativeRecord &request,
             {"query", import_record_view(query)}, {"source_digest", N(digest())},
             {"result", std::move(fields.declaration)},
             {"arithmetic", N(std::string("rational"))},
-            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+            {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+            {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
         return retain_operation(std::move(fields.endpoint),
             new_native_record_namespace(), {}, request, std::move(certificate));
     }
@@ -2658,8 +2659,8 @@ AssayWorkspace::execute_aggregation(const NativeRecord &request,
         {"result", std::move(fields.declaration)},
         {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
         {"arithmetic", N(std::string("rational"))},
-        {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-        {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+        {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+        {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
     return retain_operation(std::move(fields.endpoint),
         source_namespace.value_or(new_native_record_namespace()),
         std::move(fields.sources), request, std::move(certificate));
@@ -2714,8 +2715,8 @@ NativeRecord AssayWorkspace::execute_structured(
                          {"source_digest", N(digest())},
                          {"result", std::move(result)},
                          {"arithmetic", N(std::string("rational"))},
-                         {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-                         {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}};
+                         {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+                         {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}};
         if (workspace)
             value.members.emplace_back("workspace_publication", std::move(*workspace));
         return N(std::move(value));
@@ -2920,8 +2921,8 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
             {"result", std::move(fields.declaration)},
             {"workspace_publication", N(N::ByteSpan{source_key, 0, bytes, false})},
             {"arithmetic", N(std::string("rational"))},
-            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+            {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+            {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
         return retain_operation(std::move(fields.endpoint), new_native_record_namespace(),
             std::move(fields.sources), request, std::move(certificate));
     }
@@ -3035,8 +3036,8 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
             {"result", retained->unbound_value()},
             {"workspace_publication", N(N::ByteSpan{key, 0, workspace.bytes().size(), false})},
             {"arithmetic", N(std::string("rational"))},
-            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+            {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+            {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
         auto owner = retained->derive(std::move(certificate), {std::move(workspace)});
         return retain_operation(owner, request, owner.unbound_value());
     }
@@ -3073,8 +3074,8 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
             {"query", import_record_view(query)}, {"source_digest", N(digest())},
             {"result", std::move(fields.declaration)}, {"workspace_publication", N(N::ByteSpan{key, 0, bytes, false})},
             {"arithmetic", N(std::string("rational"))},
-            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+            {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+            {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
         return retain_operation(std::move(fields.endpoint), new_native_record_namespace(),
                                 std::move(fields.sources), request, std::move(certificate));
     }
@@ -3102,8 +3103,8 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
             {"result", std::move(fields.declaration)},
             {"workspace_publication", N(N::ByteSpan{2, 0, bytes, false})},
             {"arithmetic", N(std::string("rational"))},
-            {"gadget_sha256", N(std::string(GADGET_SOURCE_SHA256))},
-            {"rexgraph_sha256", N(std::string(GADGET_REXGRAPH_SHA256))}}});
+            {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
+            {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
         return retain_operation(std::move(fields.endpoint), new_native_record_namespace(),
                                 std::move(fields.sources), request, std::move(certificate));
     }
@@ -3165,8 +3166,8 @@ NativeRecord AssayWorkspace::execute_record(const NativeRecord &request,
         certificate.set("source_digest", Json::string(digest()));
         certificate.set("result", quality_fields_view(typed));
         certificate.set("arithmetic", Json::string("rational"));
-        certificate.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
-        certificate.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
+        certificate.set("gadget_sha256", Json::string(gadget::build::source_sha256()));
+        certificate.set("rexgraph_sha256", Json::string(gadget::build::rexgraph_sha256()));
         certificate.set("certificate_sha256", Json::string("sha256:" + sha256(certificate.dump())));
         // Keep the certificate's original member order without admitting its
         // numerical display arrays as a second representation.
@@ -3314,8 +3315,8 @@ NativeRecord AssayWorkspace::run_record(const NativeRecord &retained_request,
             "retention",
             V::string(
                 "certificate files written by joined native jobs; artifact receipts retained"));
-        result.set("gadget_sha256", V::string(GADGET_SOURCE_SHA256));
-        result.set("rexgraph_sha256", V::string(GADGET_REXGRAPH_SHA256));
+        result.set("gadget_sha256", V::string(gadget::build::source_sha256()));
+        result.set("rexgraph_sha256", V::string(gadget::build::rexgraph_sha256()));
         auto owner = collection.finish(std::move(result));
         auto sealed = owner.unbound_value();
         for (auto &[name, value] : std::get<NativeRecordValue::Object>(sealed.data).members)

@@ -135,6 +135,28 @@ namespace {
 using namespace scientific_detail;
 using namespace rfc::storage;
 
+bool same_metadata(const NativeRecord &record, const Json &value) {
+    if (record.kind() == NativeRecordKind::Array) {
+        if (!json_object_is_type(value.raw(), json_type_array) || record.size() != value.size())
+            return false;
+        for (std::size_t i = 0; i < value.size(); ++i)
+            if (!same_metadata(record.at(i), value.at(i))) return false;
+        return true;
+    }
+    if (record.kind() == NativeRecordKind::Object) {
+        if (!json_object_is_type(value.raw(), json_type_object)) return false;
+        const auto names = record.names();
+        if (names.size() != json_object_object_length(value.raw())) return false;
+        std::size_t i{};
+        json_object_object_foreach(value.raw(), name, member) {
+            (void)member;
+            if (names.at(i++) != name || !same_metadata(record.at(name), value.at(name)))
+                return false;
+        }
+        return true;
+    }
+    return render_record_view(record).dump() == value.dump();
+}
 bool boundary(std::string_view bytes, std::size_t position) {
     return position == bytes.size() ||
            (static_cast<unsigned char>(bytes.at(position)) & 0xc0) != 0x80;
@@ -197,10 +219,10 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
                     if(original.size()==input.bytes().size() &&
                         std::equal(original.begin(),original.end(),input.bytes().begin())) {
                         const auto input_root=fs::canonical(path).parent_path();
-                        const auto view=render_record_view(candidate->at("study"));
-                        const auto check_original=[&](const Json &reference,std::span<const std::byte> expected) {
+                        const auto view=candidate->at("study");
+                        const auto check_original=[&](const NativeRecord &reference,std::span<const std::byte> expected) {
                             if(!fs::exists(input_root/reference.at("path").text()))return;
-                            const auto source_path=local_artifact_path(input_root,reference);
+                            const auto source_path=local_artifact_path(input_root,render_record_view(reference));
                             const ReadOnlyMappedFile source_file(source_path);
                             require(source_file.bytes().size()==expected.size() &&
                                 std::equal(expected.begin(),expected.end(),source_file.bytes().begin()),
@@ -209,7 +231,7 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
                         if(candidate->at("schema").text()=="gadget.biomedical.native.v1")
                             check_original(view.at("native"),candidate->at("history").bytes());
                         else if(fs::exists(input_root/view.at("native").at("path").text())) {
-                            const auto external=local_artifact_path(input_root,view.at("native"));
+                            const auto external=local_artifact_path(input_root,render_record_view(view.at("native")));
                             require("sha256:"+sha256_file(external)==view.at("native").at("sha256").text(),
                                     "external source bytes differ from the admitted native publication");
                         }
@@ -244,8 +266,8 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
         return std::string(reinterpret_cast<const char *>(b.data()),b.size());
     }():read_text(absolute);
     declaration_digest = "sha256:" + sha256(bytes);
-    const auto declaration = publication?render_record_view(publication->at("study")):Json::parse(bytes);
-    if(publication)require(declaration.dump()==Json::parse(bytes).dump(),"native biomedical declaration differs from its retained original source");
+    const auto declaration = Json::parse(bytes);
+    if(publication)require(same_metadata(publication->at("study"), declaration),"native biomedical declaration differs from its retained original source");
     members(declaration,
             {"schema", "id", "native", "design", "documents", "cells", "occurrences", "contexts",
              "fields", "field_sets"},
@@ -396,18 +418,29 @@ ScientificStudy::State::State(const fs::path &path,std::optional<NativeRecord> p
                 {"source_key",N(rfc::numeric::Integer(std::to_string(found->second)))},
                 {"bytes",N(N::ByteSpan{found->second,0,source->bytes().size(),false})}}});
         }
-        auto meanings=import_record_view(declaration,bound);
-        auto &members=std::get<N::Object>(meanings.data).members;
-        for(auto &[name,array]:members)if(name=="cells" || name=="occurrences") {
-            auto &rows=std::get<N::Array>(array.data).elements;
-            for(std::size_t i=0;i<rows.size();++i) {
-                const auto row=declaration.at(name).at(i);
-                const auto grade=rfc::core::Grade{static_cast<std::uint16_t>(count(row.at("grade"),endpoint->source.grade_count()-1,"source grade"))};
-                N::Owned owned;owned.payload=std::make_shared<const N>(std::move(rows[i]));
-                if(name=="cells")owned.cell=StableCellKey{grade,key(row.at("key"))};
-                else owned.occurrence=StableOccurrenceKey{grade,rfc::core::OccurrenceKey{key(row.at("key"))}};
-                rows[i]=N(std::move(owned));
+        N meanings(N::Object{});
+        auto &meaning_members=std::get<N::Object>(meanings.data).members;
+        json_object_object_foreach(declaration.raw(),name,entry) {
+            (void)entry;
+            const auto array=declaration.at(name);
+            if(std::string_view(name)!="cells" && std::string_view(name)!="occurrences") {
+                meaning_members.emplace_back(name,import_record_view(array,bound));
+                continue;
             }
+            const bool cells=std::string_view(name)=="cells";
+            meaning_members.emplace_back(name,N(N::PackedArray{array.size(),
+                [bindings=bound,array,cells,grade_count=endpoint->source.grade_count()](const auto &emit) {
+                for(std::size_t i=0;i<array.size();++i) {
+                    const auto row=array.at(i);
+                    const auto grade=rfc::core::Grade{static_cast<std::uint16_t>(count(row.at("grade"),grade_count-1,"source grade"))};
+                    N::Owned owned;
+                    owned.payload=std::make_shared<const N>(import_record_view(row,bindings));
+                    owned.packed=true;
+                    if(cells)owned.cell=StableCellKey{grade,key(row.at("key"))};
+                    else owned.occurrence=StableOccurrenceKey{grade,rfc::core::OccurrenceKey{key(row.at("key"))}};
+                    emit(N(std::move(owned)));
+                }
+            }}));
         }
         N history_value=generated
             ?N(N::Object{{{"kind",N(std::string("publication_prefix"))},
@@ -867,8 +900,8 @@ NativeRecordValue ScientificStudy::State::catalog_value(std::vector<RawByteSourc
     put(result, "study_id", declared("id"));
     put(result, "source_digest", text_value(digest));
     put(result, "source_sequence", text_value(std::to_string(endpoint->sequence)));
-    N::Array carriers;
-    for (const auto &carrier : endpoint->carriers) {
+    N carriers(N::PackedArray{endpoint->carriers.size(), [endpoint, put, count_value, text_value](const auto &emit) {
+      for (const auto &carrier : endpoint->carriers) {
         N item(N::Object{});
         put(item, "key", text_value(std::to_string(carrier.key)));
         put(item, "kind", text_value(carrier.kind == TemporalCarrierKind::SourceGrade ? "source_grade"
@@ -882,9 +915,10 @@ NativeRecordValue ScientificStudy::State::catalog_value(std::vector<RawByteSourc
         if (carrier.kind == TemporalCarrierKind::CellStalk)
             put(item, "cell", N(N::Object{{{"grade", count_value(carrier.cell->grade.value)},
                 {"key", text_value(std::to_string(carrier.cell->key))}}}));
-        carriers.elements.push_back(std::move(item));
-    }
-    put(result, "carriers", N(std::move(carriers)));
+        emit(std::move(item));
+      }
+    }});
+    put(result, "carriers", std::move(carriers));
     if (declaration.at("native").has("cutoff"))
         put(result, "native_history", N(N::Object{{{"archive_sha256", text_value(native_digest)},
             {"first_sequence", text_value(std::to_string(history->first_sequence()))},
@@ -961,15 +995,18 @@ NativeRecordValue ScientificStudy::State::catalog_value(std::vector<RawByteSourc
         docs.elements.push_back(std::move(item));
     }
     put(result, "documents", N(std::move(docs)));
-    N::Array identities;
-    for (const auto &[cell, item] : cells) {
-        (void)cell;
-        N identity(N::Object{});
-        for (const auto *member : {"grade", "key", "id", "kind", "label"})
-            put(identity, member, retain_value(item.native().at(member)));
-        identities.elements.push_back(std::move(identity));
-    }
-    put(result, "identities", N(std::move(identities)));
+    auto identity_records = std::make_shared<const std::map<StableCellKey, RetainedRecord>>(cells);
+    N identities(N::PackedArray{identity_records->size(), [identity_records, count_value, text_value, put](const auto &emit) {
+        for (const auto &[cell, item] : *identity_records) {
+            const auto original = item.native();
+            N identity(N::Object{});
+            put(identity, "grade", count_value(cell.grade.value));
+            for (const auto *member : {"key", "id", "kind", "label"})
+                put(identity, member, text_value(original.at(member).text()));
+            emit(std::move(identity));
+        }
+    }});
+    put(result, "identities", std::move(identities));
     put(result, "identity_catalog_complete", N(!compact));
     return result;
 }

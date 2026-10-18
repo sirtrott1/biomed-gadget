@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "assay_detail.hpp"
 #include <gadget/record_view.hpp>
 #include <rfc/storage/file_io.hpp>
@@ -566,8 +567,8 @@ NativeRecord AssayWorkspace::publish_studies(
                           {"assays", N(std::move(assays))},
                           {"resources", N(N::Array{})},
                           {"links", N(N::Array{})},
-                          {"gadget_sha256", string(GADGET_SOURCE_SHA256)},
-                          {"rexgraph_sha256", string(GADGET_REXGRAPH_SHA256)}}});
+                          {"gadget_sha256", string(gadget::build::source_sha256())},
+                          {"rexgraph_sha256", string(gadget::build::rexgraph_sha256())}}});
     return NativeRecord::create(
         N(N::Object{{{"schema", string("gadget.assay.workspace.native.v2")},
                      {"manifest", std::move(manifest)},

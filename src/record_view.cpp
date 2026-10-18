@@ -326,6 +326,7 @@ void RetainedRecord::set(const std::string &name,const Json &value) {
         object->members.emplace_back(name,std::move(replacement));
     });
     record_=native().derive(updated);
+    index_.reset();
 }
 void RetainedRecord::push(const Json &value) {
     auto updated=update_native_container(native().materialize_value(),[&](auto &container) {
@@ -334,6 +335,7 @@ void RetainedRecord::push(const Json &value) {
         array->elements.push_back(import_record_view(value));
     });
     record_=native().derive(updated);
+    index_.reset();
 }
 RetainedRecord decode_record(std::span<const std::byte> raw) {
     if(detect_native_data(raw)==NativeDataFormat::TemporalSeries)return NativeRecord::decode(raw);

@@ -637,6 +637,29 @@ int main(int argc,char **argv) {
             rejects([&] { (void)NativeRecord::from_history(malformed); });
         }
     }
+    {
+        N::Owned bound;
+        bound.cell = storage::StableCellKey{{1}, 77};
+        bound.payload = std::make_shared<const N>(N::Object{{{"exact", N(numeric::Rational{"0"})},
+            {"source", N(N::ByteSpan{42, 0, raw.size(), false})}}});
+        const auto ordinary = record.derive(N(bound));
+        bound.packed = true;
+        const auto packed = record.derive(N(bound));
+        equal_value(ordinary, packed);
+        const auto reopened = NativeRecord::decode(packed.encode());
+        equal_value(ordinary, reopened);
+        const auto copied = record.derive(reopened.materialize_value());
+        equal_value(copied, ordinary);
+        const auto expected = ordinary.accession_directory()->cell({core::Grade{1},77}).declared_values().size();
+        check(packed.accession_directory()->cell({core::Grade{1},77}).declared_values().size() == expected &&
+              copied.accession_directory()->cell({core::Grade{1},77}).declared_values().size() == expected,
+              "packed semantic value lost its native cell binding during copy or reopening");
+        const auto unbound = record.derive(reopened.unbound_value());
+        check(unbound.accession_directory()->cell({core::Grade{1},77}).declared_values().size() + 1 == expected,
+              "packed unbound copy retained a foreign cell binding");
+        const auto child = [&] { return NativeRecord::decode(packed.encode()).at("exact"); }();
+        check(child.rational() == 0, "packed owned child lost its complete decoded owner");
+    }
     N::Array family;
     N::Object item;
     item.members.emplace_back("text", N(std::string("same\0text", 9)));

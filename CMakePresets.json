@@ -1,17 +1,31 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "cpu",
-      "displayName": "CPU development and contracts",
+      "displayName": "CPU application",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/presets/cpu",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "BUILD_TESTING": "ON",
-        "GADGET_BUILD_EXAMPLES": "ON",
+        "BUILD_TESTING": "OFF",
+        "GADGET_BUILD_EXAMPLES": "OFF",
         "GADGET_ENFORCE_DEPENDENCY_LOCK": "OFF"
+      }
+    },
+    {
+      "name": "contracts",
+      "displayName": "Complete CPU qualification",
+      "inherits": "cpu",
+      "binaryDir": "${sourceDir}/build/presets/cpu",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "GADGET_BUILD_EXAMPLES": "ON"
       }
     },
     {
@@ -19,51 +33,234 @@
       "displayName": "CPU with installed RexGraphCpp",
       "inherits": "cpu",
       "binaryDir": "${sourceDir}/build/presets/installed",
-      "cacheVariables": {"GADGET_USE_INSTALLED_RFC": "ON"}
+      "cacheVariables": {
+        "GADGET_USE_INSTALLED_RFC": "ON"
+      }
     },
     {
       "name": "formats",
       "displayName": "CPU with HDF5 and HTSlib",
       "inherits": "cpu",
       "binaryDir": "${sourceDir}/build/presets/formats",
-      "cacheVariables": {"GADGET_ENABLE_HDF5": "ON", "GADGET_ENABLE_HTSLIB": "ON"}
+      "cacheVariables": {
+        "GADGET_ENABLE_HDF5": "ON",
+        "GADGET_ENABLE_HTSLIB": "ON"
+      }
     },
     {
       "name": "databases",
       "displayName": "CPU with public database transport",
       "inherits": "cpu",
       "binaryDir": "${sourceDir}/build/presets/databases",
-      "cacheVariables": {"GADGET_ENABLE_PUBLIC_DATABASES": "ON"}
+      "cacheVariables": {
+        "GADGET_ENABLE_PUBLIC_DATABASES": "ON"
+      }
     },
     {
       "name": "local-model",
       "displayName": "CPU with local llama.cpp",
       "inherits": "cpu",
       "binaryDir": "${sourceDir}/build/presets/local-model",
-      "cacheVariables": {"GADGET_ENABLE_LOCAL_MODEL": "ON"}
+      "cacheVariables": {
+        "GADGET_ENABLE_LOCAL_MODEL": "ON"
+      }
     },
     {
       "name": "vulkan",
       "displayName": "Canonical packed Vulkan and CPU work",
       "inherits": "cpu",
       "binaryDir": "${sourceDir}/build/presets/vulkan",
-      "cacheVariables": {"GADGET_ENABLE_VULKAN": "ON"}
+      "cacheVariables": {
+        "GADGET_ENABLE_VULKAN": "ON"
+      }
     }
   ],
   "buildPresets": [
-    {"name": "cpu", "configurePreset": "cpu"},
-    {"name": "installed", "configurePreset": "installed"},
-    {"name": "formats", "configurePreset": "formats"},
-    {"name": "databases", "configurePreset": "databases"},
-    {"name": "local-model", "configurePreset": "local-model"},
-    {"name": "vulkan", "configurePreset": "vulkan"}
+    {
+      "name": "cpu",
+      "configurePreset": "cpu",
+      "jobs": 1
+    },
+    {
+      "name": "contracts",
+      "configurePreset": "contracts",
+      "jobs": 1
+    },
+    {
+      "name": "installed",
+      "configurePreset": "installed",
+      "jobs": 1
+    },
+    {
+      "name": "formats",
+      "configurePreset": "formats",
+      "jobs": 1
+    },
+    {
+      "name": "databases",
+      "configurePreset": "databases",
+      "jobs": 1
+    },
+    {
+      "name": "local-model",
+      "configurePreset": "local-model",
+      "jobs": 1
+    },
+    {
+      "name": "vulkan",
+      "configurePreset": "vulkan",
+      "jobs": 1
+    }
   ],
   "testPresets": [
-    {"name": "cpu", "configurePreset": "cpu", "output": {"outputOnFailure": true}},
-    {"name": "installed", "configurePreset": "installed", "output": {"outputOnFailure": true}},
-    {"name": "formats", "configurePreset": "formats", "output": {"outputOnFailure": true}},
-    {"name": "databases", "configurePreset": "databases", "output": {"outputOnFailure": true}},
-    {"name": "local-model", "configurePreset": "local-model", "output": {"outputOnFailure": true}},
-    {"name": "vulkan", "configurePreset": "vulkan", "output": {"outputOnFailure": true}}
+    {
+      "name": "cpu",
+      "configurePreset": "cpu",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "MPLBACKEND": "Agg"
+      },
+      "filter": {
+        "exclude": {
+          "label": "scale|recovery|local-inference"
+        }
+      }
+    },
+    {
+      "name": "contracts",
+      "configurePreset": "contracts",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "MPLBACKEND": "Agg"
+      }
+    },
+    {
+      "name": "installed",
+      "configurePreset": "installed",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "MPLBACKEND": "Agg"
+      },
+      "filter": {
+        "exclude": {
+          "label": "scale|recovery|local-inference"
+        }
+      }
+    },
+    {
+      "name": "formats",
+      "configurePreset": "formats",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "MPLBACKEND": "Agg"
+      },
+      "filter": {
+        "exclude": {
+          "label": "scale|recovery|local-inference"
+        }
+      }
+    },
+    {
+      "name": "databases",
+      "configurePreset": "databases",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "MPLBACKEND": "Agg"
+      },
+      "filter": {
+        "exclude": {
+          "label": "scale|recovery|local-inference"
+        }
+      }
+    },
+    {
+      "name": "local-model",
+      "configurePreset": "local-model",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "MPLBACKEND": "Agg"
+      },
+      "filter": {
+        "exclude": {
+          "label": "scale|recovery|local-inference"
+        }
+      }
+    },
+    {
+      "name": "vulkan",
+      "configurePreset": "vulkan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "OPENBLAS_NUM_THREADS": "1",
+        "OMP_NUM_THREADS": "1",
+        "MKL_NUM_THREADS": "1",
+        "MPLBACKEND": "Agg"
+      },
+      "filter": {
+        "exclude": {
+          "label": "scale|recovery|local-inference"
+        }
+      }
+    }
   ]
 }

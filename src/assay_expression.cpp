@@ -1,3 +1,4 @@
+#include <gadget/build.hpp>
 #include "genomic_detail.hpp"
 #include "allocation_detail.hpp"
 #include "source_grade_fields.hpp"
@@ -775,8 +776,8 @@ Json expression_fields_view(const NativeRecord &record) {
     certificate.set("source_digest", Json::string("sha256:" + sha256(allocation.dump())));
     certificate.set("result", result);
     certificate.set("arithmetic", Json::string("rational"));
-    certificate.set("rexgraph_sha256", Json::string(GADGET_REXGRAPH_SHA256));
-    certificate.set("gadget_sha256", Json::string(GADGET_SOURCE_SHA256));
+    certificate.set("rexgraph_sha256", Json::string(gadget::build::rexgraph_sha256()));
+    certificate.set("gadget_sha256", Json::string(gadget::build::source_sha256()));
     certificate = seal(certificate, "certificate_sha256");
     auto expression = Json::parse(result.dump());
     expression.set("samples", expression_samples);
