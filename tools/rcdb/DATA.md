@@ -142,7 +142,9 @@ gadget-data lookup feature.index '"TP53"' \
   --source first.native --source second.native
 ```
 
-Lookup uses RCDB vocabulary and checks pinned original axis records. A saturated
+Lookup uses bounded physical RCDB vocabulary buckets, checks complete literal
+terms in native locator payloads and verifies pinned original axis records.
+Complete terms stay outside the provider's full SQL label projection. A saturated
 candidate budget falls back to streaming the declared locator versions and
 checking their vocabulary before loading matching axes. Numerical fields remain
 in their primary stores. `verify_index(datasets=...)` compares every locator and

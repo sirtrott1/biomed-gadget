@@ -12,12 +12,12 @@ import numpy as np
 from gadget_data import AxisIndex, DataStore, DataWriter, Limits, build_axis_index
 
 
-def execute(root):
+def execute(root, *, fixture=None):
     started = time.monotonic()
     root.mkdir(parents=True, exist_ok=False)
     rows, columns, width = 32768, 64, 256
     paths = []
-    for number in range(2):
+    for number in (() if fixture is not None else range(2)):
         original = root / (str(number) + ".npy")
         values = np.lib.format.open_memmap(original, mode="w+", dtype=np.int64, shape=(rows, columns))
         for offset in range(0, rows, width):
@@ -46,17 +46,12 @@ def execute(root):
             writer.finish()
         del values
         paths.append(target)
+    if fixture is not None:
+        paths = [fixture / ("data" + str(number)) for number in range(2)]
     limits = Limits(catalog_bytes=64 * 1024)
     additional_data_bytes = 128 * 1024**2
-    data_line = next(line for line in Path("/proc/self/status").read_text().splitlines() if line.startswith("VmData:"))
-    data_bytes = int(data_line.split()[1]) * 1024
-    old_limit = resource.getrlimit(resource.RLIMIT_DATA)
-    proposed = data_bytes + additional_data_bytes
-    if old_limit[0] != resource.RLIM_INFINITY:
-        proposed = min(proposed, old_limit[0])
-    resource.setrlimit(resource.RLIMIT_DATA, (proposed, old_limit[1]))
     with ExitStack() as stack:
-        sources = [stack.enter_context(DataStore(path, limits=limits)) for path in paths]
+        sources = [stack.enter_context(DataStore(path, limits=Limits(catalog_bytes=8 * 1024**2))) for path in paths]
         for source in sources:
             getter = source.store.get_version
             def checked(identifier, *args, getter=getter, **kwargs):
@@ -64,6 +59,16 @@ def execute(root):
                     raise AssertionError("lookup decoded a numerical field")
                 return getter(identifier, *args, **kwargs)
             stack.enter_context(patch.object(source.store, "get_version", checked))
+            # Admit source handles and initialize the native decoder before
+            # measuring additional indexing allocations.
+            source._axis_metadata(source.manifest["axes"]["feature"][0])
+        data_line = next(line for line in Path("/proc/self/status").read_text().splitlines() if line.startswith("VmData:"))
+        data_bytes = int(data_line.split()[1]) * 1024
+        old_limit = resource.getrlimit(resource.RLIMIT_DATA)
+        proposed = data_bytes + additional_data_bytes
+        if old_limit[0] != resource.RLIM_INFINITY:
+            proposed = min(proposed, old_limit[0])
+        resource.setrlimit(resource.RLIMIT_DATA, (proposed, old_limit[1]))
         build_axis_index(((source, "feature") for source in sources), root / "index", context_roles=("symbol",), limits=limits)
         with AxisIndex(root / "index", limits=limits) as index:
             result = index.verify_index(datasets=sources)
@@ -73,16 +78,18 @@ def execute(root):
                       for entry in index.find("TP53", datasets=sources)}
             assert actual == expected
             for number, source in enumerate(sources):
-                with (root / (str(number) + ".tsv")).open() as stream:
+                with ((root if fixture is None else fixture) / (str(number) + ".tsv")).open() as stream:
                     for block in source.manifest["axes"]["feature"]:
                         labels, contexts, _ = source.axis("feature", range(block["offset"], block["offset"] + block["count"]))
                         for label, context in zip(labels, contexts, strict=True):
                             original_id, original_symbol = next(stream).rstrip("\n").split("\t")
                             assert label == int(original_id) and context == {"symbol": original_symbol}
                     assert not stream.read()
-                assert source._cache_bytes <= limits.catalog_bytes
+                assert source._cache_bytes <= source.limits.catalog_bytes
     report = {"status": "PASS", **result, "matches": len(actual), "unopened_numerical_coordinates": 2 * rows * columns,
               "metadata_cache_bytes": limits.catalog_bytes, "additional_data_bytes": additional_data_bytes,
+              "baseline_data_bytes": data_bytes, "allocation_limit_bytes": proposed,
+              "source_metadata_cache_bytes": 8 * 1024**2, "reused_fixture": None if fixture is None else str(fixture),
               "seconds": time.monotonic() - started,
               "max_rss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}
     (root / "verification.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -92,4 +99,6 @@ def execute(root):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
-    print(json.dumps(execute(parser.parse_args().root.resolve()), indent=2))
+    parser.add_argument("--fixture", type=Path)
+    args = parser.parse_args()
+    print(json.dumps(execute(args.root.resolve(), fixture=None if args.fixture is None else args.fixture.resolve(strict=True)), indent=2))

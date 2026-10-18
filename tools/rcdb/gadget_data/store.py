@@ -668,12 +668,14 @@ class DataStore:
             labels = tuple(owner.get_metadata(1, 0, "labels"))
             if len(labels) != reference["count"] or owner.nE != len(labels):
                 raise ValueError("native axis record extent differs")
+            relations = owner.relations
+            pointer, indices, vertices = relations.support_ptr, relations.support_idx, relations.vertices.ids
             rows = []
             for row in range(len(labels)):
-                start, end = owner.relations.support_ptr[row:row + 2]
+                start, end = pointer[row:row + 2]
                 context = {}
-                for vertex in owner.relations.support_idx[int(start):int(end)]:
-                    key = owner.relations.vertices.ids[int(vertex)]
+                for vertex in indices[int(start):int(end)]:
+                    key = vertices[int(vertex)]
                     if key[0].startswith("context/"):
                         context[key[0][8:]] = key[2]
                 rows.append(context)

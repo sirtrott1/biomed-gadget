@@ -19,6 +19,11 @@ def _vocabulary(labels, contexts, roles):
     return terms
 
 
+def _bucket(term):
+    # Physical candidates are checked against complete literal terms and owners.
+    return "gadgetliteral" + term[-1]
+
+
 def build_axis_index(inputs, output, *, context_roles=(), limits=None):
     """Index bounded original axis blocks without copying measurement arrays."""
     roles = tuple(context_roles)
@@ -35,12 +40,14 @@ def build_axis_index(inputs, output, *, context_roles=(), limits=None):
                 link = record_link(source, block)
                 links = writer._links((link,))
                 name = "lookup/" + source.identity + "/" + axis + "/" + str(block["offset"])
-                vocabulary = _vocabulary(labels, contexts, roles)
+                literal_terms = _vocabulary(labels, contexts, roles)
+                vocabulary = {_bucket(term) for term in literal_terms}
                 lookup_bytes = len(pack_value(tuple(vocabulary))) + len(name.encode()) + 1024
                 writer.limits.admit(lookup_bytes, "catalog_bytes")
                 entry = writer._put(name, graph("axis_locator", ((source.identity, axis, block["offset"]),)),
                     {"kind": "axis_locator", "axis": axis, "offset": block["offset"],
-                     "count": block["count"], "context_roles": roles, "dependencies": links},
+                     "count": block["count"], "context_roles": roles, "dependencies": links,
+                     "literal_terms": tuple(sorted(literal_terms))},
                     vocabulary=vocabulary)
                 writer.objects.append(dict(entry, lookup_bytes=lookup_bytes))
         return writer.finish()
@@ -52,10 +59,11 @@ class AxisIndex(DataStore):
         from rexgraph.value_codec import pack_value
         stores = {store.identity: store for store in datasets}
         term = index_term("literal", literal)
+        bucket = _bucket(term)
         largest = max((block["lookup_bytes"] for block in self.manifest["objects"]), default=1)
         self.limits.admit(largest, "catalog_bytes")
         cap = max(1, self.limits.catalog_bytes // largest)
-        found = self.store.query(limit=cap, labels_any=[term])
+        found = self.store.query(limit=cap, labels_any=[bucket])
         candidates = {row.id for row in found} if len(found) < cap else None
         for block in self.manifest["objects"]:
             if candidates is not None and block["id"] not in candidates:
@@ -64,11 +72,13 @@ class AxisIndex(DataStore):
                     continue
             if candidates is None:
                 row = next(row for row in self.store.history(block["id"]) if row.version == block["version"])
-                if term not in row.meta["vertex_labels"]:
+                if bucket not in row.meta["vertex_labels"]:
                     continue
             locator = declaration(self.read(block))
             if locator["kind"] != "axis_locator":
                 raise ValueError("axis index contains a different native record kind")
+            if term not in locator["literal_terms"]:
+                continue
             link, = locator["dependencies"]
             labels, contexts = _axis_metadata(link, stores)
             for i, (label, row) in enumerate(zip(labels, contexts, strict=True)):
@@ -96,7 +106,9 @@ class AxisIndex(DataStore):
                     link["record"]["axis"], link["record"]["offset"], len(labels)):
                 raise ValueError("locator coordinates differ from the original axis")
             row = next(row for row in self.store.history(block["id"]) if row.version == block["version"])
-            if set(row.meta["vertex_labels"]) != _vocabulary(labels, contexts, locator["context_roles"]):
+            terms = _vocabulary(labels, contexts, locator["context_roles"])
+            if (set(locator["literal_terms"]) != terms or
+                    set(row.meta["vertex_labels"]) != {_bucket(term) for term in terms}):
                 raise ValueError("lookup vocabulary differs from complete original labels and roles")
             count += 1
             positions += len(labels)
