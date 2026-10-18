@@ -17,19 +17,22 @@ NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRec
     require(concurrency > 0 && json_object_is_type(declarations.raw(), json_type_array) &&
                 declarations.size() > 0,
             "source query batch requires queries and positive admitted concurrency");
-    // The native graph retains source order indices; complete results live
-    // under one private owner until all jobs join and publication is assembled.
+    // Complete results retain their private archive owners until all jobs join.
     const auto stage = private_directory(fs::temp_directory_path(), "gadget-query-batch-");
     struct Cleanup {
         fs::path path;
         ~Cleanup() { std::error_code error; fs::remove_all(path, error); }
     } cleanup{stage};
+    struct Completion {
+        std::size_t index;
+        RawByteSource archive;
+    };
     std::set<std::string> ids;
     std::vector<rfc::runtime::WorkJob> jobs;
     jobs.reserve(declarations.size());
     const auto buffer = resources->coordinator().policy().declared_buffer_byte_limit /
                         std::min(concurrency, declarations.size());
-    require(buffer >= sizeof(std::size_t), "native query receipt does not fit resource admission");
+    require(buffer >= sizeof(Completion), "native query receipt does not fit resource admission");
     for (std::size_t i = 0; i < declarations.size(); ++i) {
         const auto declaration = declarations.at(i);
         members(declaration, {"id", "query"});
@@ -49,16 +52,16 @@ NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRec
                                  : 1;
         require(workers > 0 && workers <= resources->coordinator().capacity(),
                 "source query worker demand");
-        jobs.push_back(rfc::runtime::WorkJob::make<std::size_t>(
-            {rfc::machine::checked_size_add(i, 1), 1}, {workers, buffer, sizeof(std::size_t)}, {},
+        jobs.push_back(rfc::runtime::WorkJob::make<Completion>(
+            {rfc::machine::checked_size_add(i, 1), 1}, {workers, buffer, sizeof(Completion)}, {},
             [&workspace, resources, query, stage, i](const auto &, auto &assigned, std::stop_token stop) {
                 if (stop.stop_requested())
                     throw rfc::runtime::ExecutionCancelled{};
                 const auto answer = workspace.execute_record(query, resources->assigned(assigned));
-                answer.write(stage / std::to_string(i));
+                auto archive = answer.archive_source(1, stage / std::to_string(i));
                 if (stop.stop_requested())
                     throw rfc::runtime::ExecutionCancelled{};
-                return i;
+                return Completion{i, std::move(archive)};
             }));
     }
     rfc::runtime::WorkGraphLimits limits;
@@ -66,7 +69,7 @@ NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRec
     limits.edges = 0;
     limits.depth = 1;
     limits.in_flight = concurrency;
-    limits.retained_result_bytes = rfc::machine::checked_size_mul(declarations.size(), sizeof(std::size_t));
+    limits.retained_result_bytes = rfc::machine::checked_size_mul(declarations.size(), sizeof(Completion));
     const rfc::runtime::WorkGraph graph(std::move(jobs), limits);
     auto work = graph.submit(resources->coordinator());
     work.wait();
@@ -83,10 +86,11 @@ NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRec
     answers.elements.reserve(declarations.size());
     for (std::size_t i = 0; i < declarations.size(); ++i) {
         const auto completion = work.completion(rfc::runtime::WorkKey{i + 1, 1});
-        require(*completion.result<std::size_t>() == i, "native result receipt source-order mismatch");
+        const auto retained = completion.result<Completion>();
+        require(retained->index == i, "native result receipt source-order mismatch");
         require(key < std::numeric_limits<std::uint64_t>::max(),
                 "batch raw source identity space exhausted");
-        auto archive = RawByteSource::read(key, stage / std::to_string(i));
+        auto archive = retained->archive.rekey(key);
         const auto size = archive.bytes().size();
         const auto receipt = completion.receipt();
         answers.elements.emplace_back(N::Object{{
@@ -105,16 +109,20 @@ NativeRecord query_batch_record(const AssayWorkspace &workspace, const NativeRec
         {"concurrent_jobs", N(rfc::numeric::Integer(std::to_string(concurrency)))},
         {"dispatcher", N(std::string("rfc::runtime::WorkGraph"))},
         {"publication_order", N(std::string("declared job order after all owning native jobs join"))}}});
-    auto published = source.derive(std::move(fields), std::move(archives));
     N certificate(N::Object{{
         {"schema", N(std::string("gadget.assay.result.native.v1"))},
         {"query", import_record_view(query_controls)}, {"source_digest", N(workspace.digest())},
-        {"result", published.unbound_value()},
+        {"result", std::move(fields)},
         {"workspace_publication", N(N::ByteSpan{key, 0, workspace_size, false})},
         {"arithmetic", N(std::string("rational"))},
         {"gadget_sha256", N(std::string(gadget::build::source_sha256()))},
         {"rexgraph_sha256", N(std::string(gadget::build::rexgraph_sha256()))}}});
-    return retain_operation(published, request, std::move(certificate));
+    auto history = source.publication_history();
+    require(history.has_value(), "batch source has no immutable history");
+    // Append to the admitted history so temporary declaration cargo is released
+    // before the canonical frame is decoded and replayed.
+    const auto prepared = NativeRecord::annotate(N(N::Object{}), std::move(*history));
+    return retain_operation(prepared, std::move(archives), request, std::move(certificate));
 }
 Json query_batch_fields_view(const NativeRecord &record) {
     require(record.at("schema").text() == "gadget.assay.batch.fields.v1",

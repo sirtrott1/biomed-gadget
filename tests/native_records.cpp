@@ -440,6 +440,19 @@ int main(int argc,char **argv) {
     rejects([&]{record.write(directory/"data.bin");});
     check(storage::read_file_exact(directory/"data.bin",native_data_limits().max_archive_bytes)==record.encode(),
           "failed exclusive publication changed the previous file");
+    const auto staged_path = directory / "private-archive.bin";
+    const auto staged = record.archive_source(301, staged_path);
+    check(!std::filesystem::exists(staged_path) &&
+              std::ranges::equal(staged.bytes(), record.encode()),
+          "private archive changed bytes or retained its file path");
+    check(staged.rekey(302).shares_owner(staged), "mapped archive rekey copied its byte owner");
+    rejects([&] { (void)record.archive_source(303, directory / "data.bin"); });
+    check(storage::read_file_exact(directory/"data.bin",native_data_limits().max_archive_bytes)==record.encode(),
+          "private archive export replaced an existing file");
+    const auto escaped_archive = NativeRecord::create(N(std::string("mapped lifetime")), 9191)
+        .archive_source(304, directory / "escaped-archive.bin");
+    check(NativeRecord::decode(escaped_archive.bytes()).text() == "mapped lifetime",
+          "private archive lost its owner after its record was destroyed");
     const auto reopened=NativeRecord::read(directory/"data.bin");
     const auto current = reopened.at("cell").historical_publication(reopened.endpoint()->sequence);
     check(current.accession_directory() == reopened.accession_directory() &&

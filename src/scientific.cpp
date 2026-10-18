@@ -146,7 +146,7 @@ bool same_metadata(const NativeRecord &record, const Json &value) {
     if (record.kind() == NativeRecordKind::Object) {
         if (!json_object_is_type(value.raw(), json_type_object)) return false;
         const auto names = record.names();
-        if (names.size() != json_object_object_length(value.raw())) return false;
+        if (names.size() != static_cast<std::size_t>(json_object_object_length(value.raw()))) return false;
         std::size_t i{};
         json_object_object_foreach(value.raw(), name, member) {
             (void)member;

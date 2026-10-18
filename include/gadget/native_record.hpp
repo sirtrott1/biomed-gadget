@@ -111,6 +111,10 @@ class NativeRecord {
     std::vector<std::byte> encode() const;
     // Encode once into a fresh immutable byte owner for archive composition.
     RawByteSource archive_source(std::uint64_t source_key) const;
+    // Create a private archive at a new path, retain its read only mapping and
+    // remove the path. The returned byte owner survives this record.
+    RawByteSource archive_source(std::uint64_t source_key,
+                                const std::filesystem::path &private_path) const;
     bool is_root() const noexcept;
     std::uint64_t format_version() const noexcept;
     // The root declaration shares this view's actual immutable publication.

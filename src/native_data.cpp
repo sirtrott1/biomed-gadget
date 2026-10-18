@@ -68,6 +68,13 @@ RawByteSource RawByteSource::own(std::uint64_t key, std::vector<std::byte> bytes
 RawByteSource RawByteSource::adopt_fresh(std::uint64_t key,std::vector<std::byte> bytes) {
     auto source=own(key,std::move(bytes));source.frozen_=true;return source;
 }
+RawByteSource RawByteSource::adopt_fresh(std::uint64_t key,
+    std::shared_ptr<const storage::ReadOnlyMappedFile> file) {
+    RawByteSource source(key, {});
+    source.bytes_.reset();
+    source.mapped_ = std::move(file);
+    return source;
+}
 RawByteSource RawByteSource::freeze() const {
     return frozen_?*this:RawByteSource(key_,bytes());
 }

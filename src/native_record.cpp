@@ -1025,6 +1025,18 @@ std::vector<std::byte> NativeRecord::encode() const {
 RawByteSource NativeRecord::archive_source(std::uint64_t source_key) const {
     return RawByteSource::adopt_fresh(source_key,encode());
 }
+RawByteSource NativeRecord::archive_source(std::uint64_t source_key,
+    const std::filesystem::path &private_path) const {
+    require(source_key != 0, "raw source requires its declared identity");
+    write(private_path);
+    struct Cleanup {
+        const std::filesystem::path &path;
+        ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); }
+    } cleanup{private_path};
+    auto file = std::make_shared<const storage::ReadOnlyMappedFile>(private_path);
+    require(std::filesystem::remove(private_path), "private archive path removal failed");
+    return RawByteSource::adopt_fresh(source_key, std::move(file));
+}
 void NativeRecord::write(const std::filesystem::path &path) const {
     require(is_root(),"persist an owning record, not a detached member view");
     const auto series=state_->history?*state_->history:

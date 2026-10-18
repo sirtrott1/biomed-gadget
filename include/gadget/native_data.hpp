@@ -6,6 +6,7 @@
 #include <span>
 #include <rfc/storage/native_atlas_types.hpp>
 #include <rfc/storage/native_series_codec.hpp>
+#include <rfc/storage/mapped_file.hpp>
 #include <rfc/storage/declaration_codec.hpp>
 #include <rfc/storage/prepared_source_program.hpp>
 #include <rfc/field/augmented_green.hpp>
@@ -24,11 +25,14 @@ rfc::storage::NativeAccessionLimits native_accession_limits();
 class RawByteSource {
     std::uint64_t key_;
     std::shared_ptr<const std::vector<std::byte>> bytes_;
+    std::shared_ptr<const rfc::storage::ReadOnlyMappedFile> mapped_;
     bool frozen_{true};
     // A public vector transfer can have prior mutable aliases. Admission
     // freezes it; only fresh reader/compiler output may adopt without copying.
     RawByteSource freeze() const;
     static RawByteSource adopt_fresh(std::uint64_t, std::vector<std::byte>);
+    static RawByteSource adopt_fresh(std::uint64_t,
+        std::shared_ptr<const rfc::storage::ReadOnlyMappedFile>);
     friend class NativeStudy;
     friend class NativeRecord;
   public:
@@ -37,9 +41,13 @@ class RawByteSource {
     static RawByteSource read(std::uint64_t key, const std::filesystem::path &path);
     // Independent declared identity sharing the same immutable byte owner.
     RawByteSource rekey(std::uint64_t key) const;
-    bool shares_owner(const RawByteSource &other) const noexcept { return bytes_ == other.bytes_; }
+    bool shares_owner(const RawByteSource &other) const noexcept {
+        return bytes_ == other.bytes_ && mapped_ == other.mapped_;
+    }
     std::uint64_t key() const noexcept { return key_; }
-    std::span<const std::byte> bytes() const noexcept { return *bytes_; }
+    std::span<const std::byte> bytes() const noexcept {
+        return mapped_ ? mapped_->bytes() : std::span<const std::byte>(*bytes_);
+    }
 };
 // The caller's native Product declaration supplies these stable factor names.
 // Each factor is an exact Integer: source identity, byte offset and byte length.
