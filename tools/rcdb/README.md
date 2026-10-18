@@ -1,5 +1,10 @@
 # RCDB and RCQL
 
+The [native data API](DATA.md) provides bounded original intake, paged catalogs,
+source resolution, selected native fields and materialization. Install it with
+`python -m pip install ./tools/rcdb` after installing the matching providers.
+It also installs `gadget_rcdb` for complete publication compatibility.
+
 `gadget_rcdb.py` connects the RexGraph Python packages to GADGET's compiled
 application and native publication reader. It imports Core, RCDB and RCQL from
 the active Python environment and uses their format, storage and query
@@ -75,7 +80,7 @@ packages. Zstandard tests also require `zstandard`; zlib is built into Python.
 Agent services, native Python bindings, model backends and physical device
 execution have separate prerequisites and qualification.
 
-The RCDB payload is the unchanged RFCXS archive. Its owning relational complex,
+The complete publication adapter stores the unchanged RFCXS archive. Its owning relational complex,
 occurrences, exact fields, declaration channel, raw byte sources and publication
 history remain in the C++ format. Admission invokes GADGET's native reader and
 requires byte identical canonical re encoding. RCDB provides version selection,

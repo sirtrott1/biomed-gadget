@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "biomed-gadget-data"
+version = "0.1.0"
+description = "Native dataset I/O and RexGraph storage integration for GADGET"
+readme = "DATA.md"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2", "SQLAlchemy>=2", "rexgraph>=1.3.1", "rexgraph-rcdb>=1.3.1", "rexgraph-rcql>=1.3.1"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+
+[project.scripts]
+gadget-data = "gadget_data.cli:main"
+
+[tool.setuptools]
+packages = ["gadget_data"]
+py-modules = ["gadget_rcdb"]

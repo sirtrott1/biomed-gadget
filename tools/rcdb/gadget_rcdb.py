@@ -14,6 +14,18 @@ _CODEC_NAME = "gadget.native-publication"
 _OPERATOR_NAME = "GADGET_PUBLICATION_BYTES"
 
 
+def open_dataset(path, *, limits=None, dataset=None):
+    """Explore and select native data without importing complete publications."""
+    from gadget_data import DataStore
+    return DataStore(path, limits=limits, dataset=dataset)
+
+
+def install_dataset_queries():
+    """Install the native field accession in the existing RCQL registry."""
+    from gadget_data.query import install
+    install()
+
+
 def _installed_format(name, binding, extensions):
     """Inspect the canonical registry before reusing or installing a reader."""
     from rexgraph.io import _FORMATS

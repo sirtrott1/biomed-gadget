@@ -101,6 +101,8 @@ file(GLOB_RECURSE gadget_sources CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/apps/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/rcdb/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/rcdb/*.py"
   "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/schemas/*.json"
@@ -136,7 +138,7 @@ list(APPEND gadget_core_sources src/source_context.cpp src/scientific_source.cpp
 list(APPEND gadget_core_sources src/research_ensemble.cpp src/scientific_reference.cpp src/scientific_result_fields.cpp src/research_structural_calibration.cpp)
 list(APPEND gadget_core_sources src/research_ablation.cpp src/research_response.cpp src/research_temporal.cpp src/research_joint_endpoints.cpp src/research_factored.cpp)
 list(APPEND gadget_core_sources src/scientific_native_response.cpp src/scientific_native_hodge.cpp src/scientific_native_observation.cpp src/scientific_native_novelty.cpp)
-list(APPEND gadget_core_sources src/native_pattern.cpp)
+list(APPEND gadget_core_sources src/native_pattern.cpp src/data_field.cpp)
 list(APPEND gadget_core_sources src/build.cpp)
 if(GADGET_ENABLE_DURABLE_STORE)
   list(APPEND gadget_core_sources src/store.cpp)
@@ -208,6 +210,9 @@ target_link_libraries(gadget PRIVATE gadget::core)
 add_executable(gadget_native_field_query tools/rcdb/native_field_query.cpp)
 target_link_libraries(gadget_native_field_query PRIVATE gadget::core)
 target_compile_options(gadget_native_field_query PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_executable(gadget_native_field_import tools/rcdb/native_field_import.cpp)
+target_link_libraries(gadget_native_field_import PRIVATE gadget::core)
+target_compile_options(gadget_native_field_import PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_executable(gadget_publish_file tools/publish_file.cpp)
 target_link_libraries(gadget_publish_file PRIVATE gadget::native)
 target_compile_options(gadget_publish_file PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -289,6 +294,15 @@ foreach(source IN LISTS gadget_native_sources)
 endforeach()
 string(JSON runtime_objects SET "${runtime_objects}" ${runtime_index} "\"CMakeFiles/gadget.dir/apps/main.cpp.o\"")
 math(EXPR runtime_index "${runtime_index}+1")
+foreach(tool gadget_native_field_import gadget_native_field_query)
+  if(tool STREQUAL "gadget_native_field_import")
+    set(tool_source native_field_import.cpp)
+  else()
+    set(tool_source native_field_query.cpp)
+  endif()
+  string(JSON runtime_objects SET "${runtime_objects}" ${runtime_index} "\"CMakeFiles/${tool}.dir/tools/rcdb/${tool_source}.o\"")
+  math(EXPR runtime_index "${runtime_index}+1")
+endforeach()
 if(GADGET_BUILD_EXAMPLES)
   string(JSON runtime_objects SET "${runtime_objects}" ${runtime_index} "\"CMakeFiles/gadget_relational.dir/apps/relational.cpp.o\"")
   math(EXPR runtime_index "${runtime_index}+1")
@@ -450,6 +464,10 @@ if(BUILD_TESTING)
   add_executable(gadget_packed_bench tests/packed_bench.cpp)
   target_link_libraries(gadget_packed_bench PRIVATE gadget::core)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(gadget_data_field_tests tests/data_field.cpp)
+  target_link_libraries(gadget_data_field_tests PRIVATE gadget::core)
+  target_compile_options(gadget_data_field_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME gadget_data_field_contracts COMMAND gadget_data_field_tests)
   add_test(NAME gadget_native_pattern_contracts COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_patterns_cli.py" "$<TARGET_FILE:gadget>" "$<TARGET_FILE:gadget_native_pattern_tests>" "${GADGET_TEST_DATA_DIR}/native-pattern-contracts")
   set_tests_properties(gadget_native_pattern_contracts PROPERTIES TIMEOUT 120)
   add_test(NAME gadget_native_source_fields_contracts COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_source_fields.py" "$<TARGET_FILE:gadget>" "$<TARGET_FILE:gadget_native_source_fields_tests>" "${GADGET_TEST_DATA_DIR}/native-source-fields-contracts")
@@ -874,7 +892,8 @@ configure_package_config_file(cmake/GADGETConfig.cmake.in
   INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/GADGET")
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/GADGETConfigVersion.cmake"
   VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
-install(TARGETS gadget gadget_publish_file RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS gadget gadget_publish_file gadget_native_field_import gadget_native_field_query
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS gadget_core gadget_native EXPORT GADGETTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY include/gadget DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

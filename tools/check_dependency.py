@@ -70,6 +70,7 @@ def main():
                   gadget_sources_sha256=fingerprint(root, [root / "CMakeLists.txt",
                       *root.glob("include/gadget/**/*.hpp"), *root.glob("src/**/*.cpp"), *root.glob("src/**/*.hpp"),
                       *root.glob("apps/**/*.cpp"), *root.glob("examples/**/*.cpp"),
+                      *root.glob("tools/rcdb/**/*.cpp"), *root.glob("tools/rcdb/**/*.py"),
                       *root.glob("examples/**/*.hpp"), *root.glob("schemas/**/*.json"),
                       *root.glob("cmake/**/*.cmake"),
                       *root.glob("cmake/**/*.cmake.in")]))
