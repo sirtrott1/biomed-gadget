@@ -34,7 +34,7 @@ def field(source, columns):
 
 
 def install():
-    """Install one declared application operator through existing RCQL registries."""
+    """Install declared application operations through existing RCQL registries."""
     from rcql import Domain, Exactness, OperatorSignature, RCType, TypePattern, ValueKind
     from rcql.operators import get_operator, register as implementation
     from rcql.signatures import catalogued, lookup, register
@@ -52,9 +52,90 @@ def install():
     if name in catalogued():
         if lookup(name) != signature or operator is None or getattr(operator.fn, "_gadget_data_binding", None) != key:
             raise ValueError("GADGET_DATA_FIELD already has a different provider")
-        return
-    if operator is not None:
-        raise ValueError("GADGET_DATA_FIELD implementation has no matching declaration")
-    field._gadget_data_binding = key
-    register(signature)
-    implementation(name)(field)
+    else:
+        if operator is not None:
+            raise ValueError("GADGET_DATA_FIELD implementation has no matching declaration")
+        field._gadget_data_binding = key
+        register(signature)
+        implementation(name)(field)
+    from rcql.arguments import EXPRESSION_ARGUMENTS
+    from rcql.names import insert_unique
+    def arguments_for(name, arguments):
+        expected = (arguments, ())
+        if name in EXPRESSION_ARGUMENTS:
+            if EXPRESSION_ARGUMENTS[name] != expected:
+                raise ValueError(name + " has a conflicting expression declaration")
+        else:
+            insert_unique(EXPRESSION_ARGUMENTS, name, expected)
+    arguments_for(name, ("columns",))
+    for name, function, arguments, result in (
+        ("GADGET_RECORD_OWNER", record_owner, ("digest",),
+         RCType("FieldSource", kind=ValueKind.UNKNOWN, exactness=Exactness.STRUCTURAL)),
+        ("GADGET_RELATION_FAMILY", relation_family, ("field",),
+         RCType("SectionFamily", kind=ValueKind.SECTION_FAMILY, domain=Domain.RATIONAL,
+                exactness=Exactness.STRUCTURAL)),
+        ("GADGET_RETAINED_FIELD", retained_field, ("owners",),
+         RCType("TensorField", kind=ValueKind.TENSOR_FIELD, domain=Domain.RATIONAL,
+                exactness=Exactness.RATIONAL))):
+        signature = OperatorSignature(name=name, source_kind=ValueKind.REX,
+            inputs=tuple(TypePattern(arg) for arg in arguments), result=result,
+            implementation_key="gadget." + name.lower() + ".v1", requires=frozenset({"read"}), memoizable=True)
+        if name in catalogued():
+            if lookup(name) != signature or get_operator(name).fn is not function:
+                raise ValueError(name + " already has a different provider")
+        else:
+            try:
+                get_operator(name)
+            except KeyError:
+                pass
+            else:
+                raise ValueError(name + " implementation has no matching declaration")
+            register(signature)
+            implementation(name)(function)
+        arguments_for(name, arguments)
+
+
+def record_owner(source, digest):
+    """Bind only the expected native state and actual RCQL record version."""
+    from rexgraph.tensor_field import FieldSource
+    from rcql.execution_trace import current_binding
+    binding = current_binding()
+    if binding is None:
+        raise ValueError("version bound query required")
+    return FieldSource(source, binding.ref.record_id, binding.ref.record_version, digest)
+
+
+def relation_family(source, field):
+    """Ask the canonical exact provider for every relation compatible with a field."""
+    from rexgraph.coordinate_map import CoordinateMap
+    from rexgraph.section_calculus import SectionFamily
+    from rexgraph.tensor_field import TensorField
+    if not isinstance(field, TensorField) or len(field.axes) != 1:
+        raise TypeError("one retained measurement axis on an actual tensor field required")
+    field.bind(source).check_state()
+    equations = CoordinateMap(field.space, field.axes[0],
+        tuple((j, i, value) for (i, j), value in np.ndenumerate(field.values) if value))
+    rhs = TensorField(equations.codomain, [0] * equations.shape[0], source=field.source,
+                      dependencies=field.dependencies)
+    return SectionFamily.solve(equations, rhs, field.coefficient_digest)
+
+
+def retained_field(source, owners):
+    """Retrieve a stored tensor through already admitted native owner references."""
+    from rexgraph.tensor_field import FieldSource, TensorField
+    value = declaration(source)
+    if value["kind"] != "native" or value["native_type"] != "TensorField":
+        raise TypeError("retained tensor field record required")
+    field = source.get_metadata(1, 0, "native_value")
+    if not isinstance(field, TensorField):
+        raise TypeError("actual native tensor field required")
+    supplied = tuple(owners)
+    bound = []
+    for expected in (field.source, *field.dependencies):
+        candidates = [ref for ref in supplied if isinstance(ref, FieldSource) and ref.matches(expected)]
+        if len(candidates) != 1 or candidates[0].source is None:
+            raise ValueError("each retained field owner needs its actual native version")
+        candidates[0].check()
+        bound.append(candidates[0])
+    from dataclasses import replace
+    return replace(field, source=bound[0], dependencies=tuple(bound[1:]))

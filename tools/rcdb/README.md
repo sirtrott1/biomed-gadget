@@ -1,7 +1,8 @@
 # RCDB and RCQL
 
 The [native data API](DATA.md) provides bounded original intake, paged catalogs,
-source resolution, selected native fields and materialization. Install it with
+source resolution, selected native fields, shared contexts, lookup across independent
+axes and retained native calculation programs. Install it with
 `python -m pip install ./tools/rcdb` after installing the matching providers.
 It also installs `gadget_rcdb` for complete publication compatibility.
 

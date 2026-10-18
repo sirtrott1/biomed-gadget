@@ -109,6 +109,7 @@ file(GLOB_RECURSE gadget_sources CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/*.cmake"
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/*.cmake.in")
 list(APPEND gadget_sources "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
+list(FILTER gadget_sources EXCLUDE REGEX "/tools/rcdb/(build|dist|[^/]+[.]egg-info)/")
 list(SORT gadget_sources)
 set(gadget_fingerprint "")
 foreach(source IN LISTS gadget_sources)

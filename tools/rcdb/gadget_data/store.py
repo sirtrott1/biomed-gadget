@@ -11,6 +11,16 @@ from ._records import (SCHEMA, Limits, declare, declaration, fingerprint, graph,
                        natural, text, index_term, UNSET, file_state)
 
 
+def context_links(dependencies):
+    """Retain shared context addresses once across selected original axis blocks."""
+    from rexgraph.value_codec import pack_value
+    result = {}
+    for block in dependencies:
+        for link in block.get("context_references", ()):
+            result.setdefault(pack_value(link), link)
+    return tuple(result.values())
+
+
 def _open_store(path, *, create=False, backend="sqlite"):
     from rcdb import LocalStore, SQLStore
     path = Path(path)
@@ -99,6 +109,7 @@ class DataWriter:
         self.axis_queries = {}
         self.records = WriteIndex(self, "records", "rows")
         self.declarations = WriteIndex(self, "declarations", "source")
+        self.objects = WriteIndex(self, "objects", "native")
         self._closed = False
         self._staging = staged_publication(self.output, directory=True)
         self._path = self._staging.__enter__()
@@ -156,7 +167,7 @@ class DataWriter:
         return origins
 
     def axis(self, name, labels, *, offset, context=None, origins=(), mapping=None,
-             index_labels=False, indexed_context=()):
+             index_labels=False, indexed_context=(), context_references=()):
         from .catalog import WriteIndex
         text(name, "axis name"); natural(offset, "axis offset")
         labels = tuple(labels)
@@ -179,6 +190,7 @@ class DataWriter:
         owner.attach_metadata(1, 0, "labels", labels)
         metadata = {"kind": "axis", "axis": name, "offset": offset, "count": len(labels),
                     "origins": self._origins(origins), "mapping": mapping,
+                    "context_references": self._links(context_references),
                     "context_roles": tuple(dict.fromkeys(key for row in context or () for key in row))}
         vocabulary = {index_term("axis", self.identity, name)}
         if index_labels:
@@ -188,6 +200,29 @@ class DataWriter:
         entry = self._put(f"axes/{name}/{offset}", owner, metadata, vocabulary=vocabulary)
         blocks.append(dict(entry, **metadata))
         return entry
+
+    def _links(self, links):
+        from copy import deepcopy
+        from .workflow import check_link
+        links = tuple(deepcopy(link) for link in links)
+        parents = {parent["dataset"]: parent for parent in self.parents}
+        for link in links:
+            check_link(link)
+            parent = link["dataset"]
+            if parent["dataset"] == self.identity:
+                if parent["store_id"] != self.store.store_id:
+                    raise ValueError("local dependency has a foreign store")
+                continue
+            previous = parents.setdefault(parent["dataset"], parent)
+            if any(previous[key] != parent[key] for key in ("dataset", "id", "version", "store_id", "state_digest")):
+                raise ValueError("conflicting linked dataset versions")
+        self.parents = tuple(parents.values())
+        return links
+
+    def native(self, name, value, *, dependencies=()):
+        """Retain a native program, field, family or context with explicit owners."""
+        from .workflow import retain
+        return retain(self, name, value, dependencies=dependencies)
 
     def field(self, name, *, axes, shape, layout="dense", number_rule="exact",
               quantity, units, implicit=None):
@@ -422,6 +457,7 @@ class DataWriter:
                                  block_count=len(field["blocks"])) for name, field in self.fields.items()}
             manifest = {"kind": "dataset", "name": self.name, "sources": self.sources,
                         "axes": axes, "fields": fields, "records": self.records.finish(),
+                        "objects": self.objects.finish(),
                         "parents": self.parents, "declarations": self.declarations.finish(), "producer": runtime_identity(),
                         "axis_queries": self.axis_queries}
             result = self._put("dataset", graph("dataset", (self.identity,)), manifest)
@@ -478,6 +514,7 @@ class DataStore:
                                        for name, field in self.manifest["fields"].items()}
             self.manifest["records"] = Entries(self, self.manifest["records"])
             self.manifest["declarations"] = Entries(self, self.manifest["declarations"])
+            self.manifest["objects"] = Entries(self, self.manifest.get("objects", ()))
             self.reference = {"id": "dataset", "version": 1, "state_digest": snapshot.state_digest,
                               "store_id": self.store.store_id, "dataset": self.identity}
         except BaseException:
@@ -544,6 +581,21 @@ class DataStore:
         from .selection import select
         return select(self, field, rows=rows, columns=columns)
 
+    def native(self, reference, *, dependencies=()):
+        """Restore a retained native value using explicitly supplied dataset stores."""
+        from .workflow import restore
+        return restore(self, reference, dependencies=dependencies)
+
+    def contexts(self, axis_reference, *, dependencies=()):
+        """Resolve shared context owners without inferring joins or merging assertions."""
+        from .workflow import resolve_link
+        metadata = declaration(self.read(axis_reference))
+        if metadata["kind"] != "axis":
+            raise TypeError("native axis record required")
+        stores = {store.identity: store for store in (self, *dependencies)}
+        for link in metadata.get("context_references", ()):
+            yield resolve_link(link, stores)
+
     def find_axis(self, name, *, label=UNSET, context=None):
         """Stream original axis matches using declared RCDB vocabulary where available."""
         from rexgraph.value_codec import pack_value
@@ -591,7 +643,8 @@ class DataStore:
         while self._cache_bytes > self.limits.catalog_bytes:
             _, (_, old_weight) = self._page_cache.popitem(last=False)
             self._cache_bytes -= old_weight
-        key = (kind, reference["id"], reference["version"], reference["state_digest"])
+        key = (kind, reference["id"], reference["version"], reference["state_digest"],
+               reference.get("axis"), reference.get("offset"), reference.get("count"))
         if key not in self._page_cache:
             value, weight = load(), reference["native_bytes"]
             if weight > self.limits.catalog_bytes:
@@ -610,6 +663,8 @@ class DataStore:
             value = declaration(owner)
             if value["kind"] != "axis":
                 raise ValueError("native axis record kind differs")
+            if any(value[key] != reference[key] for key in ("axis", "offset", "count")):
+                raise ValueError("native axis record coordinates differ")
             labels = tuple(owner.get_metadata(1, 0, "labels"))
             if len(labels) != reference["count"] or owner.nE != len(labels):
                 raise ValueError("native axis record extent differs")
@@ -707,6 +762,7 @@ class DataStore:
                     original = selected[offset:offset + width]
                     labels, context, dependencies = self.axis(axis, original)
                     writer.axis(axis, labels, offset=offset, context=context,
+                        context_references=context_links(dependencies),
                         mapping={"parent": self.reference, "axis": axis,
                                  "coordinates": original, "dependencies": dependencies})
             writer.field(field, axes=specification["axes"], shape=(len(rows), len(columns)),
@@ -740,6 +796,7 @@ class DataStore:
                     original = selected[offset:offset + width]
                     labels, context, dependencies = self.axis(axis, original)
                     writer.axis(axis, labels, offset=offset, context=context,
+                        context_references=context_links(dependencies),
                         mapping={"parent": self.reference, "axis": axis, "coordinates": original, "dependencies": dependencies})
             writer.field(field, axes=specification["axes"], shape=(len(rows), len(columns)), layout="sparse_occurrences",
                 number_rule=specification["number_rule"], quantity=specification["quantity"], units=specification["units"],
@@ -778,6 +835,9 @@ class DataStore:
             self.read(block)
             count += 1
         for block in self.manifest["declarations"]:
+            self.read(block)
+            count += 1
+        for block in self.manifest["objects"]:
             self.read(block)
             count += 1
         return count

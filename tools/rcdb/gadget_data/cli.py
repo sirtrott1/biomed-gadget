@@ -21,6 +21,14 @@ def _coordinates(value):
     return CoordinateSpec(tuple(result))
 
 
+def _display(value):
+    try:
+        return json.dumps(value)
+    except TypeError:
+        from rexgraph.value_codec import pack_value
+        return json.dumps({"native_value": pack_value(value).hex(), "codec": "rexgraph.value"})
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record-mib", type=int, default=16)
@@ -56,6 +64,14 @@ def main(argv=None):
     find = commands.add_parser("find-axis", help="Stream original axis labels and declared context matches")
     find.add_argument("store", type=Path); find.add_argument("--axis", required=True)
     find.add_argument("--label"); find.add_argument("--where", default="{}")
+    index = commands.add_parser("build-index", help="Index literal labels on independent native axes")
+    index.add_argument("output", type=Path)
+    index.add_argument("--source", type=Path, action="append", required=True)
+    index.add_argument("--axis", action="append", required=True)
+    index.add_argument("--context-role", action="append", default=[])
+    lookup = commands.add_parser("lookup", help="Stream matching original positions without joining sources")
+    lookup.add_argument("index", type=Path); lookup.add_argument("literal")
+    lookup.add_argument("--source", type=Path, action="append", required=True)
     bundle = commands.add_parser("export-bundle", help="Export native dataset dependencies and optional original files")
     bundle.add_argument("store", type=Path); bundle.add_argument("output", type=Path)
     bundle.add_argument("--dependency", action="append", type=Path, default=[])
@@ -110,13 +126,23 @@ def main(argv=None):
         with DataStore(args.store, limits=limits) as store:
             for match in store.find_axis(args.axis, label=UNSET if args.label is None else json.loads(args.label),
                                          context=json.loads(args.where)):
-                try:
-                    display = json.dumps(match)
-                except TypeError:
-                    from rexgraph.value_codec import pack_value
-                    display = json.dumps({"native_value": pack_value(match).hex(), "codec": "rexgraph.value"})
-                print(display)
+                print(_display(match))
         return
+    elif args.command in ("build-index", "lookup"):
+        from contextlib import ExitStack
+        from .index import AxisIndex, build_axis_index
+        with ExitStack() as stack:
+            sources = [stack.enter_context(DataStore(path, limits=limits)) for path in args.source]
+            if args.command == "build-index":
+                if len(sources) != len(args.axis):
+                    raise ValueError("each source needs one corresponding axis declaration")
+                result = build_axis_index(zip(sources, args.axis, strict=True), args.output,
+                                          context_roles=args.context_role, limits=limits)
+            else:
+                index = stack.enter_context(AxisIndex(args.index, limits=limits))
+                for match in index.find(json.loads(args.literal), datasets=sources):
+                    print(_display(match))
+                return
     elif args.command == "export-bundle":
         from contextlib import ExitStack
         from .export import export_bundle

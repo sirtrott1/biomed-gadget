@@ -18,6 +18,13 @@ def inventory_fingerprint(inventory):
     return hashlib.sha256(entries.encode()).hexdigest()
 
 
+def adapter_sources(root, suffix):
+    for path in root.glob("tools/rcdb/**/*." + suffix):
+        directory = path.relative_to(root / "tools/rcdb").parts[0]
+        if directory not in ("build", "dist") and not directory.endswith(".egg-info"):
+            yield path
+
+
 def validate_consumed(native, inventory, consumed):
     if not consumed:
         raise SystemExit("no canonical compiler dependencies found")
@@ -70,7 +77,7 @@ def main():
                   gadget_sources_sha256=fingerprint(root, [root / "CMakeLists.txt",
                       *root.glob("include/gadget/**/*.hpp"), *root.glob("src/**/*.cpp"), *root.glob("src/**/*.hpp"),
                       *root.glob("apps/**/*.cpp"), *root.glob("examples/**/*.cpp"),
-                      *root.glob("tools/rcdb/**/*.cpp"), *root.glob("tools/rcdb/**/*.py"),
+                      *adapter_sources(root, "cpp"), *adapter_sources(root, "py"),
                       *root.glob("examples/**/*.hpp"), *root.glob("schemas/**/*.json"),
                       *root.glob("cmake/**/*.cmake"),
                       *root.glob("cmake/**/*.cmake.in")]))

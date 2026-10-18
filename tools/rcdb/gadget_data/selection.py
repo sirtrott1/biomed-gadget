@@ -171,15 +171,17 @@ class FieldSelection:
 
     def materialize(self, output, *, name=None, limits=None):
         """Publish selected native coefficients with linked original dependencies."""
-        from .store import DataWriter
+        from .store import DataWriter, context_links
         self.check()
         specification = self.specification
         with DataWriter(output, name=name or self.field, limits=limits,
                         parents=(dict(self.parent, dependencies=self.dependencies,
                             field_id=specification["identity"], rows=self.rows, columns=self.columns),)) as writer:
             row_axis, column_axis = specification["axes"]
-            writer.axis(row_axis, self.row_labels, offset=0, context=self.row_context)
-            writer.axis(column_axis, self.column_labels, offset=0, context=self.column_context)
+            writer.axis(row_axis, self.row_labels, offset=0, context=self.row_context,
+                        context_references=context_links(ref for ref in self.dependencies if ref.get("axis") == row_axis))
+            writer.axis(column_axis, self.column_labels, offset=0, context=self.column_context,
+                        context_references=context_links(ref for ref in self.dependencies if ref.get("axis") == column_axis))
             layout = "exact" if specification["layout"] == "exact" else "dense"
             writer.field(self.field, axes=specification["axes"], shape=self.values.shape, layout=layout,
                          number_rule=specification["number_rule"], quantity=specification["quantity"],
