@@ -14,15 +14,23 @@ executable. The adapter does not install dependencies or implement their storage
 codecs.
 
 The independent `rexgraph_cpp` bindings expose C++ SDK operations to Python.
+Their source is in the top level `rexgraph_cpp/` directory of `rexgraph-python`;
+`bindings/cpp/` builds the bridge against an external `rexgraphcpp` SDK.
 Agent and System provide optional services and a browser application. The main
 GADGET C++ application uses the SDK directly; these Python integrations have
 their own installation and qualification profiles.
 
+Follow the [three repository installation guide](../../DEPENDENCIES.md) to
+build Core, RCDB, RCQL, the bridge and GADGET from their source checkouts using
+one SDK prefix. The dataset adapter requires Core, RCDB and RCQL 1.3.2 or newer.
+Install `./tools/rcdb[native]` after the bridge for native C++ Python operations.
+Agent and System are not dataset dependencies.
+
 The qualified CPython 3.14 Linux x86_64 profile is recorded in
 [`requirements.lock`](requirements.lock). It selects six exact independent
-wheels: RexGraph core, native bindings, RCDB, RCQL, Agent and System. Package
-versions alone do not identify these fixes: core, RCDB, RCQL, Agent and System
-still use version 1.3.1. Obtain the matching wheels from the independent
+wheels: RexGraph core, native bindings, RCDB, RCQL, Agent and System. Core,
+RCDB, RCQL, Agent and System use version 1.3.2; the bridge uses version 0.1.0.
+Obtain the matching wheels from the independent
 RexGraph distribution and install them in a dedicated environment:
 
 ```sh
@@ -36,9 +44,8 @@ python3.14 -m venv .venv-rcdb
 ```
 
 The hash check covers the six project wheels; third party dependencies above
-are installed separately. This profile includes rebuilt core, native binding
-and RCQL wheels with the updated algebraic certificate and affine transport
-providers. The native binding and GADGET use the same complete SDK header
+are installed separately. This profile includes the public Python packages and
+independent native bridge. The native binding and GADGET use the same complete SDK header
 inventory. The SDK remains an independent dependency. GADGET's separately built
 C++ reader must pass the adapter contracts against the installed Python profile.
 Rebuilding a native binding against another SDK requires its own qualification
@@ -67,6 +74,9 @@ project import paths and versions. It does not rebuild dependencies, change mode
 engine receipts or establish compatibility with an older checkpoint. A retained
 Python runtime qualified against another SDK will refuse this same SDK check;
 retain that runtime for its existing model records.
+
+The default check requires Core, RCDB, RCQL and the bridge. Add `--services`
+when Agent and System are part of the selected application environment.
 
 Existing model checkpoints retain their original native engine identity. The
 current graded transport provider refuses execution of a checkpoint requiring a

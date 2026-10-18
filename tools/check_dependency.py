@@ -59,7 +59,10 @@ def ninja_headers(output, native, objects):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, default=Path("build/gadget"))
-    parser.add_argument("--rexgraph", type=Path, default=Path("../rexgraph-cpp/rexgraphcpp"))
+    source = Path(__file__).resolve().parents[2] / "rexgraphcpp"
+    if not (source / "CMakeLists.txt").is_file():
+        source = source.parent / "rexgraph-cpp/rexgraphcpp"
+    parser.add_argument("--rexgraph", type=Path, default=source)
     parser.add_argument("--results", type=Path)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--consumed-only", action="store_true",

@@ -123,7 +123,6 @@ class DataWriter:
 
     def _put(self, identifier, owner, metadata, *, vocabulary=()):
         from rcdb.engine import encode_native_payload
-        from rexgraph.object_identity import object_digest
         value = dict(metadata, schema=SCHEMA, dataset=self.identity)
         declare(owner, value)
         raw = encode_native_payload(owner, self.store.header.compression)
@@ -138,7 +137,7 @@ class DataWriter:
                   "vertex_labels": tuple(vocabulary)},
             tags=["gadget_data", value["kind"]])
         return {"id": identifier, "version": stored.version,
-                "state_digest": object_digest(owner), "native_bytes": len(raw),
+                "state_digest": stored.envelope.object_digest, "native_bytes": len(raw),
                 "store_id": self.store.store_id}
 
     def source(self, identifier, path, *, locator=None, media_type=None):

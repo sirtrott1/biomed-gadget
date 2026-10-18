@@ -59,12 +59,28 @@ jobs:
       SDK_URL: ${{ vars.REXGRAPH_ARCHIVE_URL || secrets.REXGRAPH_ARCHIVE_URL }}
       SDK_SHA256: ${{ vars.REXGRAPH_ARCHIVE_SHA256 }}
       SDK_REPOSITORY: ${{ vars.REXGRAPH_ARCHIVE_REPOSITORY }}
+      SDK_MODE: ${{ vars.REXGRAPH_SDK_MODE || 'source' }}
+      SDK_SOURCE_REPOSITORY: ${{ vars.REXGRAPH_SOURCE_REPOSITORY || 'sirtrott1/rexgraphcpp' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Read the recorded SDK revision
+        id: sdk
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+          if os.environ['SDK_MODE'] not in ('source', 'archive'):
+              raise ValueError('REXGRAPH_SDK_MODE must be source or archive')
+          lock = pathlib.Path('cmake/RexGraph.lock.cmake').read_text()
+          revision = re.search(r'GADGET_QUALIFIED_REXGRAPH_REVISION\s+"([0-9a-f]{40})"', lock)
+          if revision is None:
+              raise ValueError('SDK source revision is missing from the dependency lock')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('revision=' + revision.group(1) + '\n')
+          PY
       - name: Retrieve the SDK archive
-        if: vars.REXGRAPH_ARCHIVE_REPOSITORY != ''
+        if: env.SDK_MODE == 'archive' && env.SDK_REPOSITORY != ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ vars.REXGRAPH_ARCHIVE_REPOSITORY }}
@@ -72,11 +88,20 @@ jobs:
           ssh-key: ${{ secrets.REXGRAPH_ARCHIVE_DEPLOY_KEY }}
           persist-credentials: false
           path: .rfc-download
+      - name: Retrieve the independent SDK source
+        if: env.SDK_MODE == 'source'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.SDK_SOURCE_REPOSITORY }}
+          ref: ${{ vars.REXGRAPH_SOURCE_REF || steps.sdk.outputs.revision }}
+          persist-credentials: false
+          path: .rfc-source
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ clang pkg-config libgmp-dev libssl-dev libjson-c-dev python3-numpy python3-sympy python3-scipy python3-jsonschema python3-matplotlib
       - name: Check the test environment
         run: /usr/bin/python3 tools/ci_checks.py preflight
       - name: Fetch the qualified SDK
+        if: env.SDK_MODE == 'archive'
         shell: bash
         run: |
           if ! [[ "$SDK_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
@@ -112,6 +137,9 @@ jobs:
         shell: bash
         run: |
           sdk_root="$RUNNER_TEMP/sdk/rexgraph-cpp/rexgraphcpp"
+          if test -d .rfc-source; then
+            sdk_root="$GITHUB_WORKSPACE/.rfc-source"
+          fi
           if test -f "$sdk_root/lib/cmake/RFC/RFCConfig.cmake"; then
             cmake --preset contracts -DGADGET_USE_INSTALLED_RFC=ON -DCMAKE_PREFIX_PATH="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3 -DGADGET_COMPILE_JOBS="$CMAKE_BUILD_PARALLEL_LEVEL"
           else

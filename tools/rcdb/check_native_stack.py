@@ -26,7 +26,7 @@ def expected_engine(build):
     return hashlib.sha256(binding_entries.encode()).hexdigest()
 
 
-def check_stack(build):
+def check_stack(build, *, services=False):
     expected = expected_engine(build)
     binding = importlib.import_module("rexgraph_cpp")
     directory = Path(binding.__file__).resolve().parent
@@ -53,10 +53,11 @@ def check_stack(build):
     if not providers or "rexgraph_cpp._bridge" not in providers:
         raise ValueError("installed Python native binding has no compiled bridge")
     projects = {}
-    for package, distribution in (("rexgraph", "rexgraph"),
-                                  ("rexgraph_cpp", "rexgraph-cpp-bindings"),
-                                  ("rcdb", "rexgraph-rcdb"), ("rcql", "rexgraph-rcql"),
-                                  ("agent", "rexgraph-agent"), ("system", "rexgraph-system")):
+    required = [("rexgraph", "rexgraph"), ("rexgraph_cpp", "rexgraph-cpp-bindings"),
+                ("rcdb", "rexgraph-rcdb"), ("rcql", "rexgraph-rcql")]
+    if services:
+        required.extend((("agent", "rexgraph-agent"), ("system", "rexgraph-system")))
+    for package, distribution in required:
         module = importlib.import_module(package)
         projects[package] = {"path": str(Path(module.__file__).resolve()),
                              "version": importlib.metadata.version(distribution)}
@@ -70,9 +71,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-info", type=Path, required=True)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--services", action="store_true",
+                        help="also require the optional Agent and System installations")
     args = parser.parse_args()
     try:
-        report = check_stack(json.loads(args.build_info.read_text()))
+        report = check_stack(json.loads(args.build_info.read_text()), services=args.services)
     except (ValueError, ImportError, OSError) as error:
         parser.exit(1, f"native stack check failed: {error}\n")
     if args.report:
