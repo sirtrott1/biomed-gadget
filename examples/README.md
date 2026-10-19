@@ -8,6 +8,7 @@ alone do not establish that two measurements can be compared.
 
 | Input or task | Guide |
 | --- | --- |
+| BindingDB, PubChem and GTEx source inspection | [Source format readers](source-formats/README.md) |
 | Tables, matrices, intervals and assay workspaces | [Bioinformatics](bioinformatics/README.md) |
 | Sequence alignment, variants and assembly | [Sequence and assay methods](bioinformatics/suite.md) |
 | RNA evidence and expression assignment bounds | [RNA evidence](bioinformatics/rna-evidence/README.md) |
