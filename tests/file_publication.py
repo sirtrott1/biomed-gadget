@@ -97,7 +97,9 @@ with (root / "stopped.stderr").open("w") as stderr:
         child.stdin.write(b"x" * 1048576 + b"partial")
         child.stdin.flush()
         deadline = time.monotonic() + 10
-        while not any((path / "image").stat().st_size >= 1048576 for path in root.glob(".rfc-stage-*")):
+        # A stream may retain part of the first chunk in its output buffer.
+        # Observe a real staged write without requiring the complete chunk on disk.
+        while not any((path / "image").stat().st_size > 0 for path in root.glob(".rfc-stage-*")):
             assert child.poll() is None
             assert time.monotonic() < deadline, "owned writer did not enter staging"
             time.sleep(.01)
