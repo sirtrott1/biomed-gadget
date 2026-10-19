@@ -2,6 +2,12 @@ name: C++ contracts
 
 on:
   workflow_dispatch:
+    inputs:
+      test_preset:
+        description: CPU checks or the complete suite requiring additional memory and scratch
+        type: choice
+        default: cpu
+        options: [cpu, contracts]
   pull_request:
     branches: [main, develop]
   push:
@@ -54,13 +60,14 @@ jobs:
   contracts:
     needs: checks
     if: needs.checks.outputs.contracts == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.GADGET_CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         compiler: [g++, clang++]
     env:
+      CONTRACT_TEST_PRESET: ${{ github.event.inputs.test_preset || 'cpu' }}
       CMAKE_BUILD_PARALLEL_LEVEL: ${{ vars.GADGET_BUILD_JOBS || '1' }}
       SDK_URL: ${{ vars.REXGRAPH_ARCHIVE_URL || secrets.REXGRAPH_ARCHIVE_URL }}
       SDK_SHA256: ${{ vars.REXGRAPH_ARCHIVE_SHA256 }}
@@ -162,8 +169,10 @@ jobs:
           cmake --build --preset contracts --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
       - name: Report execution resources
         run: build/presets/cpu/gadget resources
-      - name: Test
-        run: ctest --preset contracts --parallel 2 --output-junit contracts.xml
+      - name: Test the selected CPU profile
+        run: |
+          ctest --preset "$CONTRACT_TEST_PRESET" --parallel 2 --output-junit contracts.xml
+          printf 'CTest profile: %s\n' "$CONTRACT_TEST_PRESET" >> "$GITHUB_STEP_SUMMARY"
       - name: Verify dependency inputs
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
@@ -194,10 +203,12 @@ jobs:
           CONTRACTS_REQUIRED: ${{ needs.checks.outputs.contracts }}
           CONTRACTS_RESULT: ${{ needs.contracts.result }}
           MATCHING_QUALIFICATION: ${{ needs.checks.outputs.matching_qualification }}
+          CONTRACT_TEST_PRESET: ${{ github.event.inputs.test_preset || 'cpu' }}
         run: >-
           python3 tools/ci_checks.py report
           --checks-result "$INPUT_RESULT"
           --required "$CONTRACTS_REQUIRED"
           --contracts-result "$CONTRACTS_RESULT"
           --matching-qualification "$MATCHING_QUALIFICATION"
+          --test-preset "$CONTRACT_TEST_PRESET"
           --summary "$GITHUB_STEP_SUMMARY"

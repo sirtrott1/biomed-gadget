@@ -23,7 +23,7 @@ def main():
         (root/'query.json').write_text(json.dumps(q));return command('query','--study',study,'--query',root/'query.json',success=success)
     evidence=[dict(document='dictionary',start=0,end=len(dictionary),text=dictionary)]
     paired=dict(operation='paired_field_contrasts',pairs=[dict(id='A',left='all.a1',right='all.a0',left_scale='1',right_scale='1'),dict(id='B',left='all.b1',right='all.b0',left_scale='1',right_scale='1')],selection=[],support='joint_reported',normalization=dict(method='identity',evidence=evidence),output_units='counts',workers=1)
-    serial=query(paired);paired['workers']=4;parallel=query(paired)
+    serial=query(paired);paired['workers']=min(4,command('resources')['worker_capacity']);parallel=query(paired)
     assert serial['result']['features']==parallel['result']['features']
     assert parallel['result']['reported']==3 and parallel['result']['missing']==1
     for row,record in zip(rows,parallel['result']['features']):

@@ -1,10 +1,11 @@
 #include <gadget/resources.hpp>
+#include "platform_observation.hpp"
 #include <limits>
 #include <mutex>
 
 namespace gadget {
 void CpuResources::process() const {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     if (::getpid() != process_id_)
         throw std::logic_error("inherited CPU resources cannot be used after fork");
 #endif
@@ -23,7 +24,7 @@ std::shared_ptr<CpuResources> CpuResources::local() {
     if (auto current = shared.lock())
         return current;
     rfc::runtime::CpuResourcePolicy policy;
-    auto hardware = rfc::runtime::detect_hardware();
+    auto hardware = hardware_detail::local_inventory();
     policy.worker_limit = hardware.allowed_cpus.size();
     policy.tile_limit = std::numeric_limits<std::size_t>::max();
     const auto headroom = hardware.advisory_memory_headroom();
@@ -31,7 +32,7 @@ std::shared_ptr<CpuResources> CpuResources::local() {
         throw std::invalid_argument("CPU resources require observed memory headroom");
     policy.declared_buffer_byte_limit = rfc::machine::checked_size(*headroom);
     auto current = std::make_shared<CpuResources>(std::move(hardware), policy,
-                                                  [] { return rfc::runtime::detect_hardware(); });
+                                                  [] { return hardware_detail::local_inventory(); });
     shared = current;
     return current;
 }

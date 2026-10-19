@@ -1,4 +1,5 @@
 #include "memory_observation.hpp"
+#include "platform_observation.hpp"
 #include <rfc/runtime/hardware_inventory.hpp>
 #include <fstream>
 namespace gadget::hardware_detail {
@@ -38,6 +39,8 @@ std::optional<std::size_t> memory_headroom() {
         return read_observation(path, limit);
     };
     return memory_inventory(std::move(probe)).advisory_memory_headroom();
+#elif defined(__APPLE__)
+    return darwin_memory_headroom();
 #else
     return rfc::runtime::detect_hardware().advisory_memory_headroom();
 #endif

@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
         fs::remove_all(root);
         example::scientific_study(root);
         auto study = std::make_shared<const ScientificStudy>(root / "study.json");
-        auto hardware = rfc::runtime::detect_hardware();
+        auto hardware = CpuResources::local()->readmit();
         rfc::runtime::CpuResourcePolicy policy;
         policy.worker_limit = 8;
         policy.tile_limit = 20000;
@@ -38,6 +38,8 @@ int main(int argc, char **argv) {
         ScientificSession session(study, cpu, options);
         auto mask = query(
             R"({"operation":"support_mask","fields":["baseline.G","baseline.partial"],"mode":"all_reported","backend":"cpu_tiles","workers":4,"tile_words":1})");
+        mask.set("workers", Json::integer(static_cast<std::int64_t>(
+                                std::min(std::size_t{4}, cpu->coordinator().capacity()))));
         const auto result = session.execute(mask);
         check(result.at("result").at("selected").integer() == 2, "reported zero lost");
         check(result.at("result").at("selection").at(0).at("entity").text() == "gene:A",
@@ -316,15 +318,17 @@ int main(int argc, char **argv) {
         }
         {
             auto limited_policy = policy;
-            limited_policy.worker_limit = 4;
+            const auto leaf_workers = std::min(std::size_t{2}, cpu->coordinator().capacity() / 2);
+            check(leaf_workers > 0, "delegation contract needs two admitted workers");
+            limited_policy.worker_limit = 2 * leaf_workers;
             auto limited = std::make_shared<CpuResources>(hardware, limited_policy,
                                                           [hardware] { return hardware; });
             std::barrier rendezvous(2);
-            auto role = WorkflowModel(2, [&](const std::string &,
+            auto role = WorkflowModel(leaf_workers, [&](const std::string &,
                                              std::shared_ptr<CpuResources> assigned) {
-                check(assigned->coordinator().capacity() == 2, "delegated model capacity");
+                check(assigned->coordinator().capacity() == leaf_workers, "delegated model capacity");
                 {
-                    auto neural = assigned->reserve(2);
+                    auto neural = assigned->reserve(leaf_workers);
                     rendezvous.arrive_and_wait();
                 }
                 ScientificSession action(study, assigned);
@@ -341,9 +345,10 @@ int main(int argc, char **argv) {
                     R"({"id":"delegated","type":"parallel","workers":2,"steps":[{"id":"a","type":"model","role":"left","prompt":"inspect"},{"id":"b","type":"model","role":"right","prompt":"inspect"}]})"));
             receipt = execute_workflow(study, parallel, delegated, limited);
             check(receipt.at("status").text() == "complete", "delegated leaf counted twice");
-            check(receipt.at("trace").at(0).at("peak_workers").integer() == 4,
+            check(receipt.at("trace").at(0).at("peak_workers").integer() ==
+                      static_cast<std::int64_t>(2 * leaf_workers),
                   "native job worker accounting");
-            check(limited->coordinator().available_workers() == 4,
+            check(limited->coordinator().available_workers() == 2 * leaf_workers,
                   "delegated parent reservation leak");
         }
         check(cpu->coordinator().available_workers() == cpu->coordinator().capacity(),

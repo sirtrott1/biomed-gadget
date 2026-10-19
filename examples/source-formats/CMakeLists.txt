@@ -9,16 +9,17 @@ target_compile_options(gadget_source PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 if(BUILD_TESTING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  set(source_test_data_dir "${PROJECT_BINARY_DIR}/test-data")
   foreach(native pubchem_native_evidence feature_context)
     add_executable(gadget_${native}_tests "${PROJECT_SOURCE_DIR}/tests/${native}.cpp")
     target_link_libraries(gadget_${native}_tests PRIVATE gadget_source_formats)
     target_compile_options(gadget_${native}_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    add_test(NAME gadget_${native}_contracts COMMAND gadget_${native}_tests "${GADGET_TEST_DATA_DIR}/${native}")
+    add_test(NAME gadget_${native}_contracts COMMAND gadget_${native}_tests "${source_test_data_dir}/${native}")
     set_tests_properties(gadget_${native}_contracts PROPERTIES TIMEOUT 120)
   endforeach()
   set_tests_properties(gadget_feature_context_contracts PROPERTIES FIXTURES_SETUP gadget_typed_evidence_inputs)
   add_test(NAME gadget_pubchem_source_cli_contracts COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/pubchem_source_cli.py"
-      "$<TARGET_FILE:gadget_source>" "${GADGET_TEST_DATA_DIR}/feature_context"
+      "$<TARGET_FILE:gadget_source>" "${source_test_data_dir}/feature_context"
       "$<TARGET_FILE:gadget>" "$<TARGET_FILE:gadget_result_binding_tests>")
   set_tests_properties(gadget_pubchem_source_cli_contracts PROPERTIES TIMEOUT 120 FIXTURES_REQUIRED gadget_typed_evidence_inputs)
   option(GADGET_TEST_NATIVE_PYTHON "Test source intake with installed native Python providers" OFF)
@@ -30,7 +31,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME gadget_source_native_contracts COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_native.py"
         "$<TARGET_FILE:gadget_source>" "$<TARGET_FILE:gadget>" "$<TARGET_FILE:gadget_native_field_import>" "$<TARGET_FILE:gadget_result_binding_tests>"
-        "${GADGET_TEST_DATA_DIR}/source-native")
+        "${source_test_data_dir}/source-native")
     set_tests_properties(gadget_source_native_contracts PROPERTIES TIMEOUT 180 LABELS native-python)
   endif()
 

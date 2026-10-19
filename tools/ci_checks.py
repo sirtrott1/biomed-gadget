@@ -122,6 +122,7 @@ def main():
     report.add_argument("--required", required=True)
     report.add_argument("--contracts-result", required=True)
     report.add_argument("--matching-qualification", default="")
+    report.add_argument("--test-preset", choices=("cpu", "contracts"), default="cpu")
     report.add_argument("--summary", type=Path)
     commands.add_parser("docs")
     commands.add_parser("preflight")
@@ -143,7 +144,7 @@ def main():
         try:
             status = qualification_status(args.checks_result, args.required,
                                           args.contracts_result, args.matching_qualification)
-            detail = ("Both native compiler suites passed for this snapshot."
+            detail = (f"Both native compilers passed CTest profile {args.test_preset} for this snapshot."
                       if args.required == "true" else
                       "Native compilation was reused from an executable-input-equivalent run: "
                       + args.matching_qualification)

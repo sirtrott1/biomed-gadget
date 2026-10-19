@@ -2,7 +2,7 @@
 #include <functional>
 #include <gadget/io.hpp>
 #include <rfc/runtime/resource_budget.hpp>
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include <unistd.h>
 #endif
 
@@ -15,7 +15,7 @@ class CpuResources {
     rfc::runtime::CpuResourceCoordinator coordinator_;
     CpuResources(const CpuResources &parent, rfc::runtime::CpuResourceCoordinator assigned);
     void process() const;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
     const pid_t process_id_{::getpid()};
 #endif
 

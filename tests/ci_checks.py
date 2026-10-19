@@ -15,6 +15,19 @@ spec.loader.exec_module(checks)
 
 
 class CIContracts(unittest.TestCase):
+    def test_report_identifies_the_executed_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary.md"
+            for profile in ("cpu", "contracts"):
+                result = subprocess.run(
+                    [sys.executable, str(checks.ROOT / "tools/ci_checks.py"), "report",
+                     "--checks-result", "success", "--required", "true",
+                     "--contracts-result", "success", "--test-preset", profile,
+                     "--summary", str(summary)], capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(result.stdout)["status"], "PASS_CURRENT_NATIVE_CONTRACTS")
+                self.assertIn(f"CTest profile {profile}", json.loads(result.stdout)["detail"])
+                self.assertIn(f"CTest profile {profile}", summary.read_text())
+
     def test_missing_dependencies_fail_before_native_work(self):
         with patch.object(checks.importlib, "import_module", side_effect=ImportError("unavailable")):
             with self.assertRaisesRegex(ValueError, "Missing test dependencies: .*matplotlib"):

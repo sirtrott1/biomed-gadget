@@ -17,14 +17,14 @@ def main(binary, root):
     readings=dict(A=[6,2,4,8],B=[2,4,8,6],C=[3,7,5,1],zero=[0,0,0,0],same_A=[6,2,4,8],partial=[1,None,2,3])
     q=demo.authored(root/'inputs',field_values=readings)
     checks=refused=0
-    def check(condition):
+    def check(condition, message=''):
         nonlocal checks
-        assert condition
+        assert condition, message
         checks+=1
     def command(*args,fail=False):
         nonlocal refused
         p=subprocess.run([str(binary),*map(str,args)],capture_output=True,text=True,timeout=180)
-        check(bool(p.returncode)==fail)
+        check(bool(p.returncode)==fail,p.stderr)
         if fail:refused+=1;return None
         return json.loads(p.stdout)
     command('import-assays','--spec',root/'inputs/import.json','--out',root/'workspace')
@@ -135,7 +135,7 @@ def main(binary, root):
     # fixed application field count is used by this producer.
     values={f'field_{i}':[i,i+1,i+2,i+3] for i in range(137)}
     large_q=demo.authored(root/'many/inputs',field_values=values)
-    large_q=demo.query(list(values),workers=4)
+    large_q=demo.query(list(values),workers=min(4,command('resources')['worker_capacity']))
     command('import-assays','--spec',root/'many/inputs/import.json','--out',root/'many/workspace')
     demo.bind_evidence(large_q,root/'many/workspace')
     v=execute(large_q,workspace_=root/'many/workspace/workspace.json')['result'];check(len(v['samples'])==137 and v['execution']['projector_preparations']==2)
