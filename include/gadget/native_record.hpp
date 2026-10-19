@@ -168,6 +168,12 @@ NativeRecord retain_operation(const NativeRecord &source,const NativeRecord &req
 NativeRecord retain_operation(const NativeRecord &source, std::vector<RawByteSource> added,
     const NativeRecord &request, NativeRecordValue result,
     const NativeRecordObserver &observer = {});
+// Retain a declaration operation as an actual update of the owning history,
+// including publications that currently contain only their base frame.
+NativeRecord annotate_operation(const NativeRecord &source, const NativeRecord &request,
+                                NativeRecordValue result);
+NativeRecord annotate_operation(const NativeRecord &source, std::vector<RawByteSource> added,
+                                const NativeRecord &request, NativeRecordValue result);
 // Publish a newly constructed mathematical source and result together.
 NativeRecord retain_operation(const rfc::storage::TemporalEndpoint &source,
     std::uint64_t source_namespace, std::vector<RawByteSource> sources,

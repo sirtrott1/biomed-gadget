@@ -37,8 +37,8 @@ layout is a declared profile; it does not accept every GCT 1.3 variant. Metadata
 joins preserve repeated donors. Statistical independence needs its own check.
 
 PubChem inspection retains a complete declared assay and its decoded views in
-memory. Set source, readout and link budgets before inspection. These functions
-inspect original input; they do not fit models or publish native evidence.
+memory. Set source, readout and link budgets before inspection. The inspection functions retain original input. The optional native adapter
+publishes typed evidence through the common evidence store.
 
 For working datasets, use the [native data API](../../tools/rcdb/DATA.md).
 Retain original files once as provenance, then store admitted fields and shared
@@ -56,3 +56,8 @@ The reference scripts also accept original BindingDB or PubChem input and its
 expected SHA256. Run `python tests/bindingdb_bulk_reference.py --help` or
 `python tests/pubchem_assay_reference.py --help` for arguments. Reader JSON
 output is an inspection view; numerical work requires native admission.
+
+## Native workflows
+
+[Measurement analysis](ANALYSIS.md) describes bounded native imports, exact count
+analysis, finite pathway tests and source evidence correspondences.

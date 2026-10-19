@@ -82,6 +82,7 @@ Large native calculations can still require a complete source in memory;
 | Task | Start here |
 | --- | --- |
 | Load, explore and select data from Python | [Data I/O](tools/rcdb/README.md) |
+| Analyze native count fields or mapped pathways | [Native analysis](examples/source-formats/ANALYSIS.md) |
 | Choose an assay or analysis | [Examples](examples/README.md) |
 | Build a pipeline | [Pipelines](examples/pipelines/README.md) |
 | Use GADGET as a C++ library | [C++ interface](include/gadget/README.md) |

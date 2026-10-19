@@ -48,7 +48,8 @@
                 "enum": [
                   "query",
                   "derive",
-                  "workflow"
+                  "workflow",
+                  "result"
                 ]
               },
               "input": {
@@ -93,6 +94,10 @@
                 "not": {
                   "const": "source"
                 }
+              },
+              "result_input": {
+                "type": "string",
+                "minLength": 1
               }
             },
             "required": [

@@ -1,4 +1,5 @@
 #include "pipeline_answers.hpp"
+#include "result_answer_witness.hpp"
 #include "scientific_result_fields.hpp"
 #include <rfc/storage/temporal_finite.hpp>
 #include <gadget/record_view.hpp>
@@ -187,6 +188,10 @@ const std::map<std::string, Observable> observables{
     {"green_response", {{"green_response"}, "Declared multi-order Green responses"}},
     {"relational_persistence",
      {{"relational_persistence"}, "Classes and induced maps through declared retained contexts"}},
+    {"declared_set_enrichment", {{"pathway_overrepresentation"},
+      "Exact finite intersection tails under declared mapped background, selection and multiplicity assumptions"}},
+    {"evidence_correspondences", {{"feature_evidence_context"},
+      "Explicit feature correspondences to retained assertion participant occurrences with ambiguity and roles"}},
     {"population_p_value",
      {{}, "Requires an authored population, sampling/null family and an implemented calibration"}}};
 Json strings(const std::vector<std::string> &values) {
@@ -226,6 +231,7 @@ fs::path checked_answer_path(const fs::path &directory, const Json &record) {
 Json checked_answer_view(const fs::path &directory,const Json &record) {
     if (record.has("native_selection")) {
         const auto selection = record.at("native_selection");
+        if (selection.at("kind").text() == "result_operation") return result_answer_view(directory, record);
         keys(selection, {"kind", "assay"});
         require(selection.at("kind").text() == "generating_result",
                 "unsupported native answer selection");
@@ -447,7 +453,10 @@ Json answer_witnesses(const Json &planning, const Json &pipeline, const Json &re
             const auto effective = checked_answer_view(directory,effective_record);
             const auto job = directory / node.at("id").text();
             auto references = Json::array();
-            if (node.at("type").text() == "derive") {
+            if (node.at("type").text() == "result") {
+                references.push(result_answer_reference(directory, record, effective_record,
+                    effective.at("operation").text(), receipt.at("analysis_sha256").text()));
+            } else if (node.at("type").text() == "derive") {
                 const AssayWorkspace workspace(job / "workspace/workspace.rfcxs");
                 require(workspace.digest() == receipt.at("derived_digest").text(),
                         "answer derived workspace owner mismatch");

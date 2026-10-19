@@ -16,6 +16,7 @@ alone do not establish that two measurements can be compared.
 | ChIP and ATAC coverage | [Controlled coverage](bioinformatics/controlled-coverage/README.md), [EGR1 example](bioinformatics/chip-coverage.md) |
 | Spatial expression | [Spatial data](bioinformatics/spatial-expression.md) |
 | Correspondence between assays | [Assay sections](bioinformatics/assay-sections/README.md) |
+| Native count fields, exact pathways and evidence maps | [Native analysis](source-formats/ANALYSIS.md) |
 | Biomedical databases and binding evidence | [Biomedical evidence](biomedical/README.md) |
 
 ## Analyses

@@ -45,7 +45,8 @@
               "query",
               "derive",
               "workflow",
-              "bind"
+              "bind",
+              "result"
             ]
           },
           "input": {
@@ -89,6 +90,11 @@
             "not": {
               "const": "source"
             }
+          },
+          "result_input": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
           }
         },
         "required": [
@@ -97,7 +103,38 @@
           "input",
           "request"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "result"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "result_input"
+              ],
+              "properties": {
+                "request": {
+                  "$ref": "result-operation.schema.json"
+                },
+                "assay": false,
+                "partition": false,
+                "normalization_evidence_field": false
+              }
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "result_input"
+                ]
+              }
+            }
+          }
+        ]
       }
     },
     "concurrent_jobs": {

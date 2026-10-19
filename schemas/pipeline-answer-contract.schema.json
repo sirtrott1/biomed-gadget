@@ -72,7 +72,9 @@
               "hodge_frame_decomposition",
               "linear_response_observation",
               "metric_relative_novelty",
-              "relational_gluing"
+              "relational_gluing",
+              "declared_set_enrichment",
+              "evidence_correspondences"
             ]
           },
           "bindings": {

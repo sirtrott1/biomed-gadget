@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.data.study.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.data.study.v1"
+    },
+    "data_sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "design": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "population": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "question",
+        "population",
+        "selection",
+        "limitations"
+      ],
+      "additionalProperties": false
+    },
+    "responses": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "row": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "row"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "covariates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "quantity": {
+            "type": "string",
+            "minLength": 1
+          },
+          "units": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value_type": {
+            "enum": [
+              "quantitative",
+              "indicator"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "values",
+          "quantity",
+          "units",
+          "value_type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "max_bytes": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "schema",
+    "data_sha256",
+    "id",
+    "design",
+    "responses",
+    "covariates",
+    "max_bytes"
+  ],
+  "additionalProperties": false
+}

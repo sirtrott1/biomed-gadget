@@ -7,6 +7,8 @@
 #include <gadget/model.hpp>
 #include <gadget/native_pattern.hpp>
 #include <gadget/pipeline.hpp>
+#include <gadget/result_operations.hpp>
+#include <gadget/data_study.hpp>
 #include <gadget/process.hpp>
 #include <gadget/resources.hpp>
 #include <gadget/store.hpp>
@@ -64,6 +66,8 @@ int main(int argc, char **argv) {
                    "       derive-assays --workspace MANIFEST --request FILE --out NEW_DIRECTORY\n"
                    "       replay-derivation --workspace MANIFEST --assay ID --out NEW_DIRECTORY\n"
                    "       allocation-bounds --request FILE\n"
+                   "       bind-data-study --input FILE.rfcxs --request FILE --out-record FILE\n"
+                   "       analyze-record --analysis FILE.rfcxs --request FILE --out-record FILE [--evidence PATH]\n"
                    "       pipelines; pipeline-prepare --workspace MANIFEST --request DESIGN\n"
                    "       pipeline --workspace MANIFEST --request PLAN --out NEW_DIRECTORY\n"
                    "       plan-pipeline --workspace MANIFEST --model LOCAL_GGUF --prompt TEXT "
@@ -119,9 +123,11 @@ int main(int argc, char **argv) {
         std::map<std::string, std::set<std::string>> allowed{
             {"databases", {}},
             {"bioinformatics", {}},
+            {"bind-data-study", {"--input", "--request", "--out-record"}},
+            {"analyze-record", {"--analysis", "--request", "--out-record", "--evidence"}},
             {"pipelines", {}},
             {"pipeline-prepare", {"--workspace", "--request"}},
-            {"pipeline", {"--workspace", "--request", "--out"}},
+            {"pipeline", {"--workspace", "--request", "--out", "--evidence"}},
             {"pipeline-proposal", {"--workspace", "--request", "--out"}},
             {"recipe-catalog", {"--workspace", "--intent", "--profile"}},
             {"fact-catalog", {"--workspace", "--request", "--artifacts", "--view", "--out"}},
@@ -264,6 +270,32 @@ int main(int argc, char **argv) {
         if (command == "import-assays") {
             const auto workspace = gadget::import_assay_workspace(required("--spec"), required("--out"));
             std::cout << workspace->catalog().dump() << '\n';
+            return 0;
+        }
+        if (command == "bind-data-study") {
+            if (gadget::fs::exists(required("--out-record"))) throw std::invalid_argument("study destination already exists");
+            const auto source = gadget::NativeRecord::read(required("--input"));
+            const auto request = gadget::read_record(required("--request")).native();
+            const auto publication = gadget::bind_measurement_study(source, request);
+            const gadget::ScientificStudy admitted(publication);
+            publication.write(required("--out-record"));
+            std::cout << admitted.catalog().dump() << '\n';
+            return 0;
+        }
+        if (command == "analyze-record") {
+            const auto request = gadget::read_record(required("--request")).native();
+            const auto analysis = gadget::read_analysis_record(required("--analysis"), request);
+            std::unique_ptr<gadget::EvidenceStore> evidence;
+            if (options.contains("--evidence")) {
+                const gadget::fs::path path = options.at("--evidence");
+                evidence = gadget::fs::is_regular_file(path)
+                    ? std::make_unique<gadget::EvidenceStore>(gadget::NativeRecord::read(path))
+                    : std::make_unique<gadget::EvidenceStore>(path);
+            }
+            if (gadget::fs::exists(required("--out-record"))) throw std::invalid_argument("result destination already exists");
+            const auto result = gadget::execute_result_record(analysis, request, evidence.get());
+            result.write(required("--out-record"));
+            std::cout << gadget::render_record_view(result.at("result")).dump() << '\n';
             return 0;
         }
         if (command == "pipelines") {
@@ -435,7 +467,14 @@ int main(int argc, char **argv) {
             } else {
                 const auto native_plan=(schema=="gadget.pipeline.default.v1" || schema=="gadget.pipeline.design.v1")
                     ? retained_declaration.native().derive(gadget::import_record_view(plan)) : retained_declaration.native();
-                const auto publication=gadget::execute_pipeline_record(workspace,native_plan,required("--out"));
+                std::unique_ptr<gadget::EvidenceStore> evidence;
+                if(options.contains("--evidence")) {
+                    const gadget::fs::path path=options.at("--evidence");
+                    evidence=gadget::fs::is_regular_file(path)
+                        ? std::make_unique<gadget::EvidenceStore>(gadget::NativeRecord::read(path))
+                        : std::make_unique<gadget::EvidenceStore>(path);
+                }
+                const auto publication=gadget::execute_pipeline_record(workspace,native_plan,required("--out"),{},{},evidence.get());
                 std::cout << gadget::render_record_view(publication.at("result")).dump() << '\n';
             }
             return 0;

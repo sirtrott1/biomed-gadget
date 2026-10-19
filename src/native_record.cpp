@@ -736,6 +736,22 @@ NativeRecord retain_operation(const NativeRecord &source, std::vector<RawByteSou
     return checked_operation(source.derive(std::move(operation.value), std::move(added), observer),
                              operation.request_sources);
 }
+NativeRecord annotate_operation(const NativeRecord &source, const NativeRecord &request,
+                                NativeRecordValue result) {
+    return annotate_operation(source, {}, request, std::move(result));
+}
+NativeRecord annotate_operation(const NativeRecord &source, std::vector<RawByteSource> added,
+                                const NativeRecord &request, NativeRecordValue result) {
+    auto sources=source.raw_sources();std::set<std::uint64_t> keys;
+    for(const auto &bytes:sources)keys.insert(bytes.key());
+    for(const auto &bytes:added) {
+        require(keys.insert(bytes.key()).second,"annotation byte source identity collides");
+        sources.push_back(bytes);
+    }
+    auto operation=operation_value(sources,added,request,std::move(result));
+    return checked_operation(NativeRecord::annotate(operation.value,source,std::move(added)),
+                             operation.request_sources);
+}
 NativeRecord retain_operation(const storage::TemporalEndpoint &source,std::uint64_t source_namespace,
     std::vector<RawByteSource> sources,const NativeRecord &request,NativeRecordValue result) {
     return retain_operation(storage::TemporalEndpoint(source),source_namespace,

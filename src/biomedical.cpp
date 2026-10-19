@@ -674,6 +674,7 @@ void import_evidence(const fs::path &input_snapshot, const fs::path &destination
 }
 struct EvidenceStore::State {
     NativeRecord publication;
+    std::shared_ptr<const EvidenceAdapter> adapter;
     RetainedRecord receipt,manifest;
     InterpretedSnapshot native;
     std::map<std::uint64_t,RetainedRecord> records,entities;
@@ -690,15 +691,22 @@ struct EvidenceStore::State {
         limits.atlas.accession=native_accession_limits();
         return decode_interpreted_snapshot(publication.at("interpretation").bytes(),limits);
     }
-    explicit State(const fs::path &directory)
-        :publication(open(directory)),receipt(publication.at("receipt")),manifest(publication.at("snapshot")),native(interpret_native(publication)) {
+    explicit State(const fs::path &directory) : State(open(directory), {}, directory) {}
+    explicit State(NativeRecord input, std::shared_ptr<const EvidenceAdapter> profile,
+                   const fs::path &directory = {})
+        : publication(std::move(input)), adapter(std::move(profile)), receipt(publication.at("receipt")),
+          manifest(publication.at("snapshot")), native(interpret_native(publication)) {
+        if (adapter) {
+            adapter->verify(publication, native);
+            return;
+        }
         require(publication.at("schema").text()=="gadget.evidence.native.v1","unsupported native biomedical evidence");
         verify_seal(receipt,"source_digest");
         const auto normalized=publication.at("records");
         require(receipt.at("snapshot_sha256").text()==manifest.at("snapshot_sha256").text() && receipt.at("records_sha256").text()=="sha256:"+sha256(render_record_view(normalized).dump()),"evidence source/records mismatch");
         const auto bytes=publication.at("interpretation").bytes();
         require(receipt.at("native_sha256").text()=="sha256:"+sha256(std::string_view(reinterpret_cast<const char *>(bytes.data()),bytes.size())),"native evidence/source mismatch");
-        if(fs::exists(directory/"evidence.rfcxi"))require(read_text(directory/"evidence.rfcxi")==archive(native),"external native evidence differs from publication");
+        if(!directory.empty() && fs::exists(directory/"evidence.rfcxi"))require(read_text(directory/"evidence.rfcxi")==archive(native),"external native evidence differs from publication");
         const auto source_series=rfc::storage::decode_native_series(publication.at("source_database").bytes(),native_data_limits());
         const auto source=NativeRecord::from_history(source_series);
         const auto expected=normalize(source,static_cast<std::uint32_t>(count(receipt.at("adapter_version"),3,"adapter version")));
@@ -740,11 +748,15 @@ struct EvidenceStore::State {
 };
 EvidenceStore::EvidenceStore(const fs::path &directory)
     : state_(std::make_unique<State>(directory)) {}
+EvidenceStore::EvidenceStore(const NativeRecord &publication, std::shared_ptr<const EvidenceAdapter> adapter)
+    : state_(std::make_unique<State>(publication, std::move(adapter))) {}
 EvidenceStore::~EvidenceStore() = default;
+const rfc::database::InterpretedSnapshot &EvidenceStore::interpreted_source() const {return state_->native;}
 const NativeRecord &EvidenceStore::native_publication() const {return state_->publication;}
 std::string EvidenceStore::digest() const { return state_->receipt.at("source_digest").text(); }
 NativeRecord EvidenceStore::bind_reported_field(const ScientificStudy &study,
                                                const NativeRecord &request) const {
+    require(!state_->adapter, "reported binding field requires its declared source profile");
     using N = NativeRecordValue;
     const auto control = render_record_view(request);
     members(control, {"schema", "source_digest", "study_digest", "field", "endpoint", "units"});
@@ -867,6 +879,7 @@ NativeRecord EvidenceStore::bind_reported_field(const ScientificStudy &study,
             "endpoints do not imply biological comparability."))}}}));
 }
 NativeRecord EvidenceStore::source_context(const NativeRecord &request) const {
+    if (state_->adapter) return state_->adapter->context(state_->publication, state_->native, request);
     using N = NativeRecordValue;
     const auto control = render_record_view(request);
     members(control, {"schema", "source_digest", "snapshot_sha256", "question", "assertion_keys"});
@@ -902,6 +915,7 @@ NativeRecord EvidenceStore::source_context(const NativeRecord &request) const {
 NativeRecord EvidenceStore::admit_proposal(const NativeRecord &context_request,
                                          const NativeRecord &input,
                                          const std::string &question) const {
+    require(!state_->adapter, "source annotations require the declared adapter proposal contract");
     using N = NativeRecordValue;
     const auto context = source_context(context_request);
     const auto catalog = context.at("result");
@@ -1033,6 +1047,7 @@ NativeRecord EvidenceStore::admit_proposal(const NativeRecord &context_request,
     return retain_operation(context, input, N(std::move(receipt)));
 }
 void EvidenceStore::validate(const Json &query) const {
+    if (state_->adapter) {state_->adapter->validate(query, digest()); return;}
     const auto op = query.at("operation").text();
     if (op == "inspect" || op == "coverage")
         members(query, {"operation"});
@@ -1087,6 +1102,7 @@ void EvidenceStore::validate(const Json &query) const {
         throw std::invalid_argument("unknown biomedical evidence query");
 }
 NativeRecord EvidenceStore::execute_record(const NativeRecord &input) const {
+    if (state_->adapter) return state_->adapter->execute(state_->publication, state_->native, input);
     using R = ResultValue;
     using N = NativeRecordValue;
     const auto number = [](Rational value) {

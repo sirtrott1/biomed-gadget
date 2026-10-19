@@ -33,20 +33,19 @@ the SDK directly in C++ and the bridge for Python operations that require it.
 Core, RCDB and RCQL also work without the bridge. Agent and System are optional
 packages in the Python repository. The repositories retain separate histories,
 builds and licenses. GADGET does not bundle their source or compiled libraries.
-Core and the C++ SDK publish Apache 2.0 licenses. The optional Python bridge
-retains its separate
-[license notice](https://github.com/sirtrott1/rexgraph-python/blob/c1ed74f2e2e7d278a0633ff423812803214c3a1e/bindings/cpp/LICENSE)
-and declares `LicenseRef-RexGraphCpp-Author-Distributed` in its package metadata.
+Core, the C++ SDK and the optional Python bridge publish Apache 2.0 licenses.
+The bridge retains its own
+[license notice](https://github.com/sirtrott1/rexgraph-python/blob/5f9f4f9a7934c5c14e3f7344b15c0d8ea4147605/bindings/cpp/LICENSE).
 
 ## Install from source
 
-The commands below start inside `biomed-gadget` on Linux. The tested revisions
+The commands below start inside `biomed-gadget` on Linux. The source revisions
 are pinned before compilation so the C++ application and Python bridge use the
 same SDK. Existing checkouts can instead use these revisions in separate clones.
 
 ```sh
-git -C ../rexgraph-python checkout --detach c1ed74f2e2e7d278a0633ff423812803214c3a1e
-git -C ../rexgraphcpp checkout --detach b5a0352c0e0f22bc087300eee514bb745d7e6fd3
+git -C ../rexgraph-python checkout --detach 5f9f4f9a7934c5c14e3f7344b15c0d8ea4147605
+git -C ../rexgraphcpp checkout --detach 4d52e37296a31bc6d7e6b43cdf091261e41518d6
 ```
 
 On Debian or Ubuntu, install the system requirements:
@@ -131,9 +130,9 @@ transport and GPU adapters have separately selected dependencies.
 
 ## Dependency revisions
 
-The tested Python source revision is
-`c1ed74f2e2e7d278a0633ff423812803214c3a1e`, version 1.3.2. The recorded SDK
-revision is `b5a0352c0e0f22bc087300eee514bb745d7e6fd3`, version 0.2.1.
+The source pins are Python
+`5f9f4f9a7934c5c14e3f7344b15c0d8ea4147605`, version 1.3.2, and SDK
+`4d52e37296a31bc6d7e6b43cdf091261e41518d6`, version 0.2.1.
 The complete 470 header inventory has SHA256
 `1e6adda1dec387c54bac9acc513a62806c35991cf593a163f416bb21bd2186a6`.
 The SDK pin is in [cmake/RexGraph.lock.cmake](cmake/RexGraph.lock.cmake);

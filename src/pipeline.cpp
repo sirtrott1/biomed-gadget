@@ -1,4 +1,6 @@
 #include "pipeline_answers.hpp"
+#include "pipeline_result_binding.hpp"
+#include <gadget/result_operations.hpp>
 #include "scientific_result_fields.hpp"
 #include <algorithm>
 #include <chrono>
@@ -74,7 +76,7 @@ const std::map<std::string, std::vector<std::string>> profiles{
     {"custom", {}}};
 struct Recipe {
     std::string operation;
-    bool native{}, materializable{}, binding{};
+    bool native{}, materializable{}, binding{}, result{};
 };
 // Recipes assemble existing contracts. Scientific operators and source
 // materialization remain in their existing RexGraph backed services.
@@ -89,6 +91,8 @@ const std::map<std::string, Recipe> recipes{
     {"expression_contrast", {"paired_field_contrasts", true}},
     {"controlled_relations", {"controlled_pairings", true}},
     {"linear_model_comparison", {"linear_model_comparison", true}},
+    {"pathway_overrepresentation", {"pathway_overrepresentation", false, false, false, true}},
+    {"feature_evidence_context", {"feature_evidence_context", false, false, false, true}},
     {"finite_reference_calibration", {"finite_reference_calibration", true}},
     {"structural_reference_calibration", {"structural_reference_calibration", true}},
     {"observed_response_model", {"observed_response_model", true}},
@@ -137,7 +141,7 @@ bool allowed_recipe(const std::string &profile, const Recipe &recipe) {
         profile != "multi_omics")
         return false;
     const auto &allowed = profiles.at(profile);
-    const auto operation = recipe.native ? "native_query" : recipe.operation;
+    const auto operation = recipe.native || recipe.result ? "native_query" : recipe.operation;
     return allowed.empty() || std::find(allowed.begin(), allowed.end(), operation) != allowed.end();
 }
 void evidence_binding(const Json &node) {
@@ -184,7 +188,7 @@ void validate(const Json &plan, const std::string &digest) {
         const auto node = steps.at(i);
         keys(node, {"id", "type", "input", "request"},
              {"depends_on", "assay", "partition", "workers", "normalization_evidence_field",
-              "recipe_binding"});
+              "recipe_binding", "result_input"});
         if (node.has("recipe_binding"))
             (void)identifier(node.at("recipe_binding"));
         if (node.has("workers"))
@@ -194,7 +198,7 @@ void validate(const Json &plan, const std::string &digest) {
         require(!declared.contains(id), "duplicate pipeline step");
         require(declared.contains(input) && declared.at(input) == "workspace",
                 "pipeline input must name source or an earlier derived workspace");
-        require(type == "query" || type == "derive" || type == "workflow" || type == "bind",
+        require(type == "query" || type == "derive" || type == "workflow" || type == "bind" || type == "result",
                 "unsupported pipeline step type");
         if (node.has("depends_on")) {
             require(json_object_is_type(node.at("depends_on").raw(), json_type_array),
@@ -211,7 +215,12 @@ void validate(const Json &plan, const std::string &digest) {
         require(json_object_is_type(request.raw(), json_type_object),
                 "pipeline request must be an object");
         evidence_binding(node);
-        if (type == "bind") {
+        require(type == "result" || !node.has("result_input"), "result_input belongs only to a result step");
+        if (type == "result") {
+            pipeline_detail::admit_result_step(node, declared);
+            const auto &allowed=profiles.at(plan.at("profile").text());
+            require(allowed.empty() || std::find(allowed.begin(), allowed.end(), "native_query") != allowed.end(), "native result does not belong to selected profile");
+        } else if (type == "bind") {
             require(input == "source" && !node.has("assay") && !node.has("partition") &&
                         !node.has("normalization_evidence_field"),
                     "bind step selects inputs inside its binding request");
@@ -311,15 +320,17 @@ Json pipeline_profiles() {
         choice.set("method", Json::string(method));
         choice.set("operation", Json::string(recipe.operation));
         choice.set("native_query", Json::boolean(recipe.native));
+        choice.set("native_result", Json::boolean(recipe.result));
         choice.set("materializable", Json::boolean(recipe.materializable));
         choice.set("native_materialization", Json::boolean(
             AssayWorkspace::supports_native_materialization(recipe.operation)));
         choice.set("native_publication", Json::boolean(
-            recipe.binding || (recipe.native ? has_native_scientific_publisher(recipe.operation)
+            recipe.binding || recipe.result || (recipe.native ? has_native_scientific_publisher(recipe.operation)
                                              : AssayWorkspace::supports_native_publication(recipe.operation))));
         choice.set("workspace_binding", Json::boolean(recipe.binding));
         choice.set("parameters_schema",
-                   Json::string(recipe.binding  ? "assays-bindings.schema.json"
+                   Json::string(recipe.result ? "result-operation.schema.json"
+                                : recipe.binding  ? "assays-bindings.schema.json"
                                 : recipe.native ? "scientific-query.schema.json"
                                                 : "assays-query.schema.json"));
         definitions.push(choice);
@@ -379,7 +390,7 @@ Json default_pipeline(const AssayWorkspace &workspace, const Json &settings) {
         }
         keys(goal, {"method", "parameters"},
              {"id", "input", "assay", "output", "depends_on", "workers", "partitions",
-              "partition_jobs", "normalization_evidence_field"});
+              "partition_jobs", "normalization_evidence_field", "result_input"});
         const auto method = goal.at("method").text();
         require(recipes.contains(method), "unknown default recipe: " + method);
         const auto &recipe = recipes.at(method);
@@ -399,10 +410,17 @@ Json default_pipeline(const AssayWorkspace &workspace, const Json &settings) {
         node.set("recipe_binding", Json::string(id));
         node.set("type", Json::string("query"));
         node.set("input", Json::string(input));
-        for (const auto *member : {"depends_on", "workers", "normalization_evidence_field"})
+        for (const auto *member : {"depends_on", "workers", "normalization_evidence_field", "result_input"})
             if (goal.has(member))
                 node.set(member, goal.at(member));
-        if (recipe.binding) {
+        if (recipe.result) {
+            require(goal.has("result_input") && !goal.has("assay") && !goal.has("output") &&
+                !goal.has("partitions") && !goal.has("partition_jobs"), "result recipe requires a prior result and no assay partition");
+            node.set("type", Json::string("result"));
+            request=parameters;
+            request.set("schema", Json::string("gadget.result-operation.v1"));
+            request.set("operation", Json::string(recipe.operation));
+        } else if (recipe.binding) {
             require(input == "source" && !goal.has("output") && !goal.has("assay") &&
                         !goal.has("partitions") && !goal.has("partition_jobs") &&
                         !goal.has("normalization_evidence_field"),
@@ -517,12 +535,12 @@ Json admit_pipeline_proposal(const Json &proposal, const std::string &source_dig
         for (std::size_t i = 0; i < proposal.at("steps").size(); ++i) {
             const auto entry = proposal.at("steps").at(i);
             keys(entry, {"id", "type", "input"},
-                 {"request", "request_json", "assay", "partition", "depends_on", "workers"});
+                 {"request", "request_json", "assay", "partition", "depends_on", "workers", "result_input"});
             require(entry.has("request") != entry.has("request_json"),
                     "pipeline proposal requires one structured or encoded request");
             auto node = Json::object();
             for (const auto &key :
-                 {"id", "type", "input", "assay", "partition", "depends_on", "workers"})
+                 {"id", "type", "input", "assay", "partition", "depends_on", "workers", "result_input"})
                 if (entry.has(key))
                     node.set(key, entry.at(key));
             node.set("request", entry.has("request")
@@ -631,6 +649,7 @@ RecipeIntent prepare_intent(const AssayWorkspace &workspace, const Json &declara
         };
         if (goal.has("input") && goal.at("input").text() != "source")
             dependency(goal.at("input").text());
+        if (goal.has("result_input")) dependency(goal.at("result_input").text());
         if (goal.at("method").text() == "bind_assays") {
             auto request = Json::parse(goal.at("parameters").dump());
             request.set("schema", Json::string("gadget.assays.bindings.v1"));
@@ -912,6 +931,9 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                     dependencies.end())
                     dependencies.push_back(dependency);
             }
+        const auto result_key = node.has("result_input") ? identities.at(node.at("result_input").text()) : rfc::runtime::WorkKey{};
+        if (result_key.id && std::find(dependencies.begin(), dependencies.end(), result_key) == dependencies.end())
+            dependencies.push_back(result_key);
         const auto input_key = input == "source" ? rfc::runtime::WorkKey{} : identities.at(input);
         const auto request = node.at("request");
         const auto mathematical_request =
@@ -932,7 +954,7 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
         // use that same coordinator rather than a competing application pool.
         jobs.push_back(rfc::runtime::WorkJob::make<Artifact>(
             key, {static_cast<std::size_t>(workers), buffer, sizeof(Artifact)}, dependencies,
-            [workspace, resources, stage, node, input_key, selected_inputs,
+            [workspace, resources, stage, node, input_key, result_key, selected_inputs,
              consumers = workspace_consumers[id], &models,
              evidence](const auto &inputs, auto &assigned, std::stop_token stop) {
                 if (stop.stop_requested())
@@ -983,9 +1005,29 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                 }
                 auto assigned_resources = resources->assigned(assigned);
                 Json certificate;
+                std::optional<Json> analysis_record;
                 std::optional<NativeRecord> direct_result;
                 std::shared_ptr<const AssayWorkspace> produced;
-                if (node.at("type").text() == "bind") {
+                if (node.at("type").text() == "result") {
+                    const auto dependency=inputs.at(result_key).template as<Artifact>();
+                    const auto spec=pipeline_detail::admit_result_operation(request);
+                    require(!dependency->receipt.has("analysis_scope") ||
+                        dependency->receipt.at("analysis_scope").text() != "multiple_native_results",
+                        "result operation requires an explicitly selected complete native result");
+                    const auto selected = dependency->receipt.has("analysis_record")
+                        ? static_cast<Json>(dependency->receipt.at("analysis_record")) : [&] {
+                            auto value=Json::object(); value.set("path",dependency->receipt.at("result"));
+                            value.set("sha256",dependency->receipt.at("result_sha256")); return value;
+                        }();
+                    const auto image=pipeline_detail::verified_record_image(stage / selected.at("path").text(),
+                        selected.at("sha256").text(), spec.analysis_bytes);
+                    const auto analysis=NativeRecord::decode(std::as_bytes(std::span(image.data(),image.size())));
+                    const auto selected_request=node.member("request").native();
+                    const auto native_request=selected_request.derive(selected_request.unbound_value());
+                    native_request.write(job / "request.rfcxs");
+                    direct_result=execute_result_record(analysis, native_request, evidence, assigned_resources, stop);
+                    certificate=scientific_detail::result_fields_view(direct_result->at("result"));
+                } else if (node.at("type").text() == "bind") {
                     std::map<std::string, std::shared_ptr<const AssayWorkspace>> bindings;
                     for (const auto &[name, key] : selected_inputs) {
                         if (!key.id)
@@ -1031,6 +1073,13 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                     native_request.write(job / "request.rfcxs");
                     direct_result = source->run_record(native_request, job / "results", assigned_resources);
                     certificate = render_record_view(direct_result->at("result"));
+                    const auto outputs=certificate.at("results");
+                    if(outputs.size()==1) {
+                        auto selected=Json::object();
+                        selected.set("path",Json::string(node.at("id").text()+"/results/"+outputs.at(0).at("native_path").text()));
+                        selected.set("sha256",outputs.at(0).at("sha256"));
+                        analysis_record=std::move(selected);
+                    }
                 } else {
                     write_record(job / "request.rfcxs", request);
                     const auto typed_request = read_record(job / "request.rfcxs");
@@ -1046,6 +1095,17 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                 receipt.set("type", node.at("type"));
                 receipt.set("input", node.at("input"));
                 receipt.set("source_digest", Json::string(source->digest()));
+                if (request.has("operation") && request.at("operation").text()=="native_query") {
+                    receipt.set("analysis_scope",Json::string(analysis_record ? "one_native_result" : "multiple_native_results"));
+                    if(analysis_record) receipt.set("analysis_record",*analysis_record);
+                }
+                if (node.has("result_input")) {
+                    const auto dependency=inputs.at(result_key).template as<Artifact>();
+                    receipt.set("result_input", node.at("result_input"));
+                    receipt.set("analysis_sha256", dependency->receipt.has("analysis_record")
+                        ? dependency->receipt.at("analysis_record").at("sha256") : dependency->receipt.at("result_sha256"));
+                    receipt.set("source_record_sha256", node.at("request").at("source_record").at("sha256"));
+                }
                 receipt.set("request", Json::string(node.at("id").text() + "/request.rfcxs"));
                 receipt.set("request_sha256", Json::string("sha256:" + sha256_file(job/"request.rfcxs")));
                 receipt.set("result", Json::string(node.at("id").text() + "/result.rfcxs"));

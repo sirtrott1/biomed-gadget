@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.result-operation.v1",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "gadget.result-operation.v1"
+    },
+    "operation": {
+      "enum": [
+        "pathway_overrepresentation",
+        "feature_evidence_context"
+      ]
+    },
+    "analysis_binding": {
+      "enum": [
+        "exact",
+        "actual_result"
+      ]
+    },
+    "analysis_bytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_record": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "max_bytes"
+      ],
+      "additionalProperties": false
+    },
+    "query": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema",
+    "operation",
+    "analysis_binding",
+    "analysis_bytes",
+    "source_record",
+    "query"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "analysis_binding": {
+            "const": "exact"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "query": {
+            "required": [
+              "analysis_sha256"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "query": {
+            "not": {
+              "required": [
+                "analysis_sha256"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "recipe_parameters": {
+      "type": "object",
+      "properties": {
+        "analysis_binding": {
+          "enum": [
+            "exact",
+            "actual_result"
+          ]
+        },
+        "analysis_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_record": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "path",
+            "sha256",
+            "max_bytes"
+          ],
+          "additionalProperties": false
+        },
+        "query": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "analysis_binding",
+        "analysis_bytes",
+        "source_record",
+        "query"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "analysis_binding": {
+                "const": "exact"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "query": {
+                "required": [
+                  "analysis_sha256"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "query": {
+                "not": {
+                  "required": [
+                    "analysis_sha256"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

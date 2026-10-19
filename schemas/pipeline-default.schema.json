@@ -1769,8 +1769,12 @@
                 ],
                 "additionalProperties": false,
                 "dependentRequired": {
-                  "maximum_edits": ["scoring"],
-                  "scoring": ["maximum_edits"]
+                  "maximum_edits": [
+                    "scoring"
+                  ],
+                  "scoring": [
+                    "maximum_edits"
+                  ]
                 }
               },
               "workers": {
@@ -4512,6 +4516,86 @@
             "required": [
               "method",
               "parameters"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              },
+              "method": {
+                "const": "pathway_overrepresentation"
+              },
+              "parameters": {
+                "$ref": "result-operation.schema.json#/$defs/recipe_parameters"
+              },
+              "result_input": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters",
+              "result_input"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              },
+              "method": {
+                "const": "feature_evidence_context"
+              },
+              "parameters": {
+                "$ref": "result-operation.schema.json#/$defs/recipe_parameters"
+              },
+              "result_input": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters",
+              "result_input"
             ],
             "additionalProperties": false
           }
