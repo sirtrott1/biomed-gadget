@@ -840,7 +840,8 @@ struct ScientificSession::State {
         auto derived = packed.at(identity)->execute(cpu(), query);
         derived.execution.set("prepared_operation_reused", Json::boolean(reused));
         ResultFields publication(result_source());
-        const auto carrier = *first.output, size = first.tensor.domain().logical_size();
+        const auto carrier = *first.output;
+        const auto size = first.tensor.domain().logical_size();
         const auto bits = [&](const rfc::machine::PackedBits &mask) {
             require(mask.size() == size, "packed native field domain");
             std::vector<rfc::numeric::SparseRationalEntry> entries;
@@ -934,7 +935,8 @@ struct ScientificSession::State {
         ResultFields publication(result_source());
         auto view = ResultValue::object(), observations = ResultValue::array();
         std::vector<std::size_t> source_coordinates;
-        const auto size = window.domain().logical_size(), window_axis = publication.axis(size);
+        const auto size = window.domain().logical_size();
+        const auto window_axis = publication.axis(size);
         const auto original = publication.stored(input_tensor.key,"vector");
         for (std::size_t i = 0; i < size; ++i) {
             lease.check_cancelled(); const auto coordinate = window.source_index(i);
@@ -3348,7 +3350,7 @@ struct ScientificSession::State {
         }();
         std::uint64_t source_key = 1;
         for (const auto &bytes : fields.raw_sources())
-            source_key = std::max(source_key, rfc::machine::checked_size_add(bytes.key(), 1));
+            source_key = std::max<std::uint64_t>(source_key, rfc::machine::checked_size_add(bytes.key(), 1));
         if (!original_publication)
             original_publication.emplace(owner->native_publication().archive_source(1));
         const auto source_bytes = fields.raw_sources();

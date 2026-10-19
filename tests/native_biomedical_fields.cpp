@@ -100,10 +100,10 @@ void transfer(const AssayWorkspace &workspace, const NativeRecord &fields, const
         const auto publication = NativeRecord::decode(binding.at("publication").bytes());
         check(publication.encode() == original->native_publication().encode(), "transfer original participant changed");
         const ScientificStudy admitted(publication);
-        check(publication.source_namespace() == binding.at("source_namespace").integer() &&
-                  admitted.endpoint()->sequence == binding.at("source_sequence").integer(), "transfer original binding changed");
+        check(rfc::numeric::Integer(std::to_string(publication.source_namespace())) == binding.at("source_namespace").integer() &&
+                  rfc::numeric::Integer(std::to_string(admitted.endpoint()->sequence)) == binding.at("source_sequence").integer(), "transfer original binding changed");
         const auto original_field = std::find_if(admitted.endpoint()->tensors.begin(), admitted.endpoint()->tensors.end(),
-            [&](const auto &t) { return t.key == binding.at("source_field").integer(); });
+            [&](const auto &t) { return rfc::numeric::Integer(std::to_string(t.key)) == binding.at("source_field").integer(); });
         check(original_field != admitted.endpoint()->tensors.end() &&
                   original_field->output == binding.at("source_carrier").integer().get_ui(), "transfer source field carrier changed");
         const auto &stored = tensor(fields, role);

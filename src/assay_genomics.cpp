@@ -642,8 +642,8 @@ Json chromatin_contrast(const ResourceImages &images, const Json &request,
                 name, store.column("segment." + name, 1, atoms.size(), value));
         };
         segment_column("frame", [&](auto i) { return Rational(frames.at(atoms[i].frame)); });
-        segment_column("start", [&](auto i) { return Rational(atoms[i].start); });
-        segment_column("end", [&](auto i) { return Rational(atoms[i].end); });
+        segment_column("start", [&](auto i) { return Rational(std::to_string(atoms[i].start)); });
+        segment_column("end", [&](auto i) { return Rational(std::to_string(atoms[i].end)); });
         N declaration(N::Object{{{"schema", N(std::string("gadget.chromatin.fields.v1"))},
                                  {"fields", N(std::move(field_declarations))},
                                  {"sample_fields", N(std::move(native_samples))},
@@ -713,8 +713,8 @@ AssayFieldsSource annotation_fields_source(const ResourceImage &resource, const 
         {"features", N(std::move(groups))}, {"original_records", N(std::move(original))},
         {"reference", import_record_view(resource.declaration.at("reference"))},
         {"source_bytes", N(N::ByteSpan{1, 0, resource.bytes.size(), false})},
-        {"record_start", store.column("annotation.start", 0, records.size(), [&](auto i) { return Rational(records[i].start); })},
-        {"record_end", store.column("annotation.end", 0, records.size(), [&](auto i) { return Rational(records[i].end); })},
+        {"record_start", store.column("annotation.start", 0, records.size(), [&](auto i) { return Rational(std::to_string(records[i].start)); })},
+        {"record_end", store.column("annotation.end", 0, records.size(), [&](auto i) { return Rational(std::to_string(records[i].end)); })},
         {"group_record_count", store.column("feature.record_count", 1, features.size(), [&](auto i) { return Rational(features[i].records.size()); })}}});
     return {std::move(endpoint), std::move(declaration),
             {RawByteSource(1, std::as_bytes(std::span(resource.bytes)))}};

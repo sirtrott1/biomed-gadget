@@ -333,7 +333,7 @@ NativeRecord check_certificate_claims_record(const NativeRecord &certificate, co
     receipt.set("scope", ResultValue::string("Literal comparisons against the supplied native operation; interpretation and computation replay are separate"));
     std::uint64_t key = 1;
     for (const auto &bytes : certificate.raw_sources())
-        key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+        key = std::max<std::uint64_t>(key, rfc::machine::checked_size_add(bytes.key(), 1));
     auto archive = certificate.archive_source(key);
     receipt.set("source_publication", ResultValue(N(N::ByteSpan{key, 0, archive.bytes().size(), false})));
     const auto retained = certificate.derive(std::move(receipt).release(), {std::move(archive)});

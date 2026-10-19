@@ -134,7 +134,7 @@ N native_occurrence(Occurrence o) {
 N archive(std::vector<RawByteSource> &sources, const NativeRecord &owner) {
     std::uint64_t id = 1;
     for (const auto &source : sources)
-        id = std::max(id, machine::checked_size_add(source.key(), 1));
+        id = std::max<std::uint64_t>(id, machine::checked_size_add(source.key(), 1));
     auto bytes = owner.archive_source(id);
     const auto size = bytes.bytes().size();
     sources.push_back(std::move(bytes));

@@ -93,7 +93,7 @@ struct WorkflowArchives {
     std::map<std::weak_ptr<const void>, std::uint64_t, std::owner_less<>> owners;
     explicit WorkflowArchives(const NativeRecord &source) {
         for (const auto &bytes : source.raw_sources())
-            next = std::max(next, rfc::machine::checked_size_add(bytes.key(), 1));
+            next = std::max<std::uint64_t>(next, rfc::machine::checked_size_add(bytes.key(), 1));
     }
     ResultValue retain(const WorkflowValue &value) {
         if (value.publication) {
@@ -929,7 +929,7 @@ NativeRecord run_workflow(std::shared_ptr<const ScientificStudy> study, const Na
     if (evidence) {
         std::uint64_t key = 1;
         for (const auto &bytes : source.raw_sources())
-            key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+            key = std::max<std::uint64_t>(key, rfc::machine::checked_size_add(bytes.key(), 1));
         auto archive = evidence->native_publication().archive_source(key);
         const auto size = archive.bytes().size();
         source = source.derive(N(N::Object{{
@@ -995,7 +995,8 @@ Json retained_workflow_value(const NativeRecord &value) {
     require(schema == "gadget.workflow.publication.v1", "workflow result reference schema");
     const auto owner = NativeRecord::decode(value.at("publication").bytes());
     require(value.at("source_namespace").text() == std::to_string(owner.source_namespace()) &&
-                value.at("cutoff").integer() == owner.publication_history()->last_sequence(),
+                value.at("cutoff").integer() ==
+                    rfc::numeric::Integer(std::to_string(owner.publication_history()->last_sequence())),
             "workflow archived result publication pin mismatch");
     return publication_view(owner);
 }

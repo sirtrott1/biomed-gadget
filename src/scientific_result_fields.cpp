@@ -354,7 +354,7 @@ NativeRecord retain_scientific_plan(const NativeRecord &source, const NativeReco
     std::vector<RawByteSource> sources;
     std::uint64_t key = 1;
     for (const auto &bytes : source.raw_sources())
-        key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+        key = std::max<std::uint64_t>(key, rfc::machine::checked_size_add(bytes.key(), 1));
     for (const auto &[id, step] : steps) {
         auto archive = step.archive_source(key);
         results.elements.emplace_back(N::Object{{{"id", N(id)},
@@ -423,12 +423,12 @@ void same_result_value(const NativeRecord &a, const NativeRecord &b, bool omit_e
             for(const auto *binding:{&a,&b}) {
                 const auto owner=NativeRecord::decode(binding->at("publication").bytes());
                 scientific_detail::require(binding->at("execution").at("source_namespace").text()==std::to_string(owner.source_namespace()) &&
-                    binding->at("source_cutoff").integer()==owner.publication_history()->last_sequence(),
+                    binding->at("source_cutoff").integer()==rfc::numeric::Integer(std::to_string(owner.publication_history()->last_sequence())),
                     "trajectory derived source identity binding differs");
                 const auto grades=binding->at("grades");
                 for(std::size_t k=0;k<owner.endpoint()->source.grade_count();++k) {
                     const auto grade=grades.at(k);const auto carrier=grade.at("producer_carrier").integer();
-                    const auto found=std::find_if(owner.endpoint()->carriers.begin(),owner.endpoint()->carriers.end(),[&](const auto &c){return c.key==carrier;});
+                    const auto found=std::find_if(owner.endpoint()->carriers.begin(),owner.endpoint()->carriers.end(),[&](const auto &c){return rfc::numeric::Integer(std::to_string(c.key))==carrier;});
                     scientific_detail::require(found!=owner.endpoint()->carriers.end() && found->kind==rfc::storage::TemporalCarrierKind::SourceGrade &&
                         found->grade.value==k && found->domain.logical_size()==grade.at("source_coordinates").size(),
                         "trajectory producer grade carrier differs");

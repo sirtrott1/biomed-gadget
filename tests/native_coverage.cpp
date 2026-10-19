@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <gadget/record_view.hpp>
 #include <iostream>
+#include <limits>
 #include <rfc/field/boundary.hpp>
 #include <rfc/storage/file_io.hpp>
 
@@ -160,5 +161,25 @@ int main(int argc, char **argv) {
     features.write(root / "annotation.rfcxs");
     check(NativeRecord::read(root / "annotation.rfcxs").encode() == features.encode(),
           "annotation original owner roundtrip differs");
+    const ResourceImage wide_intervals{
+        Json::parse(R"({"reference":{"assembly":"fixture","sequence_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000","coordinate_convention":"zero_based_half_open","contigs":[{"id":"chr","length":9223372036854775807}]},"format":"bed","weight_column":4})"),
+        "chr\t9007199254740993\t9007199254740997\tfirst\t1\t+\n"
+        "chr\t9223372036854775803\t9223372036854775807\tlast\t0\t+\n", {}};
+    auto wide_source = interval_fields_source(wide_intervals, interval_request);
+    const auto wide = NativeRecord::create_from_endpoint(
+        std::move(wide_source.declaration), std::numeric_limits<std::uint64_t>::max() - 1,
+        std::move(wide_source.sources), std::move(wide_source.endpoint));
+    check(field(wide, key(wide.at("record_start"))).values().dense() ==
+              Vector({Rational("9007199254740993"), Rational("9223372036854775803")}) &&
+              field(wide, key(wide.at("record_end"))).values().dense() ==
+              Vector({Rational("9007199254740997"), Rational("9223372036854775807")}),
+          "wide original coordinates lost integer precision");
+    check(wide.at("coverage_integral").rational() == 4,
+          "wide interval coverage integral changed");
+    wide.write(root / "wide.rfcxs");
+    const auto wide_restored = NativeRecord::read(root / "wide.rfcxs");
+    check(wide_restored.source_namespace() == std::numeric_limits<std::uint64_t>::max() - 1 &&
+              wide_restored.encode() == wide.encode(),
+          "wide native namespace or coordinate roundtrip changed");
     std::cout << "Native coverage ownership, fields, support, original bytes and replay PASS\n";
 }

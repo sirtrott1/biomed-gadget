@@ -9,7 +9,11 @@
 #include <rfc/storage/mapped_file.hpp>
 #include <rfc/storage/native_series_prefix.hpp>
 #include <set>
+#if defined(__APPLE__)
+#include <unistd.h>
+#else
 #include <sys/random.h>
+#endif
 #include <tuple>
 
 namespace gadget {
@@ -637,6 +641,11 @@ NativeRecordValue NativeRecord::copy_value(const std::map<std::uint64_t,std::uin
 std::uint64_t new_native_record_namespace() {
     std::uint64_t key{};
     do {
+#if defined(__APPLE__)
+        int status;
+        do { status=getentropy(&key,sizeof key); } while(status<0 && errno==EINTR);
+        if(status<0)throw std::runtime_error("native namespace allocation failed");
+#else
         auto *p=reinterpret_cast<std::byte *>(&key);std::size_t position{};
         while(position<sizeof key) {
             const auto n=getrandom(p+position,sizeof key-position,0);
@@ -644,6 +653,7 @@ std::uint64_t new_native_record_namespace() {
             if(n<=0)throw std::runtime_error("native namespace allocation failed");
             position+=static_cast<std::size_t>(n);
         }
+#endif
     }while(!key || key==format_namespace);
     return key;
 }

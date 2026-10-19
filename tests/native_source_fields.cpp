@@ -29,7 +29,7 @@ bool mutate_value(NativeRecordValue &value, std::string_view name,
 const TemporalTensor &tensor(const NativeRecord &owner, const NativeRecord &reference) {
     const auto key = reference.at("tensor").integer();
     for (const auto &field : owner.endpoint()->tensors)
-        if (field.key == key) return field;
+        if (rfc::numeric::Integer(std::to_string(field.key)) == key) return field;
     throw std::runtime_error("source result tensor absent");
 }
 void verify(const NativeRecord &result, const ScientificStudy &study, const NativeRecord &query) {
@@ -51,8 +51,8 @@ void verify(const NativeRecord &result, const ScientificStudy &study, const Nati
         const auto pin = study.field_accession(query.at("field").text());
         const auto &input = *pin.tensor_declaration();
         check(binding.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
-                  binding.at("cutoff").integer() == pin.sequence() &&
-                  binding.at("carrier").integer() == *input.output &&
+                  binding.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(pin.sequence())) &&
+                  binding.at("carrier").integer() == rfc::numeric::Integer(std::to_string(*input.output)) &&
                   temporal_endpoint_detail::tensor_equal(tensor(fields, binding.at("input")), input),
               "coverage producer identity, carrier or cutoff changed");
         check(view.at("observations").size() == input.tensor.domain().logical_size(),
@@ -80,8 +80,8 @@ void verify(const NativeRecord &result, const ScientificStudy &study, const Nati
                 const auto identity = binding.at("occurrences").at(selected);
                 const auto occurrence = view.at("occurrences").at(selected++);
                 check(identity.at("grade").integer() == k && identity.at("slot").integer() == slot &&
-                          identity.at("key").integer() == arena.occurrence_identities[slot].value &&
-                          identity.at("upper").integer() == upper.key && identity.at("lower").integer() == lower.key,
+                          identity.at("key").integer() == rfc::numeric::Integer(std::to_string(arena.occurrence_identities[slot].value)) &&
+                          identity.at("upper").integer() == rfc::numeric::Integer(std::to_string(upper.key)) && identity.at("lower").integer() == rfc::numeric::Integer(std::to_string(lower.key)),
                       "provenance occurrence identity or ordered source slot differs");
                 const auto coefficient = original.endpoint()->source.incidence_coefficient(grade, slot);
                 check(tensor(fields, occurrence.at("coefficient")).tensor.state(0) == coefficient &&
@@ -269,7 +269,7 @@ int main(int argc, char **argv) try {
                       evidence.at("result").at("contradicted").integer() == (scenario == 1 ? 1 : 0),
                   "prospective literal claim replaced an actual native count");
             check(evidence.at("request").at("source_namespace").text() == std::to_string(measured.source_namespace()) &&
-                      evidence.at("request").at("cutoff").integer() == measured.publication_history()->last_sequence(),
+                      evidence.at("request").at("cutoff").integer() == rfc::numeric::Integer(std::to_string(measured.publication_history()->last_sequence())),
                   "prospective claims did not resolve the actual native owner and cutoff");
         }
         bool retained = false;

@@ -287,7 +287,7 @@ ScientificFacts::ScientificFacts(const NativeRecord &operation, const NativeReco
             "native facts request schema/namespace mismatch");
     const auto history = operation.publication_history();
     require(history.has_value() && request.at("cutoff").kind() == NativeRecordKind::Integer &&
-                request.at("cutoff").integer() == history->last_sequence(),
+                request.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(history->last_sequence())),
             "native facts request cutoff mismatch");
     const auto result = operation.at("result");
     const auto schema = result.at("schema").text();
@@ -331,7 +331,7 @@ ScientificFacts::ScientificFacts(const NativeRecord &operation, const NativeReco
             if (selected.has("schema") && selected.at("schema").text() == "gadget.workflow.publication.v1") {
                 const auto owner = NativeRecord::decode(selected.at("publication").bytes());
                 require(selected.at("source_namespace").text() == std::to_string(owner.source_namespace()) &&
-                            selected.at("cutoff").integer() == owner.publication_history()->last_sequence(),
+                            selected.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(owner.publication_history()->last_sequence())),
                         "native workflow reference owner mismatch");
                 selected = owner;
             }

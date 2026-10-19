@@ -887,7 +887,7 @@ NativeRecordValue ScientificStudy::State::catalog_value(std::vector<RawByteSourc
             else {
                 std::uint64_t key = 1;
                 for (const auto &candidate : sources)
-                    key = std::max(key, rfc::machine::checked_size_add(candidate.key(), 1));
+                    key = std::max<std::uint64_t>(key, rfc::machine::checked_size_add(candidate.key(), 1));
                 sources.push_back(raw.rekey(key)); byte_map.emplace(raw.key(), key);
             }
         }

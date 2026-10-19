@@ -235,7 +235,7 @@ AssayFieldsSource feature_count_fields_source(const ResourceImages &images, cons
     };
     for (const auto *name : {"mate", "class_index"})
         segment_fields.members.emplace_back(name, column(segments.size(), [&](auto i) {
-                                                return Rational(segments.at(i).at(name).integer());
+                                                return Rational(std::to_string(segments.at(i).at(name).integer()));
                                             }));
     std::vector<std::size_t> starts, lengths, record_starts, record_lengths;
     Vector source_records, group_ids;
@@ -253,7 +253,7 @@ AssayFieldsSource feature_count_fields_source(const ResourceImages &images, cons
         record_starts.push_back(source_records.size());
         record_lengths.push_back(records.size());
         for (std::size_t j = 0; j < records.size(); ++j)
-            source_records.emplace_back(records.at(j).integer());
+            source_records.emplace_back(std::to_string(records.at(j).integer()));
     }
     segment_fields.members.emplace_back("query_name_offset", column(starts.size(), [&](auto i) {
                                             return Rational(std::to_string(starts[i]));
@@ -281,7 +281,7 @@ AssayFieldsSource feature_count_fields_source(const ResourceImages &images, cons
                                           if (std::string_view(name) == "eligible")
                                               return Rational(value.boolean());
                                           if (std::string_view(name) == "source_record_index")
-                                              return Rational(value.integer());
+                                              return Rational(std::to_string(value.integer()));
                                           return exact_rational(value.text());
                                       }));
     overlaps.members.emplace_back(
@@ -295,7 +295,7 @@ AssayFieldsSource feature_count_fields_source(const ResourceImages &images, cons
                                       }));
     const auto excluded = evidence.at("excluded_record_indices");
     N exclusions =
-        column(excluded.size(), [&](auto i) { return Rational(excluded.at(i).integer()); });
+        column(excluded.size(), [&](auto i) { return Rational(std::to_string(excluded.at(i).integer())); });
     auto identity = Json::object();
     for (const auto *name :
          {"schema", "source_digest", "arithmetic", "gadget_sha256", "rexgraph_sha256"})

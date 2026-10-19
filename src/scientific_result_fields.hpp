@@ -81,7 +81,7 @@ class ResultFields {
         // Existing declarations and numerical fields stay with their immutable
         // source owner. Preparation only allocates the new result fields.
         for (const auto &tensor : source_.endpoint()->tensors)
-            fields_.next_key = std::max(fields_.next_key, rfc::machine::checked_size_add(tensor.key, 1));
+            fields_.next_key = std::max<std::uint64_t>(fields_.next_key, rfc::machine::checked_size_add(tensor.key, 1));
     }
     std::uint64_t axis(std::size_t size) {return fields_.explicit_carrier(size);}
     std::uint64_t stalk(rfc::storage::StableCellKey cell, std::size_t size) {
@@ -98,9 +98,9 @@ class ResultFields {
     std::uint64_t next_source_key() const {
         std::uint64_t key = 1;
         for (const auto &bytes : source_.raw_sources())
-            key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+            key = std::max<std::uint64_t>(key, rfc::machine::checked_size_add(bytes.key(), 1));
         for (const auto &bytes : publications_)
-            key = std::max(key, rfc::machine::checked_size_add(bytes.key(), 1));
+            key = std::max<std::uint64_t>(key, rfc::machine::checked_size_add(bytes.key(), 1));
         return key;
     }
     ResultValue publication(const NativeRecord &owner) {

@@ -150,7 +150,8 @@ scientific_detail::LocalSectionAnalysis scientific_detail::analyze_local_section
         const auto item = records.at(i);
         const storage::StableCellKey key_{{static_cast<std::uint16_t>(item.at("grade").integer())}, key(item.at("key"))};
         const auto cell = *index.cell(key_);
-        const auto size = fibers.stalks().dimension(cell), axis = publication->stalk(key_, size);
+        const auto size = fibers.stalks().dimension(cell);
+        const auto axis = publication->stalk(key_, size);
         stalk_axes.emplace(key_, axis);
         auto declared_stalk = Value(item);
         declared_stalk.set("carrier", Value::count(axis));

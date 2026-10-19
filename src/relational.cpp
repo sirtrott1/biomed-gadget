@@ -247,7 +247,7 @@ void run_relational_audit(const fs::path &input, const fs::path &output, std::si
         auto a = artifacts.at(i);
         fs::path path(a.at("path").text());
         require(!path.is_absolute() && !path.empty(), "artifact relative path");
-        for (auto &part : path)
+        for (const auto &part : path)
             require(part != "..", "artifact path escape");
         auto resolved = fs::canonical(input.parent_path() / path),
              root = fs::canonical(input.parent_path());

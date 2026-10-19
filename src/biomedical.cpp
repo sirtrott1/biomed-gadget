@@ -842,7 +842,8 @@ NativeRecord EvidenceStore::bind_reported_field(const ScientificStudy &study,
     std::uint64_t next = 1;
     for (const auto source_key : NativeRecord::source_keys(*state_->publication.endpoint()))
         next = rfc::machine::checked_size_add(std::max(next, source_key), 1);
-    const auto study_key = next, field_key = rfc::machine::checked_size_add(next, 1);
+    const auto study_key = next;
+    const auto field_key = rfc::machine::checked_size_add(next, 1);
     sources.push_back(publication.archive_source(study_key));
     sources.push_back(publication.historical_publication(pin.sequence()).archive_source(field_key));
     const auto study_bytes = sources.at(0).bytes().size(), field_bytes = sources.at(1).bytes().size();

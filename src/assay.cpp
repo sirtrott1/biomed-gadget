@@ -2801,7 +2801,7 @@ NativeRecord AssayWorkspace::execute_structured(
         const auto &base = original->native_publication();
         std::uint64_t next = 1;
         for (const auto &source : base.raw_sources())
-            next = std::max(next, rfc::machine::checked_size_add(source.key(), 1));
+            next = std::max<std::uint64_t>(next, rfc::machine::checked_size_add(source.key(), 1));
         auto section_bytes = complete.archive_source(next);
         const auto section_size = section_bytes.bytes().size();
         auto workspace =

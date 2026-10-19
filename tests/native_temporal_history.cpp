@@ -11,7 +11,7 @@ std::size_t checks{};
 void check(bool value,const char *message) {++checks;if(!value)throw std::runtime_error(message);}
 const rfc::storage::TemporalTensor &tensor(const NativeRecord &owner,const NativeRecord &reference) {
     const auto key=reference.at("tensor").integer();
-    for(const auto &field:owner.endpoint()->tensors)if(field.key==key)return field;
+    for(const auto &field:owner.endpoint()->tensors)if(rfc::numeric::Integer(std::to_string(field.key))==key)return field;
     throw std::runtime_error("history field absent");
 }
 Vector values(const NativeRecord &owner,const NativeRecord &reference) {
@@ -50,9 +50,9 @@ void verify(const NativeRecord &operation,const ScientificStudy &study) {
         std::vector<NativeRecord> retained{endpoint.at("input")};for(std::size_t i=0;i<inputs.size();++i)retained.push_back(inputs.at(i));
         for(const auto &input:retained) {
             const auto pin=original_study.field_accession(input.at("id").text());
-            check(input.at("source_namespace").text()==std::to_string(pin.source_namespace())&&input.at("source_cutoff").integer()==pin.sequence(),"history producer cutoff changed");
+            check(input.at("source_namespace").text()==std::to_string(pin.source_namespace())&&input.at("source_cutoff").integer()==rfc::numeric::Integer(std::to_string(pin.sequence())),"history producer cutoff changed");
             const auto descriptor=pin.descriptor();
-            check(input.at("source_tensor").integer()==descriptor.request().subject,"history original tensor changed");
+            check(input.at("source_tensor").integer()==rfc::numeric::Integer(std::to_string(descriptor.request().subject)),"history original tensor changed");
             const auto lift=rfc::storage::temporal_tensor_matrix(tensor(fields,input.at("realization")));
             check(lift.cols()==pin.tensor()->domain().logical_size()&&lift.rows()==values(fields,input.at("execution_values")).size(),"history realization carrier changed");
             const auto &reported=tensor(fields,input.at("reported_values")).tensor;

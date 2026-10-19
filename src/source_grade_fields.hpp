@@ -22,12 +22,12 @@ struct SourceGradeFields {
     std::uint64_t next_key{1};
     explicit SourceGradeFields(rfc::storage::TemporalEndpoint &source) : endpoint(source) {
         for (const auto &tensor : endpoint.tensors)
-            next_key = std::max(next_key, rfc::machine::checked_size_add(tensor.key, 1));
+            next_key = std::max<std::uint64_t>(next_key, rfc::machine::checked_size_add(tensor.key, 1));
     }
     std::uint64_t explicit_carrier(std::size_t size) {
         std::uint64_t key = 1;
         for (const auto &carrier : endpoint.carriers)
-            key = std::max(key, rfc::machine::checked_size_add(carrier.key, 1));
+            key = std::max<std::uint64_t>(key, rfc::machine::checked_size_add(carrier.key, 1));
         endpoint.carriers.push_back({key, rfc::storage::TemporalCarrierKind::Explicit,
                                      {}, {}, key, rfc::numeric::IndexDomain::linear(size)});
         return key;

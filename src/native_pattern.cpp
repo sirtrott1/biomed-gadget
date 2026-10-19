@@ -359,7 +359,7 @@ NativeRecord NativePatternModel::execute_record(std::shared_ptr<const Scientific
     view.set("model_declaration",controls(state_->declaration));
     const auto result = fields.finish(std::move(view));
     auto source_bytes = source->native_publication().archive_source(1), model_bytes = state_->publication.archive_source(2);
-    std::uint64_t next = 1; for (const auto &bytes : result.raw_sources()) next = std::max(next,machine::checked_size_add(bytes.key(),1));
+    std::uint64_t next = 1; for (const auto &bytes : result.raw_sources()) next = std::max<std::uint64_t>(next,machine::checked_size_add(bytes.key(),1));
     source_bytes = source_bytes.rekey(next); const auto source_key = next; next = machine::checked_size_add(next,1);
     model_bytes = model_bytes.rekey(next);
     N body(N::Object{{{"schema",N(std::string("gadget.pattern.result.fields.v1"))},

@@ -68,7 +68,7 @@ void persistence(const AssayWorkspace &workspace, const NativeRecord &request,
               "independent stage namespace collapsed by equal dimensions");
         const auto binding = fields.at("bindings").at(t);
         check(binding.at("source_namespace").text() == std::to_string(stage.source_namespace()) &&
-                  binding.at("cutoff").integer() == stage.publication_history()->last_sequence(),
+                  binding.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(stage.publication_history()->last_sequence())),
               "stage publication binding lost namespace or cutoff");
         algebra::SubcomplexMask mask(original.endpoint()->source);
         for (std::size_t k = 0; k < births.size(); ++k)
@@ -92,7 +92,7 @@ void persistence(const AssayWorkspace &workspace, const NativeRecord &request,
                       field(stage, grade.at("cycle_frame")).input == witness.at("cycle_carrier").integer().get_ui(),
                   "stage cycle frame lost authentic source carrier");
             const auto source_carrier = std::find_if(stage.endpoint()->carriers.begin(), stage.endpoint()->carriers.end(),
-                [&](const auto &axis) { return axis.key == axes.at("source_carrier").integer(); });
+                [&](const auto &axis) { return rfc::numeric::Integer(std::to_string(axis.key)) == axes.at("source_carrier").integer(); });
             check(source_carrier != stage.endpoint()->carriers.end() &&
                       source_carrier->kind == storage::TemporalCarrierKind::SourceGrade && source_carrier->grade.value == k &&
                       source_carrier->domain.logical_size() == births[k].size() -

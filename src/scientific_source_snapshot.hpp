@@ -22,7 +22,7 @@ inline SourceSnapshotPublication source_snapshot_publication(
     auto sources = original.raw_sources();
     std::uint64_t archive_key = 1;
     for (const auto &bytes : sources)
-        archive_key = std::max(archive_key, rfc::machine::checked_size_add(bytes.key(), 1));
+        archive_key = std::max<std::uint64_t>(archive_key, rfc::machine::checked_size_add(bytes.key(), 1));
     auto archive = original.archive_source(archive_key);
     const auto archive_size = archive.bytes().size();
     sources.push_back(std::move(archive));
