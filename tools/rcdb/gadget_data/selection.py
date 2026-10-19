@@ -154,7 +154,11 @@ class FieldSelection:
             "dependencies": self.dependencies, "parent": self.parent})
 
     def tensor(self):
-        """Bind a fully observed selection to its actual native row carrier."""
+        """Return an exact field on the selected rows and declared column space.
+
+        Missing coordinates require a declared missing data operation first.
+        Publish and retrieve the selection to use it as a versioned query input.
+        """
         from rexgraph.chain_map import CoordinateComplex
         from rexgraph.tensor_field import FieldSource, TensorField
         from rexgraph.type_accession import CoordinateSpace

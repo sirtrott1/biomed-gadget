@@ -6,7 +6,7 @@
 #include <rfc/field/exact_hodge.hpp>
 
 namespace gadget {
-// Owns every object referenced by RexGraph's non owning operator facades.
+// Keep the source, metrics and resource reservations alive for prepared operators.
 class Execution {
     std::string source_digest_;
     std::unique_ptr<rfc::core::RelationalComplex> complex_;
@@ -47,8 +47,8 @@ rfc::approximation::Vector approximate_values(const Vector &value);
 rfc::approximation::DenseMatrix cross_relation_gram(const Execution &left, const Execution &right);
 Vector union_field(const Workspace &source, const std::string &channel);
 Json execute_query(const Workspace &source, const Json &query);
-// One immutable native study; preparation never crosses publication identities.
-// Calls on one session serialize. Independent sessions have private preparation.
+// Reuse prepared operations for one immutable study. Calls on a session serialize;
+// a different study requires its own session and preparation.
 class QuerySession {
     struct State;
     std::unique_ptr<State> state_;

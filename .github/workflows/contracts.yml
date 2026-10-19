@@ -60,7 +60,7 @@ jobs:
       SDK_SHA256: ${{ vars.REXGRAPH_ARCHIVE_SHA256 }}
       SDK_REPOSITORY: ${{ vars.REXGRAPH_ARCHIVE_REPOSITORY }}
       SDK_MODE: ${{ vars.REXGRAPH_SDK_MODE || 'source' }}
-      SDK_SOURCE_REPOSITORY: ${{ vars.REXGRAPH_SOURCE_REPOSITORY || 'sirtrott1/rexgraphcpp' }}
+      SDK_SOURCE_REPOSITORY: ${{ vars.REXGRAPH_SOURCE_REPOSITORY || 'sirtrott1/rexgraph-cpp' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

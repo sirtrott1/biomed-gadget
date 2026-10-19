@@ -1,10 +1,16 @@
 # Native data and declared processing
 
+Native calculations need the source that gives their coefficients meaning.
+The C++ interface retains that source with its fields, byte provenance and
+operation declarations. An input can therefore be inspected or replayed after
+the wrapper that admitted it has been destroyed.
+
 The `gadget::native` CMake target provides `<gadget/native_data.hpp>`,
-`<gadget/native_record.hpp>` and `<gadget/native_gluing.hpp>`. Its execution and linkage do not depend on JSON.
-RexGraph owns the relational complex, tensor fields, declaration registry,
-binary codecs, prepared mathematical actions and machine programs. GADGET
-binds original data bytes and coordinates admitted work.
+`<gadget/native_record.hpp>` and `<gadget/native_gluing.hpp>`. It uses RexGraph's
+relational complexes, fields, codecs and prepared operations. GADGET binds
+original bytes and coordinates the declared work. This target does not require
+JSON. For file intake, paged exploration and selected dataset materialization,
+use the [Python data API](../../tools/rcdb/DATA.md).
 
 `NativeStudy::read(path)` detects RFCXS and RFCX from their canonical byte
 signatures, regardless of file extension. RFCXS supplies its actual namespace;
@@ -79,8 +85,9 @@ provenance, immutable ownership, native byte detection/refusals and complete
 binary gluing replay. It writes RFCXS and RFCXA examples in its output directory:
 
 ```sh
-cmake --build build --target gadget_native_data_tests
-build/gadget_native_data_tests "native example"
+cmake --preset contracts
+cmake --build --preset contracts --target gadget_native_data_tests
+build/presets/cpu/gadget_native_data_tests "native example"
 ```
 
 `NativeStudy::from_history(history, sources, cutoff)` selects an immutable

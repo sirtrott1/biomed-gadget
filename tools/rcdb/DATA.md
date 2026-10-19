@@ -1,10 +1,16 @@
 # Native data I/O
 
-`gadget_data` separates immutable original files, native working records and
-selected mathematical owners. Core supplies typed arrays and relational
-complexes. RCDB supplies storage, record envelopes and versions. RCQL supplies
-query execution. GADGET supplies source declarations, coordinate maps and
-materialization into its native publications.
+A matrix file gives values a physical layout, but an analysis also needs to know
+which samples and features those values describe, what is missing and where each
+record came from. `gadget_data` retains those declarations in native records.
+Original files remain immutable provenance; calculations read the fields and
+coordinates they need from the working store.
+
+Core supplies typed arrays and relational complexes. RCDB stores records and
+their versions. RCQL selects records and executes declared programs. GADGET
+binds these operations to source identities, coordinate maps and biomedical
+measurement meanings. A dataset may span many bounded records while keeping its
+complete logical axes and dependencies.
 
 Install the matching RexGraph packages described in [README.md](README.md),
 then install this adapter in the same environment:
@@ -59,9 +65,10 @@ with DataStore("counts.native") as data:
     field = selected.tensor()
 ```
 
-Catalogs and provenance queries open administrative index pages, without
-decoding numerical field blocks. Selected reads open overlapping native blocks
-and axis records. Original ordinals identify rows and columns. Repeated labels
+Exploration starts with the catalog and provenance. These queries read index
+pages without decoding numerical fields. A selection then opens the field blocks
+and axis records that overlap its coordinates. This keeps physical loading
+separate from the scientific scope of the dataset. Original ordinals identify rows and columns. Repeated labels
 remain separate coordinates. Field and dataset identities prevent equal
 dimensions from identifying independent carriers. Every dependency records its
 actual store, record, version and state digest.

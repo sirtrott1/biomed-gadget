@@ -6,12 +6,14 @@ axes and retained native calculation programs. Install it with
 `python -m pip install ./tools/rcdb` after installing the matching providers.
 It also installs `gadget_rcdb` for complete publication compatibility.
 
-`gadget_rcdb.py` connects the RexGraph Python packages to GADGET's compiled
-application and native publication reader. It imports Core, RCDB and RCQL from
-the active Python environment and uses their format, storage and query
-interfaces. Native GADGET analysis and replay run through the compiled GADGET
-executable. The adapter does not install dependencies or implement their storage
-codecs.
+There are two storage interfaces. `gadget_data` publishes datasets in bounded
+records so queries can retrieve selected fields. `gadget_rcdb` stores a complete
+RFCXS publication as one native record for version selection and replay. Choose
+that interface when the complete archive fits the declared record budget.
+
+Both use Core, RCDB and RCQL from the active Python environment. The compiled
+GADGET executable admits complete publications and runs GADGET analysis and
+replay. RexGraph supplies the format, storage and query implementations.
 
 The independent `rexgraph_cpp` bindings expose C++ SDK operations to Python.
 Their source is in the top level `rexgraph_cpp/` directory of `rexgraph-python`;
@@ -30,8 +32,11 @@ The qualified CPython 3.14 Linux x86_64 profile is recorded in
 [`requirements.lock`](requirements.lock). It selects six exact independent
 wheels: RexGraph core, native bindings, RCDB, RCQL, Agent and System. Core,
 RCDB, RCQL, Agent and System use version 1.3.2; the bridge uses version 0.1.0.
-Obtain the matching wheels from the independent
-RexGraph distribution and install them in a dedicated environment:
+Use the [source installation](../../DEPENDENCIES.md#install-from-source) for
+the public GitHub repositories. The lock file instead checks the exact recorded
+wheel artifacts when those files are available; rebuilding the same source can
+produce different wheel bytes. Install matching artifacts in a dedicated
+environment:
 
 ```sh
 python3.14 -m venv .venv-rcdb
@@ -97,15 +102,15 @@ history remain in the C++ format. Admission invokes GADGET's native reader and
 requires byte identical canonical re encoding. RCDB provides version selection,
 integrity binding and durable storage through its existing record engine.
 
-Add this directory to the application's Python module path. With GADGET and
-RCDB installed:
+After installing the adapter and RCDB in the same environment, use the compiled
+GADGET executable to admit complete publications:
 
 ```python
 from rcdb import LocalStore
 from rcdb.header import BlobCodecSpec, DEFAULT_RECORD_CODECS
 from gadget_rcdb import install_codec, put_publication, read_publication
 
-codec = install_codec(gadget="/absolute/path/to/gadget", max_bytes=your_byte_budget)
+codec = install_codec(gadget="/absolute/path/to/gadget", max_bytes=256 * 1024 * 1024)
 store = LocalStore("experiment.rcdb", compression=BlobCodecSpec(name="zstd"),
                    record_codecs=(*DEFAULT_RECORD_CODECS, codec))
 try:
@@ -116,7 +121,8 @@ finally:
     store.close()
 ```
 
-`max_bytes` is supplied by the caller. The installed RCDB `RecordCodec` applies
+The example admits archives up to 256 MiB. `max_bytes` is supplied by the caller.
+The installed RCDB `RecordCodec` applies
 its own admission bounds. Archives outside that profile remain ordinary native
 RFCXS files; this adapter does not partition a complex to satisfy a store limit.
 The example selects RCDB's existing lossless Zstandard compression and requires

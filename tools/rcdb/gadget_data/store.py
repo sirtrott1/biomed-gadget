@@ -87,10 +87,11 @@ class SourceResolver:
 
 
 class DataWriter:
-    """Publish a complete dataset atomically through the canonical providers.
+    """Publish bounded native records, then seal the complete dataset catalog.
 
-    A failed intake leaves no public dataset. Each native record is bounded;
-    field values stay in typed native arrays and source containers stay external.
+    Use as a context manager so a failed intake removes its unpublished staging
+    store. Source containers remain external; fields retain typed values, support
+    and addresses of the original records.
     """
     def __init__(self, output, *, name, limits=None, parents=(), backend="sqlite"):
         from .catalog import WriteIndex
@@ -487,7 +488,11 @@ class DataWriter:
 
 
 class DataStore:
-    """Open only a sealed catalog; decode mathematical blocks on selection."""
+    """Open a sealed catalog and load field blocks when a selection needs them.
+
+    Metadata uses a bounded cache. Numerical blocks are not cached. Every read
+    checks the retained store, record version and state digest.
+    """
     def __init__(self, path, *, limits=None, dataset=None):
         from collections import OrderedDict
         from .catalog import Entries
@@ -521,7 +526,10 @@ class DataStore:
             raise
 
     def read(self, reference):
-        """Validate address, version and state before returning a native owner."""
+        """Return the recorded native owner after checking its address and identity.
+
+        A missing record or a different version, store or digest refuses the read.
+        """
         if reference["store_id"] != self.store.store_id:
             raise ValueError("foreign native store reference")
         row = next((row for row in self.store.history(reference["id"])

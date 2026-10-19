@@ -31,7 +31,11 @@ def record_link(store, reference):
 
 
 def resolve_link(link, stores):
-    """Resolve through admitted stores; never open a path from a query record."""
+    """Restore a pinned owner through the caller's admitted dataset stores.
+
+    Dataset, record and owner identities must match. Paths contained in stored
+    declarations do not authorize opening additional stores.
+    """
     check_link(link)
     store = stores[link["dataset"]["dataset"]]
     if store.reference != link["dataset"]:
@@ -166,7 +170,11 @@ def restore_record(owner, *, datasets=(), limits=None):
 
 
 def field_program(reference, *, relation_family=False):
-    """Build a version pinned native field query and optional complete exact family."""
+    """Build an RCQL program that retrieves the recorded field version.
+
+    With relation_family=True, append the provider's complete exact family
+    construction. Execution requires the original dataset and owner bindings.
+    """
     import json
     from rcql import OutputRef, Program, ProgramInput, ProgramStep, parse
     identifier = json.dumps(reference["id"])
