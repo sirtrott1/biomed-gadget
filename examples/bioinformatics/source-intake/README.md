@@ -1,14 +1,17 @@
-# Complete source admission
+# Source intake
 
-Import a declared table with its field meanings, coordinate identities and observation support. Original bytes remain provenance for the working native records.
+This runner exercises strict table and evidence admission with configurable
+record, column, category and response counts. It queries the admitted fields,
+coverage and source evidence after import. Original bytes remain available
+for resolving the numerical values and categorical assertions.
 
-The example runner describes its required inputs and output directory:
+Choose fixture sizes and a new output directory with:
 
 ```sh
 python3 examples/bioinformatics/source-intake/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+The generated inputs exercise admission behavior; their sizes are not limits
+on supported scientific populations. For ordinary dataset intake, start with
+[Python data tools](../../../tools/rcdb/README.md) or the
+[assay workspace guide](../README.md).

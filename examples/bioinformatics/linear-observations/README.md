@@ -1,14 +1,17 @@
-# Linear observations of operator responses
+# Linear response observations
 
-Declare observation maps on an existing source carrier and compare their resulting fields. Matching dimensions do not establish identity between independent sources.
+`linear_response_observation` applies an observation map to an operator
+response on a declared source carrier. The source operator, accession map,
+observation map and metrics are supplied explicitly. The calculation can act
+on the requested fields without constructing a full inverse.
 
-The example runner describes its required inputs and output directory:
+The runner creates source publications and compares the reported observations
+with independent expected values. Its producer and input options are:
 
 ```sh
 python3 examples/bioinformatics/linear-observations/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+Equal array dimensions do not identify two independently published carriers.
+Use the source identities and maps in the
+[query declaration](../../../schemas/scientific-query.schema.json).

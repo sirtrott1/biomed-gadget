@@ -1,14 +1,17 @@
-# Reading an admitted biomedical source in pages
+# Reading source records in pages
 
-Process declared source records in bounded reads while preserving occurrence order and support. Source identities remain available in the retained native result.
+An admitted scientific study exposes source cells, occurrences, fields and
+operators through paged views. Each page preserves the selected source
+identities and evidence spans. This runner reassembles the pages and checks
+returned bytes against their original owners.
 
-The example runner describes its required inputs and output directory:
+Use its source and producer options to select the publication:
 
 ```sh
 python3 examples/bioinformatics/source-streaming/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+Paging bounds the returned view. Admission and subsequent mathematical
+operations have their own memory requirements. The [native data guide](../../native-data/README.md)
+describes source ownership, while [dataset selection](../../../tools/rcdb/DATA.md)
+covers bounded reads from working records.

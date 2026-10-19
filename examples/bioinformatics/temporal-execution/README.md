@@ -1,14 +1,17 @@
-# Historical field execution and coupled event observations
+# Historical field execution
 
-Execute ordered scientific queries against declared source versions. The example retains complete fields and the dependencies between successive operations.
+A temporal calculation can select different cutoffs from retained source
+histories and apply a declared coupled observation law. Each endpoint keeps
+its own carrier and field identity. The execution record binds the ordered
+queries to the source versions they used.
 
-The example runner describes its required inputs and output directory:
+This runner requires an explicit history fixture and writes to a new output
+directory:
 
 ```sh
 python3 examples/bioinformatics/temporal-execution/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+[Versioned field histories](../versioned-history/README.md) describe the
+endpoint maps. [Scientific query sequences](../../scientific/README.md) cover
+execution of several requests through one admitted session.

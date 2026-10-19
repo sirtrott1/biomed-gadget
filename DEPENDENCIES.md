@@ -105,7 +105,7 @@ cmake --install build/presets/installed --prefix "$PWD/../gadget-install"
 The final check reads every compiled bridge provider's SDK receipt. Equal
 package versions alone do not establish equal SDK inputs. Add `--services` to
 check Agent and System too. C++ consumers need both installation prefixes in
-`CMAKE_PREFIX_PATH`. See the [C++ installation instructions](include/gadget/README.md#use-from-cmake).
+`CMAKE_PREFIX_PATH`. See the [C++ installation instructions](include/gadget/README.md#cmake).
 
 ## Check the installation
 

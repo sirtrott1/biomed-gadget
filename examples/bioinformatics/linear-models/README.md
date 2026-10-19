@@ -1,14 +1,18 @@
-# Continuous and categorical field comparisons
+# Linear models
 
-Fit and compare declared linear models on supported measurement fields. The native result retains the represented field, residual and complete coefficient family.
+`linear_model_comparison` represents measurement fields using declared
+predictor terms, including products and category indicators. Multiple response
+fields can share the same design. A deficient design retains its coefficient
+family, while estimable contrasts can still have identified values.
 
-The example runner describes its required inputs and output directory:
+This example constructs continuous and categorical comparisons, checks the
+result through a pipeline and verifies that relocation preserves the source
+owners. An optional NumPy benchmark compares numerical fits. Run it with:
 
 ```sh
 python3 examples/bioinformatics/linear-models/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+These field comparisons use the [scientific interface](../../../include/gadget/scientific.hpp).
+Conventional count likelihoods and statistical tests have a separate
+[statistics interface](../../../include/gadget/statistics/README.md).

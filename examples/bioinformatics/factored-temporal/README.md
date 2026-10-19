@@ -1,14 +1,17 @@
-# Complete temporal maps as factors
+# Factored temporal maps
 
-Declare factored interactions over ordered observations. The calculation retains factor fields, their source maps and the resulting temporal fields.
+A temporal query can return its complete map as enumerated coefficients or as
+a composition of native factors. The factored form preserves the map's domain,
+codomain and action while avoiding expansion of the full coefficient array.
 
-The example runner describes its required inputs and output directory:
+This runner executes both `map_output` choices for an existing case containing
+`study.json` and a history query. Its verifier expands the factors and compares
+them with the enumerated result:
 
 ```sh
 python3 examples/bioinformatics/factored-temporal/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+The default query filename is `history-query.json`; `--query` selects another
+file in the case directory. See [field histories](../versioned-history/README.md)
+for publication endpoints and correspondence declarations.

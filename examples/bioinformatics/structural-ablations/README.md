@@ -1,14 +1,17 @@
-# Source relations and field ablations
+# Structural ablations
 
-Compare declared structural omissions on an identified source. Each comparison retains the original and modified structures and the maps between them.
+`source_structure_ablation` compares an original source with specified
+omissions of relation roles and field spans. It retains the modified
+structures, their maps and the resulting field comparisons. This makes each
+omission an inspectable change to the declared source.
 
-The example runner describes its required inputs and output directory:
+The runner can construct an authored case or read a source with a selected
+panel. Its options are:
 
 ```sh
 python3 examples/bioinformatics/structural-ablations/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+An ablation describes the effect of a specified omission within the model;
+it does not by itself identify a biological cause. A declared reference law
+can be added through [structural calibration](../structural-calibration/README.md).

@@ -1,14 +1,18 @@
-# Complete relational Hodge fields
+# Hodge fields
 
-Compute Hodge fields on a declared relational complex. Boundary operators, metrics, original field coordinates and complete sector fields remain explicit.
+`hodge_frame_decomposition` decomposes a field on a selected grade of a
+relational complex using the supplied boundary operators and metrics. The
+output includes the complete sector fields and reconstruction checks in the
+original carrier coordinates.
 
-The example runner describes its required inputs and output directory:
+The runner publishes authored sources and evaluates the decomposition with
+unit or positive metrics. It uses a native source producer alongside the
+GADGET executable:
 
 ```sh
 python3 examples/bioinformatics/hodge-frames/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+The query's publication and source sequence select the actual history being
+analyzed. [Native study declarations](../../native-studies/README.md) describe
+how field quantities, units and metrics are bound to that history.

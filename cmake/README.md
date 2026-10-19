@@ -1,8 +1,9 @@
 # Building GADGET
 
-Run commands from the repository root. The C++ application requires the
-independent RexGraphCPP SDK. Python data tools are optional;
-[DEPENDENCIES.md](../DEPENDENCIES.md) covers the complete stack.
+GADGET builds against the independent RexGraphCPP SDK, either from source or
+from an installed CMake package. The C++ application and library can be built
+without the Python data tools. [DEPENDENCIES.md](../DEPENDENCIES.md) covers
+installation of the complete stack. Run the commands below from the GADGET root.
 
 ## Requirements
 
@@ -29,9 +30,8 @@ build/presets/cpu/gadget --help
 ```
 
 Use `-DREXGRAPH_SOURCE_DIR=/absolute/path/to/rexgraphcpp` for another location.
-The earlier nested path `../rexgraph-cpp/rexgraphcpp` is also detected when the
-default sibling is absent. Local paths can be saved in the ignored
-`CMakeUserPresets.json`.
+The nested layout `../rexgraph-cpp/rexgraphcpp` is also detected when the default
+sibling is absent. Custom paths can be saved in `CMakeUserPresets.json`.
 
 The CPU preset builds the application and data tools. Enable
 `GADGET_BUILD_EXAMPLES=ON` for examples or `BUILD_TESTING=ON` for tests.

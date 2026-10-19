@@ -1,14 +1,18 @@
-# Metric relative change and ordered field pairings
+# Metric relative change
 
-Compare candidate changes using a declared metric, source carrier and observation map. Retain the measured field, selected response and complete native result.
+`metric_relative_novelty` compares fields from two publications through an
+explicit carrier map and a metric on the new source. The original and mapped
+fields remain available alongside the calculated change, so its coordinates
+and scale can be inspected.
 
-The example runner describes its required inputs and output directory:
+The runner checks the calculation independently with rational arithmetic and
+can use an optional declared source. Its required executable and producer
+arguments are:
 
 ```sh
 python3 examples/bioinformatics/metric-novelty/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+A shared label or matching array shape does not provide the comparison map.
+Endpoint and metric declarations follow the
+[scientific query schema](../../../schemas/scientific-query.schema.json).

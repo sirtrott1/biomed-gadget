@@ -1,9 +1,14 @@
 # C++ interface
 
-GADGET exposes biomedical analysis and native data interfaces. RexGraphCPP
-provides the underlying mathematics, fields and formats.
+The public headers declare studies, measurements, analyses and the records used
+to store their results. RexGraphCPP supplies the mathematical objects and
+operators; GADGET binds them to biomedical inputs and coordinates their execution.
 
-## Use from CMake
+`ScientificStudy` holds an admitted study, while `ScientificSession` prepares
+and runs queries against it. `NativeRecord` owns a publication and its history.
+These are the main entry points for applications using the library directly.
+
+## CMake
 
 Install both libraries as described in the [build guide](../../cmake/README.md).
 Pass both installation prefixes in `CMAKE_PREFIX_PATH`, separated by a semicolon.
@@ -24,7 +29,7 @@ target_link_libraries(my_analysis PRIVATE gadget::native)
 
 Source consumers can use `add_subdirectory(path/to/gadget)` and the same targets.
 
-## Interfaces
+## Headers
 
 | Interface | Purpose |
 | --- | --- |

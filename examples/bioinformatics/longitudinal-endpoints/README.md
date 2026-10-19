@@ -1,14 +1,18 @@
 # Longitudinal fields and censored endpoints
 
-Analyze declared longitudinal fields and endpoint support. Event status, censoring and time coordinates remain distinct inputs to the calculation.
+`censored_endpoint_bounds` uses recorded lower and upper event times, endpoint
+closure and finite support to bound event fractions and restricted durations.
+The population, strata and time unit belong to the request. A censored interval
+is retained as an interval rather than replaced with a single event time.
 
-The example runner describes its required inputs and output directory:
+The runner also exercises native temporal histories. It accepts an authored
+case or an explicit endpoint source:
 
 ```sh
 python3 examples/bioinformatics/longitudinal-endpoints/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+These are bounds for the declared observations and population. A fitted
+survival distribution or population confidence statement requires additional
+assumptions. See [field histories](../versioned-history/README.md) for the
+separate temporal correspondence interface.

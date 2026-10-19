@@ -1,5 +1,9 @@
 # Tools
 
+These tools support data preparation, dependency inspection and source export.
+Dataset adapters describe the interpretation of particular external formats;
+the production library uses general data and analysis operations.
+
 | Task | Tool or guide |
 | --- | --- |
 | Import, explore and select native datasets | [Python data tools](rcdb/README.md) |
@@ -7,10 +11,6 @@
 | Check a build's SDK inputs | `check_dependency.py` |
 | Check a local model build's llama.cpp inputs | `check_llama_dependency.py` |
 | Export public source and available history | `export_source.py` |
-
-Dataset preparation scripts declare how particular external sources enter
-GADGET. They belong to examples and tools; the production APIs use general
-operations.
 
 ## Source export
 

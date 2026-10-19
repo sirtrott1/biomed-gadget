@@ -226,7 +226,7 @@ coordinates and retain the complete result digest. The full certificate remains
 in the workflow trace. A model's prose observation is not a verified numerical
 claim; literal claims require the existing source bound claim checking interface.
 
-## Qualification and remaining services
+## Capabilities and limits
 
 The [chromatin fragment walkthrough](chromatin-fragments.md) supplies pinned
 public inputs, native requests and complete independent source verification

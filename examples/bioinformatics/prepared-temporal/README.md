@@ -1,17 +1,17 @@
-# Reusing preparations for temporal relational fields
+# Prepared temporal queries
 
-Reuse prepared operators for an ordered sequence of field queries. Each result retains the source version and the maps needed to interpret its coordinates.
-
-A scientific session reuses preparations across queries on the same admitted
-source and declared metrics:
+A `ScientificSession` reuses prepared operators across queries on the same
+admitted study. Each query still declares its source endpoint, fields and
+metrics; preparations are reused only when those inputs agree.
 
 ```cpp
 gadget::ScientificSession session(study);
-auto first = session.execute(query);
-auto second = session.execute(query);
+auto first = session.execute_record(first_query);
+auto second = session.execute_record(second_query);
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+The returned records retain the requests and native result fields. Keep their
+owners alive when accessing field or tensor references. The
+[scientific sequence example](../../scientific/README.md) runs an ordered batch
+through this interface, and the [C++ guide](../../../include/gadget/README.md)
+describes ownership and direct library use.

@@ -1,15 +1,17 @@
 # Statistics and approximation
 
-This module contains conventional statistical methods and numerical analysis
-recipes. Its C++ interface uses `gadget::statistics`; implementations live in
-[`src/statistics`](../../../src/statistics).
+`gadget::statistics` provides conventional statistical methods and numerical
+analysis on GADGET's native fields. Count models use a declared design,
+normalization and dispersion policy. Pathway tests use a declared feature
+universe, mapping and reference law. Results carry the original coordinates,
+support and source records alongside estimates, tests and numerical diagnostics.
 
-Methods consume native sources and retain their coordinates, support and
-provenance. Each method declares its model assumptions. Approximate calculations
-retain their numerical diagnostics. Exact arithmetic can evaluate a statistical
-law exactly without establishing that the law describes the observations.
+The module is separate from the primary exact field and model interfaces. A
+Poisson likelihood or normal reference tail introduces assumptions about the
+observations; exact evaluation of a finite law establishes its arithmetic,
+while its suitability for an experiment remains a scientific choice.
 
-## Available interfaces
+## Interfaces
 
 | Header | Purpose |
 | --- | --- |
@@ -39,5 +41,6 @@ operations, metric moments and finite reference calculations retain their
 [scientific interfaces](../scientific.hpp). Statistical methods call those
 providers when applicable. Numerical kernels remain supplied by RexGraphCPP.
 
-The [count model guide](COUNTS.md) describes the statistical assumptions,
-request choices, retained diagnostics and resource controls.
+The [count model guide](COUNTS.md) covers request choices, assumptions and
+resource controls. The [implementation guide](../../../src/statistics/README.md)
+describes how these interfaces call the numerical and native providers.

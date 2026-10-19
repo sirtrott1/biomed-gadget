@@ -1,14 +1,19 @@
-# Observed count, ordinal and dose response analysis
+# Observed response models
 
-Fit declared response models with explicit measurements, exposures and observation support. The result retains complete fields and reports violations of declared readout ranges.
+`observed_response_model` relates measurement fields to a declared design and
+observation map. Count and exposure measurements, ordered categories and
+measured dose responses use their respective readout meanings. The result
+includes fitted fields, residuals and checks against declared readout ranges.
 
-The example runner describes its required inputs and output directory:
+The example can construct an authored case or use an expression source with
+an explicit panel. Its input and worker options are:
 
 ```sh
 python3 examples/bioinformatics/observed-responses/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+This is the native field response interface. Poisson and negative binomial
+likelihood inference, Wald tests and dispersion estimation are available in
+the separate [count statistics module](../../../include/gadget/statistics/COUNTS.md).
+[Constrained responses](../constrained-responses/README.md) add physical shape
+requirements to the field calculation.

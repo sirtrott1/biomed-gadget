@@ -1,12 +1,15 @@
 # Python data tools
 
-Use `gadget_data` to import scientific data, explore its metadata and retrieve
-selected measurements. Original files remain provenance. Working records retain
-values, coordinates, observation masks and the source versions they came from.
+`gadget_data` imports scientific data into working records, exposes their
+metadata and retrieves selected measurements. A dataset can span many records;
+the import constructs bounded records as it reads the source. Selections retain
+values, original coordinates, observation masks and source versions, while the
+original files remain provenance.
 
-Core provides mathematical objects, RCDB stores versioned records and RCQL
-executes queries. GADGET declares the data meanings and connects these operations
-to the compiled application.
+The package uses Core for mathematical objects, RCDB for versioned storage and
+RCQL for queries. GADGET supplies the declarations of quantities, units and
+source mappings, then passes selected native fields to the compiled application
+when an analysis requires it.
 
 ## Install
 
@@ -80,5 +83,5 @@ python -I tools/rcdb/check_native_stack.py \
 
 Add `--services` when Agent and System are installed. Package version numbers
 alone do not establish equal SDK inputs. Existing models retain their recorded
-engine requirements; [dependency compatibility](../../DEPENDENCIES.md#reproduction-inputs)
+engine requirements; [dependency compatibility](../../DEPENDENCIES.md#dependency-revisions)
 explains replay and runtime preservation.

@@ -1,14 +1,19 @@
-# Declared response transitions
+# Response transitions
 
-Evaluate response fields from declared designs and observation maps. Source identities and field support remain part of the native calculation.
+`declared_response_transition` compares response fields at two source endpoints.
+Each endpoint names its own publication, history cutoff and field. Explicit
+maps relate their carriers, so changes in coordinates and changes in values
+can be interpreted within the same calculation.
 
-The example runner describes its required inputs and output directory:
+The runner constructs source publications, executes the transition and checks
+its terms independently. It requires a GADGET executable and a native source
+producer:
 
 ```sh
 python3 examples/bioinformatics/declared-responses/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+For the endpoint declarations, see the
+[scientific query schema](../../../schemas/scientific-query.schema.json).
+[Field histories](../versioned-history/README.md) extend these comparisons to
+an ordered sequence of publications.

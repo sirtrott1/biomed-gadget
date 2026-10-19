@@ -1,14 +1,17 @@
-# Structural reference calibration
+# Structural calibration
 
-Compare declared structural changes under a specified calibration law. Retain the original structures, observation maps and complete supported calibration fields.
+`structural_reference_calibration` evaluates structural statistics under a
+specified exchange law. The example declares blocked permutations, including
+which field axes move together and which coordinates can exchange within a
+block. The null hypothesis and population remain part of that declaration.
 
-The example runner describes its required inputs and output directory:
+The runner accepts authored measurements or a source and panel:
 
 ```sh
 python3 examples/bioinformatics/structural-calibration/replay.py --help
 ```
 
-Use the [scientific query schema](../../../schemas/scientific-query.schema.json)
-for the declared operations and the [C++ interface](../../../include/gadget/README.md)
-for direct library calls. The [first analysis](../../../README.md#first-analysis)
-shows a complete synthetic query through the command line application.
+The law's exchangeability assumptions must fit the experimental design.
+[Finite calibration](../finite-calibration/README.md) describes the underlying
+finite reference calculation, and [ablations](../structural-ablations/README.md)
+describe the structural comparisons.

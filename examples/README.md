@@ -1,8 +1,13 @@
 # Examples
 
-Choose a guide for the input data or question. Each method declares the
-measurements, source identities and comparison maps it needs. Shared labels
-alone do not establish that two measurements can be compared.
+These examples cover data admission, mathematical analysis and execution through
+the C++ library and command line application. Assay declarations supply the
+meaning of measurements and the correspondence between sources; the same
+scientific operations can then be used across different data types.
+
+For a complete introductory command sequence, start with the
+[synthetic study](../README.md#first-analysis). The guides below describe the
+inputs and assumptions for particular analyses.
 
 ## Data and assays
 
@@ -28,6 +33,8 @@ alone do not establish that two measurements can be compared.
 | Compare complete field realizations | [Field ensembles](bioinformatics/relational-ensembles/README.md) |
 | Check consistency across local views | [Relational gluing](bioinformatics/relational-gluing/README.md) |
 | Calibrate a statistic under an explicit finite law | [Calibration](bioinformatics/finite-calibration/README.md) |
+| Fit Poisson or negative binomial count models | [Count models](../include/gadget/statistics/COUNTS.md) |
+| Test mapped pathway membership | [Pathways](source-formats/ANALYSIS.md) |
 | Compare declared structural omissions | [Ablations](bioinformatics/structural-ablations/README.md) |
 | Analyze longitudinal measurements and censored endpoints | [Longitudinal analysis](bioinformatics/longitudinal-endpoints/README.md) |
 | Follow changes in topology | [Homology diagrams](bioinformatics/homology-diagrams/README.md) |
@@ -40,6 +47,8 @@ alone do not establish that two measurements can be compared.
 - [Python data I/O](../tools/rcdb/DATA.md) covers bounded intake and selected fields.
 - [Source contexts](bioinformatics/source-context/README.md) connect queries and
   annotations to original records.
+- [Native patterns](native_patterns/README.md) restore learned models and execute
+  field queries with their declared input and output frames.
 
 Build examples with `GADGET_BUILD_EXAMPLES=ON`; individual guides name their
 required targets. Downloaded data and local models have separate requirements.
