@@ -68,7 +68,9 @@ intervals. Sampling confidence requires a justified reference law.
 `result` step uses `result_input` to select an earlier native result. Source and
 request hashes remain bound to the operation.
 
-`pathway_overrepresentation` retains released GMT memberships, an explicit
+The [statistics module](../../include/gadget/statistics/README.md) exposes
+`gadget::statistics::pathway_overrepresentation`. Native pipelines select it
+through the `pathway_overrepresentation` operation. It retains released GMT memberships, an explicit
 correspondence table, original feature occurrences, background and tested family.
 It constructs the exact finite intersection law for a uniform subset conditional
 on selection size. Existing finite calibration computes inclusive tails.

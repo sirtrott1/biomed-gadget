@@ -1,11 +1,12 @@
 #include "../src/scientific_result_fields.hpp"
-#include <gadget/execution.hpp>
+#include <gadget/statistics/execution.hpp>
 #include <gadget/snapshot.hpp>
 #include <iostream>
 #include <rfc/storage/rfcx.hpp>
 
 namespace {
 using namespace gadget;
+using gadget::statistics::Execution;
 using namespace rfc;
 using numeric::ExactMatrix;
 std::size_t checks{};
@@ -85,7 +86,7 @@ void context(const NativeRecord &owner, const Workspace &original) {
         for (std::size_t r = 0; r < system.rows(); ++r) for (std::size_t c = 0; c < system.cols(); ++c)
             check(system.get(r,c) == Rational(m1.get(r,c).get_d() + gram.get(r,c).get_d()), "Green assembled system differs");
         const auto diagnostic = solve.at("diagnostic");
-        check(diagnostic.at("absolute_residual").rational() == Rational(norm(residual)) &&
+        check(diagnostic.at("absolute_residual").rational() == Rational(gadget::statistics::norm(residual)) &&
                   diagnostic.at("relative_residual").rational() <= diagnostic.at("tolerance").rational(), "Green residual quantity or bound is not retained exactly");
     }
     for (std::size_t i = 0; i < view.at("exact_checks").size(); ++i) {

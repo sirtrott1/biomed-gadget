@@ -1,12 +1,12 @@
 #include <cmath>
-#include <gadget/execution.hpp>
+#include <gadget/statistics/execution.hpp>
 #include <rfc/algebra/materialize.hpp>
 #include <rfc/core/builder.hpp>
 #include <rfc/numeric/sparse_vector.hpp>
 #include <rfc/machine/checked_size.hpp>
 #include <stdexcept>
 
-namespace gadget {
+namespace gadget::statistics {
 namespace {
 std::size_t dense_bytes(std::size_t rows, std::size_t columns) {
     return rfc::machine::checked_size_mul(rfc::machine::checked_size_mul(rows, columns), sizeof(double));
@@ -223,4 +223,4 @@ Vector union_field(const Workspace &source, const std::string &channel) {
             a[i] = 1;
     return a;
 }
-} // namespace gadget
+} // namespace gadget::statistics

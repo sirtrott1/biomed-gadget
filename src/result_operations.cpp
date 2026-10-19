@@ -2,7 +2,7 @@
 #include "archive_identity.hpp"
 #include <gadget/feature_context.hpp>
 #include <gadget/result_operations.hpp>
-#include <gadget/pathways.hpp>
+#include <gadget/statistics/pathways.hpp>
 #include <gadget/record_view.hpp>
 #include <rfc/runtime/execution_policy.hpp>
 
@@ -40,7 +40,7 @@ NativeRecord execute_result_record(const NativeRecord &analysis,
     }
     NativeRecord result = [&] {
         if (spec.operation == "pathway_overrepresentation")
-            return pathway_overrepresentation(analysis, source, query, resources, stop);
+            return statistics::pathway_overrepresentation(analysis, source, query, resources, stop);
         if (!evidence)
             throw std::invalid_argument(
                 "feature evidence context requires an actual EvidenceStore owner");

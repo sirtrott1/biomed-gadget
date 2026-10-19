@@ -1,5 +1,5 @@
 #pragma once
-#include <gadget/pathways.hpp>
+#include <gadget/statistics/pathways.hpp>
 #include <gadget/record_view.hpp>
 #include <rfc/core/builder.hpp>
 

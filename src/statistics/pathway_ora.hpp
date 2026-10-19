@@ -1,9 +1,9 @@
 #pragma once
-#include "scientific_result_fields.hpp"
+#include "../scientific_result_fields.hpp"
 #include <gadget/io.hpp>
 #include <stop_token>
 
-namespace gadget::pathway_detail {
+namespace gadget::statistics::pathway_detail {
 struct Source {
     std::string id, release, identifier_namespace, sha256;
     std::string mapping_id, mapping_release, mapping_origin, feature_namespace, mapping_sha256;
@@ -24,4 +24,4 @@ Parameters admit_request(const Json &request);
 // rendered molecular result is an input to this application/kernel boundary.
 scientific_detail::ResultValue overrepresentation(const std::vector<std::string> &feature_ids, const Source &source,
                         const Json &request, scientific_detail::ResultFields &fields, std::stop_token stop = {});
-} // namespace gadget::pathway_detail
+} // namespace gadget::statistics::pathway_detail

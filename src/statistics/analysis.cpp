@@ -1,10 +1,10 @@
 #include <gadget/build.hpp>
-#include "scientific_result_fields.hpp"
+#include "../scientific_result_fields.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <gadget/execution.hpp>
+#include <gadget/statistics/execution.hpp>
 #include <gadget/snapshot.hpp>
 #include <set>
 #include <iostream>
@@ -12,7 +12,7 @@
 #include <rfc/statistics/field_moments.hpp>
 #include <sstream>
 
-namespace gadget {
+namespace gadget::statistics {
 namespace {
 std::ostringstream stream() {
     std::ostringstream out;
@@ -666,4 +666,4 @@ void analyze(const Workspace &w, const fs::path &requested) {
         throw std::runtime_error("output destination appeared before commit");
     fs::rename(destination, requested);
 }
-} // namespace gadget
+} // namespace gadget::statistics

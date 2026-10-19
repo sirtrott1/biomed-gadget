@@ -1,5 +1,6 @@
-#include "pathway_ora.hpp"
+#include "statistics/pathway_ora.hpp"
 #include <gadget/pathways.hpp>
+#include <gadget/statistics/pathways.hpp>
 #include <gadget/record_view.hpp>
 #include "scientific_result_fields.hpp"
 #include "pathway_fixture.hpp"
@@ -7,7 +8,8 @@
 #include <iostream>
 
 using namespace gadget;
-using namespace gadget::pathway_detail;
+using namespace gadget::statistics::pathway_detail;
+namespace pathway_detail = gadget::statistics::pathway_detail;
 namespace {
 std::size_t checks{};
 void check(bool condition, const char *message) {
@@ -260,7 +262,7 @@ int main(int argc, char **argv) {
         const auto root = private_directory(parent,"pathway-");
         auto fixture = pathway_test::fixture();
         const auto before = pathway_test::archive_sha256(fixture.analysis);
-        const auto publication = pathway_overrepresentation(fixture.analysis, fixture.gene_sets, fixture.request);
+        const auto publication = statistics::pathway_overrepresentation(fixture.analysis, fixture.gene_sets, fixture.request);
         check(pathway_test::archive_sha256(fixture.analysis) == before, "analysis owner changed");
         const auto result = scientific_detail::result_fields_view(publication.at("result"));
         check(exact(result.at("tests").at(0).at("p_value")) == Rational(1,6), "native exact tail");
@@ -277,17 +279,21 @@ int main(int argc, char **argv) {
         check(result.dump() == scientific_detail::result_fields_view(restored.at("result")).dump(), "cold restored fields differ");
         check(result.dump() == scientific_detail::result_fields_view(replayed.at("result")).dump(), "native replay fields differ");
         auto wrong = render_record_view(fixture.request); wrong.set("analysis_sha256", Json::string("sha256:"+std::string(64, '0')));
-        refuses([&] {pathway_overrepresentation(fixture.analysis, fixture.gene_sets, admit_record_view(wrong));});
+        refuses([&] {statistics::pathway_overrepresentation(fixture.analysis, fixture.gene_sets, admit_record_view(wrong));});
         const auto repeated=test::repeated_feature_identity_source();
         auto bounded=render_record_view(fixture.request);
         bounded.set("analysis_sha256",Json::string(pathway_test::archive_sha256(repeated)));
         bounded.at("limits").set("declared_buffer_bytes",Json::integer(1048576));
         bool early_refusal{};
-        try {(void)pathway_overrepresentation(repeated,fixture.gene_sets,admit_record_view(bounded));}
+        try {(void)statistics::pathway_overrepresentation(repeated,fixture.gene_sets,admit_record_view(bounded));}
         catch(const std::exception &error) {
             early_refusal=std::string_view(error.what()).find("identity working byte admission")!=std::string_view::npos;
         }
         check(early_refusal,"shared native label spans expanded beyond working admission");
+        std::stop_source stopped;
+        stopped.request_stop();
+        refuses([&] {gadget::pathway_overrepresentation(fixture.analysis, fixture.gene_sets,
+            fixture.request, {}, stopped.get_token());});
         std::cout << "PASS: original native fields, exact tail, retained source and cold replay\n";
         return 0;
     } catch (const std::exception &e) {std::cerr << e.what() << '\n'; return 1;}

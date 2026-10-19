@@ -1,4 +1,4 @@
-#include <gadget/execution.hpp>
+#include <gadget/statistics/execution.hpp>
 #include <bit>
 #include <iostream>
 #include <rfc/core/builder.hpp>
@@ -6,6 +6,7 @@
 
 namespace {
 using namespace gadget;
+using namespace gadget::statistics;
 using namespace rfc;
 std::size_t checks{};
 void check(bool value, const char *message) {

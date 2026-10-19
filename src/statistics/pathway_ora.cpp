@@ -1,6 +1,6 @@
 #include "pathway_ora.hpp"
 #include <algorithm>
-#include "scientific_reference.hpp"
+#include "../scientific_reference.hpp"
 #include <numeric>
 #include <rfc/machine/checked_size.hpp>
 #include <limits>
@@ -8,7 +8,7 @@
 
 #include <set>
 
-namespace gadget::pathway_detail {
+namespace gadget::statistics::pathway_detail {
 namespace {
 void require(bool condition, const std::string &message) {
     if (!condition)
@@ -511,4 +511,4 @@ scientific_detail::ResultValue overrepresentation(const std::vector<std::string>
     native.set("tests", std::move(complete_tests));
     return native;
 }
-} // namespace gadget::pathway_detail
+} // namespace gadget::statistics::pathway_detail

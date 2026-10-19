@@ -1,7 +1,7 @@
 #include <charconv>
 #include <gadget/assay.hpp>
 #include <gadget/biomedical.hpp>
-#include <gadget/execution.hpp>
+#include <gadget/statistics/execution.hpp>
 #include <gadget/facts.hpp>
 #include <gadget/homology_diagram.hpp>
 #include <gadget/model.hpp>
@@ -1039,7 +1039,7 @@ int main(int argc, char **argv) {
         if (options.contains("--measurements"))
             gadget::import_measurements(source, options.at("--measurements"));
         if (command == "analyze")
-            gadget::analyze(source, options.at("--out"));
+            gadget::statistics::analyze(source, options.at("--out"));
         else if (command == "snapshot")
             std::cout << gadget::save_snapshot(source, options.at("--out")).dump() << '\n';
         else if (command == "audit") {
@@ -1048,7 +1048,7 @@ int main(int argc, char **argv) {
                 result.set("store", source.store_origin);
             std::cout << result.dump() << '\n';
         } else
-            std::cout << gadget::execute_query(
+            std::cout << gadget::statistics::execute_query(
                              source, static_cast<gadget::Json>(gadget::read_record(options.at("--query"))))
                              .dump()
                       << '\n';

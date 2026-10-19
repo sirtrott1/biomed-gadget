@@ -36,7 +36,8 @@ Source consumers can use `add_subdirectory(path/to/gadget)` and the same targets
 | [Native gluing](native_gluing.hpp) | Combine declared local sources and fields through explicit interfaces |
 | [Data fields](data_field.hpp) | Bind imported fields to original axes, units and record addresses |
 | [Measurement studies](data_study.hpp) | Bind native matrix coordinates to existing scientific analyses |
-| [Result operations](result_operations.hpp) | Continue native analyses with [set tests](pathways.hpp) and [evidence correspondences](feature_context.hpp) |
+| [Statistics](statistics/README.md) | Explicit statistical tests and numerical analysis through `gadget::statistics` |
+| [Result operations](result_operations.hpp) | Continue native analyses with [set tests](statistics/pathways.hpp) and [evidence correspondences](feature_context.hpp) |
 
 `ScientificSession::execute_record` and `execute_plan_record` return native
 query and plan records. The workflow and pipeline functions return their own

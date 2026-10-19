@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#include <gadget/execution.hpp>
+#include <gadget/statistics/execution.hpp>
 #include <mutex>
 #include <numeric>
 #include <rfc/field/augmented_green.hpp>
@@ -10,7 +10,7 @@
 #include <set>
 #include <stdexcept>
 
-namespace gadget {
+namespace gadget::statistics {
 namespace {
 void members(const Json &query, const std::set<std::string> &allowed) {
     if (!json_object_is_type(query.raw(), json_type_object))
@@ -301,4 +301,4 @@ std::size_t QuerySession::preparation_count() const {
     return std::count_if(state_->owners.begin(), state_->owners.end(),
                          [](const auto &item) { return !!item.second; });
 }
-} // namespace gadget
+} // namespace gadget::statistics
