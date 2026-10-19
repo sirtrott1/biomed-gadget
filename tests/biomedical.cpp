@@ -83,9 +83,9 @@ void reported_field_contracts(const EvidenceStore &store, const ScientificStudy 
     const auto selector = result.at("selector");
     const auto pin = study.field_accession("all.Kd_nM");
     check(selector.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
-              selector.at("cutoff").integer() == pin.sequence() &&
-              selector.at("tensor").integer() == pin.tensor_declaration()->key &&
-              selector.at("output_carrier").integer() == *pin.tensor_declaration()->output &&
+              selector.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(pin.sequence())) &&
+              selector.at("tensor").integer() == rfc::numeric::Integer(std::to_string(pin.tensor_declaration()->key)) &&
+              selector.at("output_carrier").integer() == rfc::numeric::Integer(std::to_string(*pin.tensor_declaration()->output)) &&
               selector.at("input_carrier").kind() == NativeRecordKind::Null,
           "reported field selector replaced its native owner/carrier");
     check(binding.source_namespace() == store.native_publication().source_namespace() &&

@@ -14,7 +14,7 @@ std::size_t checks{};
 void check(bool value,const char *message) {++checks;if(!value)throw std::runtime_error(message);}
 const rfc::storage::TemporalTensor &tensor(const NativeRecord &owner,const NativeRecord &reference) {
     const auto key=reference.at("tensor").integer();
-    for(const auto &field:owner.endpoint()->tensors)if(field.key==key)return field;
+    for(const auto &field:owner.endpoint()->tensors)if(rfc::numeric::Integer(std::to_string(field.key))==key)return field;
     throw std::runtime_error("native transition tensor absent");
 }
 Vector values(const NativeRecord &owner,const NativeRecord &reference) {
@@ -51,7 +51,7 @@ void verify(const NativeRecord &publication,const ScientificStudy &study) {
         const auto input=binding.at(name);
         const auto pin=study.field_accession(input.at("id").text());
         check(input.at("source_namespace").text()==std::to_string(pin.source_namespace())&&
-              input.at("source_cutoff").integer()==pin.sequence(),"transition field producer cutoff changed");
+              input.at("source_cutoff").integer()==rfc::numeric::Integer(std::to_string(pin.sequence())),"transition field producer cutoff changed");
         const auto lift=matrix(owner,input.at("realization"));
         Vector full;
         for(std::size_t i=0;i<pin.tensor()->domain().logical_size();++i)

@@ -204,14 +204,14 @@ int main(int argc, char **argv) {
         const auto coverage_binding = coverage.at("result").at("fields").at("bindings").at(0);
         check(coverage_binding.at("source_namespace").text() ==
               std::to_string(original_coverage_pin.source_namespace()) &&
-              coverage_binding.at("cutoff").integer() == original_coverage_pin.sequence());
+              coverage_binding.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(original_coverage_pin.sequence())));
         const auto coverage_value = coverage.at("result").at("fields").at("view")
                                         .at("observations").at(1).at("value");
         const auto coverage_field = coverage_value.encoded_tensor(coverage_value.at("tensor").integer().get_ui());
         check(coverage_field.has_value());
         check(coverage_observation.at("binding").at("source_namespace").text() ==
               std::to_string(coverage_field->publication().source_namespace()) &&
-              coverage_observation.at("binding").at("cutoff").integer() == coverage_field->publication().sequence());
+              coverage_observation.at("binding").at("cutoff").integer() == rfc::numeric::Integer(std::to_string(coverage_field->publication().sequence())));
         coverage_checked.write(root / "coverage-claims.rfcxs");
         const auto coverage_reopened = NativeRecord::read(root / "coverage-claims.rfcxs");
         check(NativeRecord::decode(coverage_reopened.at("result").at("source_publication").bytes()).encode() ==

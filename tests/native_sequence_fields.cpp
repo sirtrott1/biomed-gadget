@@ -165,7 +165,7 @@ int main(int argc, char **argv) {
     for (std::size_t i = 0; i < coupling.at("solvers").size(); ++i) {
         const auto retained = coupling.at("solvers").at(i);
         const auto solver = NativeRecord::decode(retained.at("constraint_publication").bytes());
-        check(solver.source_namespace() == retained.at("variable_binding").at("source_namespace").integer() &&
+        check(rfc::numeric::Integer(std::to_string(solver.source_namespace())) == retained.at("variable_binding").at("source_namespace").integer() &&
               solver.at("schema").text() == "gadget.constraints.fields.v1",
               "coupled solver source binding differs");
     }

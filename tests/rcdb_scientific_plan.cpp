@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
                     "mixed-source control must retain a different actual study");
             std::uint64_t key = 1;
             for (const auto &source : forward.raw_sources())
-                key = std::max(key, rfc::machine::checked_size_add(source.key(), 1));
+                key = std::max<std::uint64_t>(key, rfc::machine::checked_size_add(source.key(), 1));
             auto archive = foreign.archive_source(key);
             auto value = forward.unbound_value();
             auto &steps = std::get<N::Array>(member(member(value, "result"), "steps").data).elements;

@@ -12,7 +12,7 @@ void check(bool value, const char *message) {
 }
 const rfc::storage::TemporalTensor *tensor(const NativeRecord &owner, NativeRecord descriptor) {
     for (const auto &value : owner.endpoint()->tensors)
-        if (descriptor.at("tensor").integer() == value.key) return &value;
+        if (descriptor.at("tensor").integer() == rfc::numeric::Integer(std::to_string(value.key))) return &value;
     throw std::runtime_error("native mask tensor absent");
 }
 }
@@ -45,7 +45,7 @@ int main(int argc, char **argv) try {
                 const auto present = pin.tensor()->support().contains(i);
                 check(input.at("id").text() == ids.at(f).text() &&
                       input.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
-                      input.at("cutoff").integer() == pin.sequence(), "original ordered field owner changed");
+                      input.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(pin.sequence())), "original ordered field owner changed");
                 check(plane.output == mask.output && plane.tensor.support().contains(i) &&
                       plane.tensor.state(i) == Rational(present ? 1 : 0), "original support plane changed");
                 const auto word = input.at("packed_words").at(i/64).integer().get_ui();

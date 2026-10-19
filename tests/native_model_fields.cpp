@@ -16,7 +16,7 @@ void check(bool condition, const char *message) {
 }
 const rfc::storage::TemporalTensor *field(const NativeRecord &owner, NativeRecord descriptor) {
     const auto key = (descriptor.kind() == NativeRecordKind::Object ? descriptor.at("tensor") : descriptor).integer();
-    for (const auto &tensor : owner.endpoint()->tensors) if (key == tensor.key) return &tensor;
+    for (const auto &tensor : owner.endpoint()->tensors) if (key == rfc::numeric::Integer(std::to_string(tensor.key))) return &tensor;
     throw std::runtime_error("retained field absent");
 }
 Rational state(const rfc::numeric::SparseRationalTensor &tensor, std::size_t i) {
@@ -569,7 +569,7 @@ void verify_ablation(const NativeRecord &publication) {
         const auto encoded = selected.encoded_tensor(selected.at("tensor").integer().get_ui());
         const auto binding = receipt.at("checks").at(i).at("binding");
         check(binding.at("source_namespace").text() == std::to_string(encoded->publication().source_namespace()) &&
-              binding.at("cutoff").integer() == encoded->publication().sequence(), "claim receipt changed actual selected owner");
+              binding.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(encoded->publication().sequence())), "claim receipt changed actual selected owner");
     }
     check(selected_fields[0].source_namespace() != publication.source_namespace() &&
           selected_fields[1].source_namespace() != publication.source_namespace(), "child publications became enclosing fields");
@@ -624,7 +624,7 @@ void verify_direct(const NativeRecord &publication, const NativeRecord &original
     } else {
         check(binding.at("kind").text() == "actual_direct_source_action", "direct action owner absent");
         const auto &input = *field(original,binding.at("input_tensor"));
-        check(binding.at("input_carrier").integer() == *input.output, "original direct input carrier differs");
+        check(binding.at("input_carrier").integer() == rfc::numeric::Integer(std::to_string(*input.output)), "original direct input carrier differs");
         check(NativeRecord::decode(binding.at("original_study_publication").bytes()).encode() == original.encode(),
               "direct action lost exact original study archive");
         const auto context_input = values(owner,binding.at("context_input"));
@@ -671,12 +671,12 @@ void verify_censored(const NativeRecord &publication, const NativeRecord &origin
         const auto input = binding.at("inputs").at(f);
         const auto &old = *field(original, input.at("tensor"));
         const auto &context = *field(owner, input.at("context_values"));
-        check(old.output && input.at("carrier").integer() == *old.output && context.output == source_axis,
+        check(old.output && input.at("carrier").integer() == rfc::numeric::Integer(std::to_string(*old.output)) && context.output == source_axis,
               "censored field carrier owner changed");
         rfc::storage::NativeAccessionRequest request; request.subject = old.key;
         const auto pin = original.accession_directory()->pin(request);
         check(input.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
-              input.at("cutoff").integer() == pin.sequence(), "censored original pin/cutoff changed");
+              input.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(pin.sequence())), "censored original pin/cutoff changed");
         for (std::size_t i = 0; i < n; ++i) {
             std::size_t count{}; bool present{}; Rational expected{};
             for (std::size_t j = 0; j < ambient; ++j) if (state(lift.tensor, i * ambient + j) != 0) {
@@ -940,7 +940,7 @@ void verify_moment(const NativeRecord &publication, const NativeRecord &original
         const auto input = inputs.at(f); const auto &tensor = *field(original,input.at("tensor"));
         const auto pin = original_study.field_accession(input.at("id").text());
         check(input.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
-              input.at("cutoff").integer() == pin.sequence() && input.at("carrier").integer() == *tensor.output,
+              input.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(pin.sequence())) && input.at("carrier").integer() == rfc::numeric::Integer(std::to_string(*tensor.output)),
               "moment original tensor pin/cutoff/carrier changed");
         const auto &map = field(owner,input.at("realization"))->tensor;
         const auto x = values(owner,input.at("values")); const auto shape = map.domain().extents();
@@ -1104,7 +1104,7 @@ void verify_workflow(const std::shared_ptr<const ScientificStudy> &study,
     const auto pin = study->field_accession("all.A");
     const auto tensor_key = source_fields.at("bindings").at(0).at("tensor").integer();
     const auto field = std::find_if(source_fields.endpoint()->tensors.begin(),
-        source_fields.endpoint()->tensors.end(), [&](const auto &item) { return item.key == tensor_key; });
+        source_fields.endpoint()->tensors.end(), [&](const auto &item) { return rfc::numeric::Integer(std::to_string(item.key)) == tensor_key; });
     check(field != source_fields.endpoint()->tensors.end() &&
               rfc::storage::temporal_endpoint_detail::tensor_equal(*field, *pin.tensor_declaration()),
           "strict workflow changed original coverage tensor or support");

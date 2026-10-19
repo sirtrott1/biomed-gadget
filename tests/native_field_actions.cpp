@@ -19,7 +19,7 @@ const TemporalTensor *tensor(const NativeRecord &owner, NativeRecord descriptor)
                          ? descriptor.at("tensor").integer()
                          : descriptor.integer();
     for (const auto &field : owner.endpoint()->tensors)
-        if (field.key == key)
+        if (rfc::numeric::Integer(std::to_string(field.key)) == key)
             return &field;
     throw std::runtime_error("native field absent");
 }
@@ -70,7 +70,7 @@ void boundary(const NativeRecord &publication, const NativeRecord &original) {
         const auto *source_field = tensor(original, input.at("field"));
         check(temporal_endpoint_detail::tensor_equal(*field, *source_field) &&
                   field->owner.kind == TemporalOwnerKind::Cell &&
-                  field->owner.cell.key == input.at("cell_key").integer() &&
+                  rfc::numeric::Integer(std::to_string(field->owner.cell.key)) == input.at("cell_key").integer() &&
                   field->output == input.at("carrier").integer().get_ui(),
               "input pin or cell carrier changed");
         check(source_fields.emplace(source_field->owner.cell, source_field).second,
@@ -111,10 +111,10 @@ void boundary(const NativeRecord &publication, const NativeRecord &original) {
         const auto active =
             arena.aspects.get(original.endpoint()->source.signature().existence_aspect(), slot);
         const auto item = binding.at("occurrences").at(slot);
-        check(item.at("key").integer() == occurrence.key.value &&
+        check(item.at("key").integer() == rfc::numeric::Integer(std::to_string(occurrence.key.value)) &&
                   item.at("grade").integer() == action_grade &&
-                  item.at("upper_key").integer() == upper.key &&
-                  item.at("lower_key").integer() == lower.key &&
+                  item.at("upper_key").integer() == rfc::numeric::Integer(std::to_string(upper.key)) &&
+                  item.at("lower_key").integer() == rfc::numeric::Integer(std::to_string(lower.key)) &&
                   scalar(owner, item.at("coefficient")) == coefficient &&
                   item.at("active").boolean() == active,
               "original occurrence identity, coefficient or activity changed");

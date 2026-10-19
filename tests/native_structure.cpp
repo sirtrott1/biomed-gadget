@@ -17,7 +17,7 @@ void check(bool condition, const char *message) {
 }
 const TemporalTensor *tensor(const NativeRecord &owner, NativeRecord reference) {
     const auto key = reference.at("tensor").integer();
-    for (const auto &field : owner.endpoint()->tensors) if (field.key == key) return &field;
+    for (const auto &field : owner.endpoint()->tensors) if (rfc::numeric::Integer(std::to_string(field.key)) == key) return &field;
     throw std::runtime_error("native structural tensor absent");
 }
 Vector values(const NativeRecord &owner, NativeRecord reference) {
@@ -205,13 +205,13 @@ void verify(const NativeRecord &publication, const NativeRecord &original, const
         const auto &field = (*tensor(owner, binding.at("source_field")));
         const auto key = binding.at("source_tensor").integer();
         const TemporalTensor *actual = nullptr;
-        for (const auto &item : original.endpoint()->tensors) if (item.key == key) actual = &item;
-        check(actual && temporal_endpoint_detail::tensor_equal(actual->tensor, field.tensor) && actual->output == binding.at("source_carrier").integer(),
+        for (const auto &item : original.endpoint()->tensors) if (rfc::numeric::Integer(std::to_string(item.key)) == key) actual = &item;
+        check(actual && temporal_endpoint_detail::tensor_equal(actual->tensor, field.tensor) && actual->output && rfc::numeric::Integer(std::to_string(*actual->output)) == binding.at("source_carrier").integer(),
               "authentic original source pin differs");
         const ScientificStudy admitted(original);
         const auto input_pin = admitted.field_accession(query.at("field").text());
         check(binding.at("source_namespace").text() == std::to_string(input_pin.source_namespace()) &&
-              binding.at("source_cutoff").integer() == input_pin.sequence() &&
+              binding.at("source_cutoff").integer() == rfc::numeric::Integer(std::to_string(input_pin.sequence())) &&
               temporal_endpoint_detail::tensor_equal(*actual, *input_pin.tensor_declaration()),
               "authentic source namespace, cutoff or tensor differs");
         check(matrix(owner, binding.at("context_realization")).apply(values(owner, binding.at("source_field"))) ==

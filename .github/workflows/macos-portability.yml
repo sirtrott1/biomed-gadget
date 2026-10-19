@@ -58,8 +58,22 @@ jobs:
           -DLLAMA_SOURCE_DIR="$GITHUB_WORKSPACE/.llama-source"
           -DREXGRAPH_SOURCE_DIR="$GITHUB_WORKSPACE/.rfc-source"
           -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DGADGET_COMPILE_JOBS=2
+      - name: Compile contract sources
+        run: |
+          python3 - "$RUNNER_TEMP/portability" <<'PY'
+          import subprocess, sys
+          build = sys.argv[1]
+          targets = subprocess.check_output(['ninja', '-C', build, '-t', 'targets', 'all'], text=True)
+          objects = [line.split(':', 1)[0] for line in targets.splitlines()
+                     if '/tests/' in line.split(':', 1)[0]
+                     and line.split(':', 1)[0].endswith('.cpp.o')]
+          if not objects:
+              raise ValueError('No contract sources were configured')
+          subprocess.run(['cmake', '--build', build, '--parallel', '2', '--target', *objects,
+                          '--', '-k', '0'], check=True)
+          PY
       - name: Compile the core, local model adapter and every contract executable
-        run: cmake --build "$RUNNER_TEMP/portability" --parallel 2
+        run: cmake --build "$RUNNER_TEMP/portability" --parallel 2 -- -k 0
       - name: Exercise entropy, full-width coordinates, file publication and BindingDB source formats
         run: >-
           ctest --test-dir "$RUNNER_TEMP/portability" --output-on-failure --no-tests=error

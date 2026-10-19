@@ -12,7 +12,7 @@ void check(bool value, const char *message) {
 }
 const rfc::storage::TemporalTensor *tensor(const NativeRecord &owner, NativeRecord value) {
     const auto key = value.at("tensor").integer();
-    for (const auto &item : owner.endpoint()->tensors) if (key == item.key) return &item;
+    for (const auto &item : owner.endpoint()->tensors) if (key == rfc::numeric::Integer(std::to_string(item.key))) return &item;
     throw std::runtime_error("native tensor absent");
 }
 }
@@ -35,9 +35,9 @@ int main(int argc, char **argv) try {
         const auto &indices = *tensor(owner,binding.at("source_coordinates"));
         const auto &input = *tensor(owner,binding.at("source_field"));
         check(binding.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
-              binding.at("cutoff").integer() == pin.sequence(), "actual source pin changed");
-        check(binding.at("input_carrier").integer() == *input.output &&
-              binding.at("window_carrier").integer() == *indices.output &&
+              binding.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(pin.sequence())), "actual source pin changed");
+        check(binding.at("input_carrier").integer() == rfc::numeric::Integer(std::to_string(*input.output)) &&
+              binding.at("window_carrier").integer() == rfc::numeric::Integer(std::to_string(*indices.output)) &&
               input.output != indices.output, "window coordinates lost their independent carrier");
         check(view.at("observations").size() == indices.tensor.domain().logical_size(), "window extent lost");
         Rational sum{}; std::size_t reported{};
@@ -52,7 +52,7 @@ int main(int argc, char **argv) try {
             const auto expected = pin.tensor()->state(coordinate);
             check(row.at("reported").boolean() == expected.has_value() &&
                   input.tensor.state(coordinate) == expected, "missing and supported zero merged");
-            check(row.at("value").at("tensor").integer() == input.key &&
+            check(row.at("value").at("tensor").integer() == rfc::numeric::Integer(std::to_string(input.key)) &&
                   row.at("value").at("index").integer() == coordinate, "result copied into an unrelated field");
             if (expected) {sum += *expected; ++reported;}
         }

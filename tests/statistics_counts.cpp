@@ -117,7 +117,7 @@ void native(const fs::path &workspace, const fs::path &request, const fs::path &
     for (std::size_t i = 0; i < q.at("samples").size(); ++i) {
         const auto coordinate = q.at("samples").at(i).at("coordinate").integer();
         check(tensor(restored, view.at("source_coordinates")).tensor.state(i) ==
-                  rfc::numeric::Rational(coordinate),
+                  rfc::numeric::Rational(std::to_string(coordinate)),
               "sample coordinate map changed");
         check(view.at("samples").at(i).at("native_id").text() ==
                   study->cell_identifier({0}, static_cast<std::size_t>(coordinate)),

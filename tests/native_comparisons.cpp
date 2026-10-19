@@ -18,7 +18,7 @@ std::size_t checks{};
 void check(bool value, const char *message) {++checks; if (!value) throw std::runtime_error(message);}
 const TemporalTensor *field(const NativeRecord &owner, NativeRecord reference) {
     const auto key = (reference.kind() == NativeRecordKind::Object ? reference.at("tensor") : reference).integer();
-    for (const auto &t : owner.endpoint()->tensors) if (t.key == key) return &t;
+    for (const auto &t : owner.endpoint()->tensors) if (rfc::numeric::Integer(std::to_string(t.key)) == key) return &t;
     throw std::runtime_error("native comparison field absent");
 }
 Vector values(const NativeRecord &owner, NativeRecord reference) {
@@ -68,7 +68,7 @@ void verify(const NativeRecord &result, const ScientificStudy &study) {
         const auto actual = study.field_accession(pin.at("field").text());
         const auto *retained = field(owner, pin.at("source_field"));
         check(pin.at("source_namespace").text() == std::to_string(actual.source_namespace()) &&
-              pin.at("source_cutoff").integer() == actual.sequence(), "comparison substituted annotation cutoff");
+              pin.at("source_cutoff").integer() == rfc::numeric::Integer(std::to_string(actual.sequence())), "comparison substituted annotation cutoff");
         check(retained->output == actual.carrier()->key &&
               temporal_endpoint_detail::tensor_equal(retained->tensor, *actual.tensor()), "comparison changed original field support or coefficients");
     }

@@ -17,7 +17,7 @@ inline void check(bool value, const char *message) {
 inline const Tensor *tensor(const NativeRecord &owner, NativeRecord descriptor) {
     const auto key = descriptor.at("tensor").integer();
     for (const auto &item : owner.endpoint()->tensors)
-        if (key == item.key) return &item;
+        if (key == rfc::numeric::Integer(std::to_string(item.key))) return &item;
     throw std::runtime_error("native scientific tensor absent");
 }
 inline Vector vector(const Tensor &value) {
@@ -192,7 +192,7 @@ inline void run(const fs::path &root) {
     const auto descriptor = fields.at("view").at("fields").at(0).at(is_hodge ? "sectors" : "values");
     const auto key = (is_hodge ? descriptor.at("gradient") : descriptor).at("tensor").integer();
     const auto target = std::find_if(result.endpoint()->tensors.begin(), result.endpoint()->tensors.end(),
-                                    [&](const auto &item) {return item.key == key;});
+                                    [&](const auto &item) {return rfc::numeric::Integer(std::to_string(item.key)) == key;});
     if (target->tensor.domain().logical_size()) {
         for (const bool remove_support : {false, true}) {
             auto endpoint = *result.endpoint();

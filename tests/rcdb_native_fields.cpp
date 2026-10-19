@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
             check(tensor->state(0) == rfc::numeric::Rational{-7, 5}, "source grade field value changed");
         }
         check(receipt.at("source_namespace").text() == std::to_string(pin.source_namespace()) &&
-              receipt.at("cutoff").integer() == cutoff, "receipt points to another owner");
+              receipt.at("cutoff").integer() == rfc::numeric::Integer(std::to_string(cutoff)), "receipt points to another owner");
         const auto lower = receipt.at("lower"), upper = receipt.at("upper");
         std::size_t supported{}, nonzeros{}, selected_count{1};
         std::vector<std::size_t> lo, hi;

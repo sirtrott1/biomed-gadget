@@ -14,7 +14,7 @@ std::size_t checks{};
 void check(bool value,const char *message){++checks;if(!value)throw std::runtime_error(message);}
 const TemporalTensor &tensor(const NativeRecord &owner,const NativeRecord &reference) {
     const auto id=reference.at("tensor").integer();
-    for(const auto &t:owner.endpoint()->tensors)if(t.key==id)return t;
+    for(const auto &t:owner.endpoint()->tensors)if(rfc::numeric::Integer(std::to_string(t.key))==id)return t;
     throw std::runtime_error("trajectory tensor absent");
 }
 Vector vector(const NativeRecord &owner,const NativeRecord &reference) {
@@ -44,7 +44,7 @@ void verify(const NativeRecord &operation,const ScientificStudy &study) {
         if(kind=="declared_comparison_source") {
             const auto pins=b.at("fields");for(std::size_t j=0;j<pins.size();++j) {
                 const auto pin=pins.at(j);const auto actual=study.field_accession(pin.at("field").text());
-                check(pin.at("source_namespace").text()==std::to_string(actual.source_namespace())&&pin.at("source_cutoff").integer()==actual.sequence(),"trajectory original field producer pin changed");
+                check(pin.at("source_namespace").text()==std::to_string(actual.source_namespace())&&pin.at("source_cutoff").integer()==rfc::numeric::Integer(std::to_string(actual.sequence())),"trajectory original field producer pin changed");
                 check(temporal_endpoint_detail::tensor_equal(tensor(owner,pin.at("source_field")).tensor,*actual.tensor()),"trajectory original field coefficients/support changed");
             }
         } else if(b.has("publication")) {
@@ -107,7 +107,7 @@ int main(int argc,char **argv)try {
             altered=true;break;
         }
         check(altered,"trajectory source negative control absent");
-        const auto bad_fields=fields.derive(std::move(changed));std::uint64_t key=1;for(const auto &source:base.raw_sources())key=std::max(key,rfc::machine::checked_size_add(source.key(),1));
+        const auto bad_fields=fields.derive(std::move(changed));std::uint64_t key=1;for(const auto &source:base.raw_sources())key=std::max<std::uint64_t>(key,rfc::machine::checked_size_add(source.key(),1));
         auto archive=bad_fields.archive_source(key);auto value=base.unbound_value();change_member(change_member(value,"result"),"fields")=NativeRecordValue(NativeRecordValue::Object{
             {{"schema",NativeRecordValue(std::string("gadget.scientific.publication.view.v1"))},
              {"publication",NativeRecordValue(NativeRecordValue::ByteSpan{key,0,archive.bytes().size(),false})},

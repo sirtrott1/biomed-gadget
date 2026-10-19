@@ -208,7 +208,7 @@ void native_run(const AssayWorkspace &workspace, const NativeRecord &request,
         const auto p = receipt.at("partition").integer().get_ui();
         check(p == request.at("partitions").at(i).integer(), "run reordered selected partitions");
         const auto path = out / receipt.at("native_path").text();
-        check(receipt.at("bytes").integer() == fs::file_size(path) &&
+        check(receipt.at("bytes").integer() == rfc::numeric::Integer(std::to_string(fs::file_size(path))) &&
                   receipt.at("sha256").text() == "sha256:" + sha256_file(path), "run file hash or exact bytes differs");
         const auto child = NativeRecord::read(path);
         check(child.at("result").at("schema").text() == "gadget.scientific.result.fields.v1", "run child lost actual native mathematics");

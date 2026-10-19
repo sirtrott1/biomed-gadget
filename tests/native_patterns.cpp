@@ -145,7 +145,7 @@ Json query(const NativePatternModel &model,const ScientificStudy &study,const st
 }
 const storage::TemporalTensor &tensor(const NativeRecord &owner,const NativeRecord &reference) {
     for (const auto &t : owner.endpoint()->tensors)
-        if (reference.at("tensor").integer() == t.key) return t;
+        if (reference.at("tensor").integer() == rfc::numeric::Integer(std::to_string(t.key))) return t;
     throw std::runtime_error("actual pattern result tensor absent");
 }
 bool mutate(N &value,const std::string &name,const N &replacement) {
