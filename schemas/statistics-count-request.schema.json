@@ -1,0 +1,569 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gadget.statistics.count.request.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "gadget.statistics.count.request.v1"
+    },
+    "operation": {
+      "const": "count_model_analysis"
+    },
+    "source_digest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "experimental_unit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "coordinate": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "experimental_unit",
+          "coordinate"
+        ]
+      },
+      "minItems": 1
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "field"
+        ]
+      },
+      "minItems": 1
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quantity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "units": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "quantity",
+        "units"
+      ]
+    },
+    "design": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "minItems": 1
+        },
+        "contrast": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "columns",
+        "rows",
+        "contrast"
+      ]
+    },
+    "model": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "family": {
+              "const": "poisson"
+            },
+            "dispersion": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "family",
+            "dispersion"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "family": {
+              "const": "negative_binomial"
+            },
+            "dispersion": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "method": {
+                      "const": "fixed"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "method": {
+                      "const": "profile"
+                    },
+                    "minimum": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "maximum": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "log_tolerance": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "grid_points": {
+                      "type": "integer",
+                      "minimum": 3
+                    },
+                    "iterations": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "log_prior": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "mean": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "variance": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "mean",
+                            "variance"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "minimum",
+                    "maximum",
+                    "log_tolerance",
+                    "grid_points",
+                    "iterations",
+                    "log_prior"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "method": {
+                      "const": "pooled"
+                    },
+                    "minimum": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "maximum": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "log_tolerance": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "grid_points": {
+                      "type": "integer",
+                      "minimum": 3
+                    },
+                    "iterations": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "log_prior": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "mean": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "variance": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "mean",
+                            "variance"
+                          ]
+                        }
+                      ]
+                    },
+                    "reference_fields": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "minimum",
+                    "maximum",
+                    "log_tolerance",
+                    "grid_points",
+                    "iterations",
+                    "log_prior",
+                    "reference_fields"
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "family",
+            "dispersion"
+          ]
+        }
+      ]
+    },
+    "normalization": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "none"
+            }
+          },
+          "required": [
+            "method"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "declared_factors"
+            },
+            "factors": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
+            "center": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "method",
+            "factors",
+            "center"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "median_ratio"
+            },
+            "reference_fields": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "method",
+            "reference_fields"
+          ]
+        }
+      ]
+    },
+    "exposure": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1
+            },
+            "meaning": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "values",
+            "meaning"
+          ]
+        }
+      ]
+    },
+    "inference": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "wald"
+            },
+            "confidence": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reduced_columns": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "method",
+            "confidence",
+            "reduced_columns"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "likelihood_ratio"
+            },
+            "confidence": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reduced_columns": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minItems": 0
+            }
+          },
+          "required": [
+            "method",
+            "confidence",
+            "reduced_columns"
+          ]
+        }
+      ]
+    },
+    "effect_prior": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mean": {
+              "type": "string",
+              "minLength": 1
+            },
+            "variance": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "mean",
+            "variance"
+          ]
+        }
+      ]
+    },
+    "correction": {
+      "enum": [
+        "none",
+        "bonferroni",
+        "benjamini_hochberg",
+        "benjamini_yekutieli"
+      ]
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fitted_means": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "fitted_means"
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "samples": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "features": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "design_columns": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "iterations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_search_steps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "numerical_work": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "declared_buffer_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "samples",
+        "features",
+        "design_columns",
+        "iterations",
+        "line_search_steps",
+        "numerical_work",
+        "declared_buffer_bytes",
+        "request_bytes"
+      ]
+    },
+    "workers": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "schema",
+    "operation",
+    "source_digest",
+    "samples",
+    "features",
+    "counts",
+    "design",
+    "model",
+    "normalization",
+    "exposure",
+    "inference",
+    "effect_prior",
+    "correction",
+    "outputs",
+    "limits"
+  ]
+}

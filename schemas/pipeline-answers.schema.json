@@ -111,6 +111,47 @@
                       "certificate_sha256": {
                         "type": "string",
                         "minLength": 1
+                      },
+                      "native_selection": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "generating_result",
+                              "result_operation",
+                              "count_model"
+                            ]
+                          },
+                          "assay": {
+                            "type": "string"
+                          },
+                          "method": {
+                            "type": "string"
+                          },
+                          "request": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "sha256"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "analysis_sha256": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
                       }
                     },
                     "required": [

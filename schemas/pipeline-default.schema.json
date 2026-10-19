@@ -4598,6 +4598,109 @@
               "result_input"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "not": {
+                  "const": "source"
+                }
+              },
+              "method": {
+                "const": "count_model_analysis"
+              },
+              "input": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "source_digest": {
+                    "$ref": "statistics-count-request.schema.json#/properties/source_digest"
+                  },
+                  "samples": {
+                    "$ref": "statistics-count-request.schema.json#/properties/samples"
+                  },
+                  "features": {
+                    "$ref": "statistics-count-request.schema.json#/properties/features"
+                  },
+                  "counts": {
+                    "$ref": "statistics-count-request.schema.json#/properties/counts"
+                  },
+                  "design": {
+                    "$ref": "statistics-count-request.schema.json#/properties/design"
+                  },
+                  "model": {
+                    "$ref": "statistics-count-request.schema.json#/properties/model"
+                  },
+                  "normalization": {
+                    "$ref": "statistics-count-request.schema.json#/properties/normalization"
+                  },
+                  "exposure": {
+                    "$ref": "statistics-count-request.schema.json#/properties/exposure"
+                  },
+                  "inference": {
+                    "$ref": "statistics-count-request.schema.json#/properties/inference"
+                  },
+                  "effect_prior": {
+                    "$ref": "statistics-count-request.schema.json#/properties/effect_prior"
+                  },
+                  "correction": {
+                    "$ref": "statistics-count-request.schema.json#/properties/correction"
+                  },
+                  "outputs": {
+                    "$ref": "statistics-count-request.schema.json#/properties/outputs"
+                  },
+                  "limits": {
+                    "$ref": "statistics-count-request.schema.json#/properties/limits"
+                  },
+                  "workers": {
+                    "$ref": "statistics-count-request.schema.json#/properties/workers"
+                  }
+                },
+                "required": [
+                  "samples",
+                  "features",
+                  "counts",
+                  "design",
+                  "model",
+                  "normalization",
+                  "exposure",
+                  "inference",
+                  "effect_prior",
+                  "correction",
+                  "outputs",
+                  "limits"
+                ]
+              },
+              "workers": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "depends_on": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assay": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "method",
+              "parameters"
+            ],
+            "additionalProperties": false
           }
         ]
       }

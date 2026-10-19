@@ -41,6 +41,8 @@ if(BUILD_TESTING)
     add_test(NAME gadget_${reader}_contracts COMMAND gadget_${reader}_tests)
     set_tests_properties(gadget_${reader}_contracts PROPERTIES TIMEOUT 60)
   endforeach()
+  add_test(NAME gadget_bindingdb_bulk_reference_contracts COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/bindingdb_bulk_reference_contracts.py" "$<TARGET_FILE:gadget_bindingdb_bulk_tests>")
+  set_tests_properties(gadget_bindingdb_bulk_reference_contracts PROPERTIES TIMEOUT 60)
   add_test(NAME gadget_source_formats_reference_contracts
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_formats.py"
       "$<TARGET_FILE:gadget_bindingdb_bulk_tests>" "$<TARGET_FILE:gadget_pubchem_assay_tests>"

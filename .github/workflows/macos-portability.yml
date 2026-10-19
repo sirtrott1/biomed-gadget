@@ -1,0 +1,66 @@
+name: macOS portability
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-portability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portability:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the recorded SDK revision
+        id: sdk
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+          lock = pathlib.Path('cmake/RexGraph.lock.cmake').read_text()
+          revision = re.search(r'GADGET_QUALIFIED_REXGRAPH_REVISION\s+"([0-9a-f]{40})"', lock)
+          if revision is None:
+              raise ValueError('SDK source revision is missing from the dependency lock')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('revision=' + revision.group(1) + '\n')
+          PY
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: sirtrott1/rexgraph-cpp
+          ref: ${{ steps.sdk.outputs.revision }}
+          path: .rfc-source
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ggml-org/llama.cpp
+          # Compatible adapter interface with use_mmap and use_mlock.
+          ref: da296d6e726654949bce10d7cae9a2195d292bfc
+          path: .llama-source
+          persist-credentials: false
+      - name: Install build dependencies
+        run: brew install cmake ninja pkg-config gmp json-c openssl@3 htslib
+      - name: Configure all contracts with HTS admission and the local model adapter
+        run: >-
+          cmake -S . -B "$RUNNER_TEMP/portability" -G Ninja
+          -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-fexperimental-library
+          -DBUILD_TESTING=ON -DGADGET_BUILD_EXAMPLES=ON -DGADGET_ENABLE_HTSLIB=ON
+          -DGADGET_ENABLE_LOCAL_MODEL=ON -DGGML_METAL=OFF
+          -DLLAMA_SOURCE_DIR="$GITHUB_WORKSPACE/.llama-source"
+          -DREXGRAPH_SOURCE_DIR="$GITHUB_WORKSPACE/.rfc-source"
+          -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DGADGET_COMPILE_JOBS=2
+      - name: Compile the core, local model adapter and every contract executable
+        run: cmake --build "$RUNNER_TEMP/portability" --parallel 2
+      - name: Exercise entropy, full-width coordinates, file publication and BindingDB source formats
+        run: >-
+          ctest --test-dir "$RUNNER_TEMP/portability" --output-on-failure --no-tests=error
+          -R '^gadget_(native_record|genomic_integer_portability|file_publication|count(_reference|_native)?|bindingdb_bulk(_reference)?)_contracts$'

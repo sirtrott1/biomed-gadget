@@ -27,6 +27,12 @@ The `bindingdb` profile reads bulk TSV. Its limits name `source_bytes`, `rows`,
 Compound identifiers, construct occurrences and all target chain fields remain
 context. Context membership does not assign an interaction weight.
 
+BindingDB reads through a fixed stream buffer and enforces line, field, column
+and source limits. A terminal newline is required by default; requests may
+explicitly allow an unterminated final record. Expected source length detects
+truncation. The independent verifier in `tests/bindingdb_bulk_reference.py`
+compares actual row contents and retains source and executable checksums.
+
 Both imports write bounded native records as they read. Late source errors
 cancel publication. Original coordinate order, repeated occurrences, measured
 zero and missing support remain distinct. Reader and record budgets are execution
@@ -60,6 +66,10 @@ count and exposure fields, or `constrained_response_model` for admissible respon
 constraints. Normalization, metrics and reference laws require declarations.
 These are exact field analyses. They do not fit an NB2 likelihood or create Wald
 intervals. Sampling confidence requires a justified reference law.
+
+For Poisson or NB2 likelihoods, Wald or likelihood ratio inference, dispersion
+estimation and effect shrinkage, use the separate
+[count model interface](../../include/gadget/statistics/COUNTS.md).
 
 ## Pathways and evidence
 

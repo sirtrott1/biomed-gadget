@@ -1,6 +1,7 @@
 #include <gadget/native_data.hpp>
 #include <gadget/native_gluing.hpp>
 #include <rfc/storage/native_atlas_codec.hpp>
+#include <algorithm>
 #include <iostream>
 #include <future>
 
@@ -136,7 +137,7 @@ void gluing(const std::filesystem::path &root) {
     const auto field=storage::NativeAccessionRequest::chain(51,core::Grade{1});
     const std::vector<NativeGluingSection> sections{{core::Grade{1},61,left.access(field),right.access(field)}};
     auto resources=coordinator();
-    const auto result=execute_native_gluing(plan,sections,available,true,resources.reserve(4),lease());
+    const auto result=execute_native_gluing(plan,sections,available,true,resources.reserve(std::min(std::size_t{4},resources.capacity())),lease());
     const auto serial=execute_native_gluing(plan,sections,available,true,resources.reserve(1),lease());
     check(result.sections.size()==1 && result.sections[0].size()==2,"native lineage lost");
     for(std::size_t i=0;i<2;++i)
@@ -161,7 +162,7 @@ void gluing(const std::filesystem::path &root) {
     const auto restored=storage::read_native_atlas(root/"inputs.rfcxa");
     const auto replay=inference::PreparedNativeGluing::prepare({restored,91,8},available,lease());
     const auto replayed=execute_native_gluing(replay,{{core::Grade{1},61,
-        restored.access(2,field),restored.access(3,field)}},available,true,resources.reserve(2),lease());
+        restored.access(2,field),restored.access(3,field)}},available,true,resources.reserve(std::min(std::size_t{2},resources.capacity())),lease());
     for(std::size_t i=0;i<2;++i)
         check(replayed.sections[0][i].chain().values()==result.sections[0][i].chain().values(),"native atlas replay differs");
     refuses([&]{native_gluing_endpoint(result,{{0,0,71,81}});},"partial native lineage export accepted");

@@ -68,7 +68,7 @@ for recipe in profiles['recipes']:
         if recipe.get('workspace_binding'):
             assert document['properties']['schema']['const']=='gadget.assays.bindings.v1'
         else:
-            branch=document[parts[0]][int(parts[1])]
+            branch=document if parts[0]=='properties' else document[parts[0]][int(parts[1])]
             operation=branch['properties']['operation']
             assert recipe['operation'] in operation.get('enum',[operation.get('const')])
 assert recipe_schemas['indexed_sequence_alignment']['properties']['parameters']['properties']['execution'] == {

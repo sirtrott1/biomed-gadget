@@ -550,9 +550,9 @@ Json genotype_analysis(const ResourceImage &r, const Json &request,
         }
     }
     const auto source_start = store.column(
-        "record.start", 1, nr, [&](auto v) { return Rational(decoded.records[v].start); });
+        "record.start", 1, nr, [&](auto v) { return Rational(std::to_string(decoded.records[v].start)); });
     const auto source_end = store.column("record.reference_end", 1, nr, [&](auto v) {
-        return Rational(decoded.records[v].reference_end);
+        return Rational(std::to_string(decoded.records[v].reference_end));
     });
     N declaration(N::Object{
         {{"schema", N(std::string("gadget.genotype.fields.v1"))},

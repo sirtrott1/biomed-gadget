@@ -2,6 +2,7 @@
 #include <gadget/assay.hpp>
 #include <gadget/biomedical.hpp>
 #include <gadget/statistics/execution.hpp>
+#include <gadget/statistics/count_analysis.hpp>
 #include <gadget/facts.hpp>
 #include <gadget/homology_diagram.hpp>
 #include <gadget/model.hpp>
@@ -89,6 +90,7 @@ int main(int argc, char **argv) {
                    "--prompt TEXT [--out NEW_DIRECTORY]\n"
                    "       plan-recipes --workspace MANIFEST --intent FILE --model LOCAL_GGUF "
                    "--prompt TEXT [--out NEW_DIRECTORY]\n"
+                   "       statistics --study DECLARATION --request FILE --out-record FILE\n"
                    "       workflow --workspace MANIFEST --assay ID [--partition 0] --request "
                    "FILE\n"
                    "       workflow --study DECLARATION --request FILE [--models LOCAL_ROLES] [--patterns PATTERN_ROLES]\n"
@@ -124,6 +126,7 @@ int main(int argc, char **argv) {
             {"databases", {}},
             {"bioinformatics", {}},
             {"bind-data-study", {"--input", "--request", "--out-record"}},
+            {"statistics", {"--study", "--workspace", "--assay", "--partition", "--request", "--out-record"}},
             {"analyze-record", {"--analysis", "--request", "--out-record", "--evidence"}},
             {"pipelines", {}},
             {"pipeline-prepare", {"--workspace", "--request"}},
@@ -280,6 +283,21 @@ int main(int argc, char **argv) {
             const gadget::ScientificStudy admitted(publication);
             publication.write(required("--out-record"));
             std::cout << admitted.catalog().dump() << '\n';
+            return 0;
+        }
+        if (command == "statistics") {
+            if (gadget::fs::exists(required("--out-record"))) throw std::invalid_argument("statistics destination already exists");
+            std::shared_ptr<const gadget::ScientificStudy> study;
+            if (options.contains("--workspace")) {
+                if (options.contains("--study")) throw std::invalid_argument("statistics source must be unambiguous");
+                const gadget::AssayWorkspace workspace(required("--workspace"));
+                const auto partition=options.contains("--partition")?std::stoull(options.at("--partition")):0;
+                study=workspace.study(required("--assay"),partition);
+            } else study=std::make_shared<gadget::ScientificStudy>(required("--study"));
+            const auto request=gadget::read_record(required("--request")).native();
+            const auto result=gadget::statistics::count_model_analysis(*study,request);
+            result.write(required("--out-record"));
+            std::cout << gadget::statistics::count_result_view(result).dump() << '\n';
             return 0;
         }
         if (command == "analyze-record") {

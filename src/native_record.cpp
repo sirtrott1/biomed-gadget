@@ -644,13 +644,14 @@ std::uint64_t new_native_record_namespace() {
 #if defined(__APPLE__)
         int status;
         do { status=getentropy(&key,sizeof key); } while(status<0 && errno==EINTR);
-        if(status<0)throw std::runtime_error("native namespace allocation failed");
+        if(status<0)throw std::runtime_error(std::string("native namespace allocation failed: ")+std::strerror(errno));
 #else
         auto *p=reinterpret_cast<std::byte *>(&key);std::size_t position{};
         while(position<sizeof key) {
             const auto n=getrandom(p+position,sizeof key-position,0);
             if(n<0 && errno==EINTR)continue;
-            if(n<=0)throw std::runtime_error("native namespace allocation failed");
+            if(n<0)throw std::runtime_error(std::string("native namespace allocation failed: ")+std::strerror(errno));
+            if(n==0)throw std::runtime_error("native namespace allocation failed: entropy source returned no bytes");
             position+=static_cast<std::size_t>(n);
         }
 #endif

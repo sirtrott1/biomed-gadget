@@ -57,7 +57,8 @@ int main() {
             ConcurrentStudyStore service(root / "store");
             const auto initial = service.snapshot();
             retained = initial;
-            QuerySession old_session(initial.workspace());
+            const auto cpu = CpuResources::local();
+            QuerySession old_session(initial.workspace(), cpu);
             const auto old_result = old_session.execute(query);
             check(old_result.dump() == execute_query(*initial.workspace(), query).dump(),
                   "prepared query changed its certificate");
@@ -98,8 +99,17 @@ int main() {
                             check(study->store_origin.at("root").at("sequence").text() ==
                                       std::to_string(sequence),
                                   "reader root disagreed with study");
-                            QuerySession private_session(study);
-                            private_session.execute(query);
+                            QuerySession private_session(study, cpu);
+                            for (;;) {
+                                const auto epoch = cpu->coordinator().change_epoch();
+                                try {
+                                    private_session.execute(query);
+                                    break;
+                                } catch (const rfc::runtime::CpuResourceBusy &) {
+                                    // Four snapshot readers share the host's admitted CPU budget.
+                                    cpu->coordinator().wait_for_change(epoch);
+                                }
+                            }
                             ++reads;
                         } while (!done.load());
                     } catch (const std::exception &error) {

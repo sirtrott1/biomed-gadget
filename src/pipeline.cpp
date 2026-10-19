@@ -1,3 +1,4 @@
+#include <gadget/statistics/count_analysis.hpp>
 #include "pipeline_answers.hpp"
 #include "pipeline_result_binding.hpp"
 #include <gadget/result_operations.hpp>
@@ -76,11 +77,12 @@ const std::map<std::string, std::vector<std::string>> profiles{
     {"custom", {}}};
 struct Recipe {
     std::string operation;
-    bool native{}, materializable{}, binding{}, result{};
+    bool native{}, materializable{}, binding{}, result{}, statistics{};
 };
 // Recipes assemble existing contracts. Scientific operators and source
 // materialization remain in their existing RexGraph backed services.
 const std::map<std::string, Recipe> recipes{
+    {"count_model_analysis", {"count_model_analysis", false, false, false, false, true}},
     {"quality", {"read_quality"}},
     {"coverage", {"coverage", true}},
     {"alignment_evidence", {"alignment_evidence"}},
@@ -141,7 +143,7 @@ bool allowed_recipe(const std::string &profile, const Recipe &recipe) {
         profile != "multi_omics")
         return false;
     const auto &allowed = profiles.at(profile);
-    const auto operation = recipe.native || recipe.result ? "native_query" : recipe.operation;
+    const auto operation = recipe.native || recipe.result || recipe.statistics ? "native_query" : recipe.operation;
     return allowed.empty() || std::find(allowed.begin(), allowed.end(), operation) != allowed.end();
 }
 void evidence_binding(const Json &node) {
@@ -198,7 +200,7 @@ void validate(const Json &plan, const std::string &digest) {
         require(!declared.contains(id), "duplicate pipeline step");
         require(declared.contains(input) && declared.at(input) == "workspace",
                 "pipeline input must name source or an earlier derived workspace");
-        require(type == "query" || type == "derive" || type == "workflow" || type == "bind" || type == "result",
+        require(type == "query" || type == "derive" || type == "workflow" || type == "bind" || type == "result" || type == "statistics",
                 "unsupported pipeline step type");
         if (node.has("depends_on")) {
             require(json_object_is_type(node.at("depends_on").raw(), json_type_array),
@@ -231,6 +233,9 @@ void validate(const Json &plan, const std::string &digest) {
             require(allowed.empty() ||
                         std::find(allowed.begin(), allowed.end(), "bind_assays") != allowed.end(),
                     "bindings do not belong to selected assay profile");
+        } else if (type == "statistics") {
+            require(node.has("assay"),"statistics step requires an assay");
+            require(request.at("schema").text()=="gadget.statistics.count.request.v1" && request.at("operation").text()=="count_model_analysis","pipeline statistics request schema/operation");
         } else if (type == "workflow") {
             require(node.has("assay"), "workflow step requires an assay");
             require(request.at("schema").text() == "gadget.scientific.workflow.v1",
@@ -325,11 +330,11 @@ Json pipeline_profiles() {
         choice.set("native_materialization", Json::boolean(
             AssayWorkspace::supports_native_materialization(recipe.operation)));
         choice.set("native_publication", Json::boolean(
-            recipe.binding || recipe.result || (recipe.native ? has_native_scientific_publisher(recipe.operation)
+            recipe.binding || recipe.result || recipe.statistics || (recipe.native ? has_native_scientific_publisher(recipe.operation)
                                              : AssayWorkspace::supports_native_publication(recipe.operation))));
         choice.set("workspace_binding", Json::boolean(recipe.binding));
         choice.set("parameters_schema",
-                   Json::string(recipe.result ? "result-operation.schema.json"
+                   Json::string(recipe.statistics ? "statistics-count-request.schema.json" : recipe.result ? "result-operation.schema.json"
                                 : recipe.binding  ? "assays-bindings.schema.json"
                                 : recipe.native ? "scientific-query.schema.json"
                                                 : "assays-query.schema.json"));
@@ -413,7 +418,13 @@ Json default_pipeline(const AssayWorkspace &workspace, const Json &settings) {
         for (const auto *member : {"depends_on", "workers", "normalization_evidence_field", "result_input"})
             if (goal.has(member))
                 node.set(member, goal.at(member));
-        if (recipe.result) {
+        if (recipe.statistics) {
+            require(!goal.has("output")&&!goal.has("partitions")&&!goal.has("partition_jobs")&&!goal.has("result_input"),"statistics recipe selects one assay partition");
+            const auto assay=goal.has("assay")?goal.at("assay").text():settings.has("assay")?settings.at("assay").text():input!="source"?derived.at(input):std::string{};
+            require(!assay.empty(),"statistics recipe requires an assay");
+            node.set("type",Json::string("statistics"));node.set("assay",Json::string(assay));
+            request=parameters;request.set("schema",Json::string("gadget.statistics.count.request.v1"));request.set("operation",Json::string("count_model_analysis"));
+        } else if (recipe.result) {
             require(goal.has("result_input") && !goal.has("assay") && !goal.has("output") &&
                 !goal.has("partitions") && !goal.has("partition_jobs"), "result recipe requires a prior result and no assay partition");
             node.set("type", Json::string("result"));
@@ -1049,6 +1060,16 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
                         native_request, job / "workspace", assigned_resources);
                     certificate = produced->catalog();
                     direct_result = produced->study(request.at("id").text())->producer_publication();
+                } else if (node.at("type").text() == "statistics") {
+                    const auto partition=node.has("partition")?node.at("partition").integer():0;
+                    require(partition>=0,"negative statistics partition");
+                    const auto study=source->study(node.at("assay").text(),static_cast<std::size_t>(partition));
+                    auto bound=Json::parse(request.dump());
+                    if(bound.has("source_digest"))require(bound.at("source_digest").text()==study->digest(),"pipeline statistics source mismatch");
+                    bound.set("source_digest",Json::string(study->digest()));request=bound;
+                    const auto native_request=admit_record_view(request);native_request.write(job/"request.rfcxs");
+                    direct_result=statistics::count_model_analysis(*study,native_request,assigned_resources,stop);
+                    certificate=statistics::count_result_view(*direct_result);
                 } else if (node.at("type").text() == "workflow") {
                     const auto partition =
                         node.has("partition") ? node.at("partition").integer() : 0;

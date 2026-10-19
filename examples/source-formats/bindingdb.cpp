@@ -1,9 +1,11 @@
 #include "bindingdb.hpp"
 #include <algorithm>
 #include <array>
+#include <istream>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace gadget::examples {
@@ -12,7 +14,9 @@ void require(bool condition, const char *message) {
     if (!condition) throw std::invalid_argument(message);
 }
 void cancelled(std::stop_token stop) {
-    if (stop.stop_requested()) throw std::runtime_error("BindingDB bulk read cancelled");
+    if (stop.stop_requested())
+        throw std::system_error(std::make_error_code(std::errc::operation_canceled),
+                                "BindingDB bulk read cancelled");
 }
 struct Line {
     std::string_view content, original;
@@ -123,19 +127,22 @@ BindingDBAffinityView affinity(std::size_t index, std::string_view endpoint,
     result.number_token = value;
     return result;
 }
-} // namespace
-
-BindingDBBulkSummary visit_bindingdb_bulk(
-    std::string_view source, const BindingDBBulkLimits &limits,
-    const std::function<void(const BindingDBBulkRowView &)> &consume,
-    std::stop_token stop) {
+void policy(const BindingDBBulkLimits &limits,
+            const std::function<void(const BindingDBBulkRowView &)> &consume) {
     require(limits.source_bytes && limits.rows && limits.columns && limits.field_bytes,
             "BindingDB budgets must be positive");
-    require(source.size() <= limits.source_bytes, "BindingDB source byte budget exceeded");
-    require(!source.empty() && static_cast<bool>(consume), "BindingDB source or consumer is empty");
-    cancelled(stop);
-    const auto first = line_at(source, 0);
-    BindingDBBulkHeader header{fields(first.content, limits), {}};
+    require(static_cast<bool>(consume), "BindingDB consumer is empty");
+    require(!limits.expected_source_bytes || *limits.expected_source_bytes <= limits.source_bytes,
+            "BindingDB expected source byte count exceeds budget");
+}
+struct Layout {
+    BindingDBBulkHeader header;
+    std::size_t reaction, monomer;
+    std::vector<std::pair<std::size_t, std::string_view>> affinity_columns;
+};
+Layout layout(std::string_view content, const BindingDBBulkLimits &limits) {
+    require(!content.starts_with("\xef\xbb\xbf"), "BindingDB header contains a UTF-8 BOM");
+    BindingDBBulkHeader header{fields(content, limits), {}};
     for (const auto name : header.columns) require(!name.empty(), "BindingDB header name is empty");
     const auto reaction = column(header, "BindingDB Reactant_set_id", true).value();
     const auto monomer = column(header, "BindingDB MonomerID", true).value();
@@ -154,41 +161,158 @@ BindingDBBulkSummary visit_bindingdb_bulk(
     }
     require(!affinity_columns.empty(), "BindingDB affinity columns are absent");
     std::sort(affinity_columns.begin(), affinity_columns.end());
+    return {std::move(header), reaction, monomer, std::move(affinity_columns)};
+}
+void visit_row(const Line &line, std::size_t offset, const Layout &layout,
+               const BindingDBBulkLimits &limits, BindingDBBulkSummary &result,
+               const std::function<void(const BindingDBBulkRowView &)> &consume,
+               std::stop_token stop) {
+    cancelled(stop);
+    require(result.rows < limits.rows, "BindingDB row budget exceeded");
+    require(!line.content.empty(), "BindingDB blank row is not an observation");
+    const auto cells = fields(line.content, limits);
+    const auto &header = layout.header;
+    if (cells.size() != header.columns.size()) {
+        require(header.chain_start && cells.size() >= *header.chain_start + 12 &&
+                    (cells.size() - *header.chain_start) % 12 == 0,
+                "BindingDB row has an incomplete or undeclared column layout");
+        require(layout.reaction < cells.size() && layout.monomer < cells.size(),
+                "BindingDB row lacks its declared identity columns");
+    }
+    require(!cells[layout.reaction].empty() && !cells[layout.monomer].empty(),
+            "BindingDB reaction or monomer identity is empty");
+    std::vector<BindingDBAffinityView> values;
+    for (const auto &[index, endpoint] : layout.affinity_columns) {
+        require(index < cells.size(), "BindingDB row lacks its declared affinity column");
+        values.push_back(affinity(index, endpoint, cells[index]));
+    }
+    std::size_t reported = 0;
+    for (const auto &value : values) reported += value.relation.has_value() ? 1 : 0;
+    require(reported <= std::numeric_limits<std::size_t>::max() - result.reported_affinities,
+            "BindingDB affinity count overflow");
+    require(result.rows <= std::numeric_limits<std::size_t>::max() - 2,
+            "BindingDB line number overflow");
+    const BindingDBBulkRowView row{header, result.rows, result.rows + 2, offset,
+        line.original.size(), line.original, cells, values};
+    consume(row);
+    cancelled(stop);
+    ++result.rows;
+    result.reported_affinities += reported;
+}
+// Fixed read buffer plus one policy-bounded line. Enforce field and column
+// budgets while collecting, before row storage can grow past its declared bound.
+class StreamLines {
+    std::istream &input;
+    const BindingDBBulkLimits &limits;
+    std::stop_token stop;
+    std::array<char, 64 * 1024> buffer{};
+    std::size_t position{}, available{}, consumed{};
+public:
+    StreamLines(std::istream &input, const BindingDBBulkLimits &limits, std::stop_token stop)
+        : input(input), limits(limits), stop(stop) {}
+    std::size_t offset() const { return consumed; }
+    bool next(std::string &bytes) {
+        cancelled(stop);
+        bytes.clear();
+        std::size_t columns = 1, field_bytes = 0;
+        bool carriage_return = false;
+        while (true) {
+            if (position == available) {
+                cancelled(stop);
+                try {
+                    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                } catch (const std::ios_base::failure &) {
+                    // A valid final short read sets eofbit/failbit and may
+                    // throw solely because the caller enabled those masks.
+                    if (input.bad() || !input.eof()) throw;
+                }
+                if (input.bad() || (input.fail() && !input.eof()))
+                    throw std::ios_base::failure("BindingDB source read failed");
+                cancelled(stop);
+                available = static_cast<std::size_t>(input.gcount());
+                position = 0;
+                if (!available) {
+                    require(bytes.empty() || limits.allow_unterminated_final_line,
+                            "BindingDB source must end with a newline");
+                    return !bytes.empty();
+                }
+            }
+            require(consumed < limits.source_bytes, "BindingDB source byte budget exceeded");
+            const auto value = buffer[position++];
+            ++consumed;
+            if (value == '\n') {
+                bytes += value;
+                return true;
+            }
+            require(!carriage_return, "BindingDB field contains an unsupported control byte");
+            if (value == '\r') carriage_return = true;
+            else if (value == '\t') {
+                require(columns < limits.columns, "BindingDB column budget exceeded");
+                ++columns;
+                field_bytes = 0;
+            } else {
+                require(field_bytes < limits.field_bytes, "BindingDB field byte budget exceeded");
+                ++field_bytes;
+            }
+            bytes += value;
+        }
+    }
+};
+} // namespace
+
+BindingDBBulkSummary visit_bindingdb_bulk(
+    std::string_view source, const BindingDBBulkLimits &limits,
+    const std::function<void(const BindingDBBulkRowView &)> &consume,
+    std::stop_token stop,
+    const std::function<void(const BindingDBBulkHeader &)> &consume_header) {
+    policy(limits, consume);
+    require(!source.empty(), "BindingDB source is empty");
+    require(source.size() <= limits.source_bytes, "BindingDB source byte budget exceeded");
+    require(!limits.expected_source_bytes || source.size() == *limits.expected_source_bytes,
+            "BindingDB source byte count differs from expected size");
+    require(source.back() == '\n' || limits.allow_unterminated_final_line,
+            "BindingDB source must end with a newline");
+    cancelled(stop);
+    const auto first = line_at(source, 0);
+    const auto parsed = layout(first.content, limits);
+    if (consume_header) consume_header(parsed.header);
+    cancelled(stop);
     BindingDBBulkSummary result;
+    result.ends_with_newline = source.back() == '\n';
+    result.bytes_consumed = source.size();
     for (auto offset = first.next; offset < source.size();) {
-        cancelled(stop);
-        require(result.rows < limits.rows, "BindingDB row budget exceeded");
         const auto line = line_at(source, offset);
-        require(!line.content.empty(), "BindingDB blank row is not an observation");
-        const auto cells = fields(line.content, limits);
-        if (cells.size() != header.columns.size()) {
-            require(header.chain_start && cells.size() >= *header.chain_start + 12 &&
-                        (cells.size() - *header.chain_start) % 12 == 0,
-                    "BindingDB row has an incomplete or undeclared column layout");
-            require(reaction < cells.size() && monomer < cells.size(),
-                    "BindingDB row lacks its declared identity columns");
-        }
-        require(!cells[reaction].empty() && !cells[monomer].empty(),
-                "BindingDB reaction or monomer identity is empty");
-        std::vector<BindingDBAffinityView> values;
-        for (const auto &[index, endpoint] : affinity_columns) {
-            require(index < cells.size(), "BindingDB row lacks its declared affinity column");
-            values.push_back(affinity(index, endpoint, cells[index]));
-        }
-        std::size_t reported = 0;
-        for (const auto &value : values) reported += value.relation.has_value() ? 1 : 0;
-        require(reported <= std::numeric_limits<std::size_t>::max() - result.reported_affinities,
-                "BindingDB affinity count overflow");
-        require(result.rows <= std::numeric_limits<std::size_t>::max() - 2,
-                "BindingDB line number overflow");
-        const BindingDBBulkRowView row{header, result.rows, result.rows + 2, offset,
-            line.original.size(), line.original, cells, values};
-        consume(row);
-        cancelled(stop);
-        ++result.rows;
-        result.reported_affinities += reported;
+        visit_row(line, offset, parsed, limits, result, consume, stop);
         offset = line.next;
     }
+    return result;
+}
+
+BindingDBBulkSummary visit_bindingdb_bulk(
+    std::istream &source, const BindingDBBulkLimits &limits,
+    const std::function<void(const BindingDBBulkRowView &)> &consume,
+    std::stop_token stop,
+    const std::function<void(const BindingDBBulkHeader &)> &consume_header) {
+    policy(limits, consume);
+    StreamLines lines(source, limits, stop);
+    std::string header_bytes, row_bytes;
+    require(lines.next(header_bytes), "BindingDB source is empty");
+    const auto first = line_at(header_bytes, 0);
+    const auto parsed = layout(first.content, limits);
+    if (consume_header) consume_header(parsed.header);
+    cancelled(stop);
+    BindingDBBulkSummary result;
+    result.ends_with_newline = header_bytes.back() == '\n';
+    auto offset = lines.offset();
+    while (lines.next(row_bytes)) {
+        const auto line = line_at(row_bytes, 0);
+        visit_row(line, offset, parsed, limits, result, consume, stop);
+        result.ends_with_newline = row_bytes.back() == '\n';
+        offset = lines.offset();
+    }
+    result.bytes_consumed = lines.offset();
+    require(!limits.expected_source_bytes || result.bytes_consumed == *limits.expected_source_bytes,
+            "BindingDB source byte count differs from expected size");
     return result;
 }
 } // namespace gadget::examples

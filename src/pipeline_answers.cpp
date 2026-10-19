@@ -1,4 +1,5 @@
 #include "pipeline_answers.hpp"
+#include "statistics/count_answers.hpp"
 #include "result_answer_witness.hpp"
 #include "scientific_result_fields.hpp"
 #include <rfc/storage/temporal_finite.hpp>
@@ -56,6 +57,8 @@ const std::map<std::string, Observable> observables{
      {{"expression_allocations"},
       "Read-supported target and contrast ranges under declared scales and optional coupling "
       "constraints"}},
+    {"count_model_inference", {{"count_model_analysis"},
+      "Conditional Poisson or NB2 likelihood fits, declared normalization and dispersion, asymptotic reference tests and optional normal effect shrinkage"}},
     {"field_support", {{"coverage"}, "Reported and missing coordinates of the declared fields"}},
     {"paired_field_contrast",
      {{"expression_contrast"},
@@ -231,6 +234,7 @@ fs::path checked_answer_path(const fs::path &directory, const Json &record) {
 Json checked_answer_view(const fs::path &directory,const Json &record) {
     if (record.has("native_selection")) {
         const auto selection = record.at("native_selection");
+        if (selection.at("kind").text() == "count_model") return statistics::count_answer_view(directory,record);
         if (selection.at("kind").text() == "result_operation") return result_answer_view(directory, record);
         keys(selection, {"kind", "assay"});
         require(selection.at("kind").text() == "generating_result",
@@ -453,7 +457,9 @@ Json answer_witnesses(const Json &planning, const Json &pipeline, const Json &re
             const auto effective = checked_answer_view(directory,effective_record);
             const auto job = directory / node.at("id").text();
             auto references = Json::array();
-            if (node.at("type").text() == "result") {
+            if(node.at("type").text()=="statistics") {
+                references.push(statistics::count_answer_reference(directory,record,effective_record));
+            } else if (node.at("type").text() == "result") {
                 references.push(result_answer_reference(directory, record, effective_record,
                     effective.at("operation").text(), receipt.at("analysis_sha256").text()));
             } else if (node.at("type").text() == "derive") {

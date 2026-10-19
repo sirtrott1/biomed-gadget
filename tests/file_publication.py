@@ -99,7 +99,16 @@ with (root / "stopped.stderr").open("w") as stderr:
         deadline = time.monotonic() + 10
         # A stream may retain part of the first chunk in its output buffer.
         # Observe a real staged write without requiring the complete chunk on disk.
-        while not any((path / "image").stat().st_size > 0 for path in root.glob(".rfc-stage-*")):
+        def staged_bytes_present():
+            for path in root.glob(".rfc-stage-*"):
+                try:
+                    if (path / "image").stat().st_size > 0:
+                        return True
+                except FileNotFoundError:
+                    continue
+            return False
+
+        while not staged_bytes_present():
             assert child.poll() is None
             assert time.monotonic() < deadline, "owned writer did not enter staging"
             time.sleep(.01)

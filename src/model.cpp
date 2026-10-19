@@ -1534,7 +1534,7 @@ Json LocalAgent::ask_assigned_impl(const std::string &prompt, const std::vector<
                     })->second.data).members;
             std::uint64_t next = 1;
             for (const auto &source : native_response->value().raw_sources())
-                next = std::max(next, rfc::machine::checked_size_add(source.key(), 1));
+                next = std::max<std::uint64_t>(next, rfc::machine::checked_size_add(source.key(), 1));
             NativeRecordValue::Array retained;
             for (std::size_t i = 0; i < original_images.size(); ++i) {
                 auto source = original_images[i].rekey(next);

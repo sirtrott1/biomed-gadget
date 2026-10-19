@@ -46,7 +46,8 @@
               "derive",
               "workflow",
               "bind",
-              "result"
+              "result",
+              "statistics"
             ]
           },
           "input": {

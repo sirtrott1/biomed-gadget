@@ -24,6 +24,16 @@ Complete suites include workloads whose resource use depends on the input
 population and model weights. Select them on a machine with sufficient memory
 and scratch space.
 
+The count model contracts compare closed form cases, native ownership and
+pipeline execution. `statistics_counts_reference.py` uses independent standard
+library calculations. Additional SciPy and mpmath comparisons are available:
+
+```sh
+python tests/statistics_counts_reference.py build/presets/cpu/gadget_count_tests --scipy
+```
+
+SciPy and mpmath are optional test dependencies; the library does not import them.
+
 ## Optional profiles
 
 For HDF5 and HTSlib, install the format dependencies and test requirements:

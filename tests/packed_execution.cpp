@@ -234,27 +234,44 @@ int main() {
             released(*host);
         }
 
-        const auto slow_source = prepared(65, true);
-        PackedOperation slow(slow_source);
-        std::stop_source stop;
-        std::barrier ready(2);
-        std::atomic<bool> observed{};
-        auto &coordinator = host->coordinator();
-        std::jthread cancel([&](std::stop_token wait_stop) {
-            ready.arrive_and_wait();
-            while (!wait_stop.stop_requested()) {
-                const auto epoch = coordinator.change_epoch();
-                if (coordinator.available_workers() < coordinator.capacity()) {
-                    observed = true; stop.request_stop(); return;
+        bool active_cancellation = false;
+        // A fast call may finish before the observer is scheduled. Grow the
+        // actual work in bounded attempts until cancellation interrupts a call.
+        for (std::size_t attempt = 0; attempt < 8 && !active_cancellation; ++attempt) {
+            const auto slots = std::size_t{65} << attempt;
+            PackedOperation slow(prepared(slots, true));
+            std::stop_source stop;
+            std::barrier ready(2);
+            std::atomic<bool> observed{};
+            auto &coordinator = host->coordinator();
+            std::jthread cancel([&](std::stop_token wait_stop) {
+                ready.arrive_and_wait();
+                while (!wait_stop.stop_requested()) {
+                    const auto epoch = coordinator.change_epoch();
+                    if (coordinator.available_workers() < coordinator.capacity()) {
+                        observed = true; stop.request_stop(); return;
+                    }
+                    coordinator.wait_for_change(epoch, wait_stop);
                 }
-                coordinator.wait_for_change(epoch, wait_stop);
+            });
+            ready.arrive_and_wait();
+            try {
+                oracle(slow.execute(*host, query(1, 1), stop.get_token()), slots);
+            } catch (const native::runtime::ExecutionCancelled &) {
+                active_cancellation = true;
+            } catch (const std::runtime_error &error) {
+                if (std::string_view(error.what()) != "packed execution cancelled") throw;
+                active_cancellation = true;
             }
-        });
-        ready.arrive_and_wait();
-        cancelled([&] { (void)slow.execute(*host, query(1, 1), stop.get_token()); });
-        cancel.request_stop(); coordinator.notify_waiters(); cancel.join();
-        check(observed && stop.stop_requested(), "active packed CPU reservation/cancellation not exercised"); released(*host);
-        oracle(slow.execute(*host, query(1, 1)), 65); released(*host);
+            cancel.request_stop(); coordinator.notify_waiters(); cancel.join();
+            released(*host);
+            if (active_cancellation) {
+                check(observed && stop.stop_requested(), "active CPU cancellation was not observed");
+                oracle(slow.execute(*host, query(1, 1)), slots);
+                released(*host);
+            }
+        }
+        check(active_cancellation, "active packed CPU reservation/cancellation not exercised");
 
         // Authored admission control, separately from the measured physical host.
         auto authored = hardware;

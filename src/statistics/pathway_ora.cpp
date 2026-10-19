@@ -1,4 +1,5 @@
 #include "pathway_ora.hpp"
+#include <gadget/statistics/counts.hpp>
 #include <algorithm>
 #include "../scientific_reference.hpp"
 #include <numeric>
@@ -429,32 +430,10 @@ scientific_detail::ResultValue overrepresentation(const std::vector<std::string>
     // These are declared testing policies over exact marginal tails. They do
     // not manufacture a joint reference law from independent marginal laws.
     const auto m = probabilities.size();
-    std::vector<Rational> adjusted = probabilities;
-    Rational multiplier(std::to_string(m));
-    if (p.correction == "benjamini_yekutieli") {
-        Rational harmonic{0};
-        for (std::size_t i = 1; i <= m; ++i) {
-            cancelled(stop); harmonic += Rational(Integer{1}, Integer(std::to_string(i)));
-        }
-        const auto bits=rfc::machine::checked_size_add(mpz_sizeinbase(harmonic.get_num_mpz_t(),2),
-            mpz_sizeinbase(harmonic.get_den_mpz_t(),2));
-        const auto additional=rfc::machine::checked_size_mul(m,rfc::machine::checked_size_mul(bits/8+2,16));
+    const auto adjusted=statistics::adjust_probabilities(probabilities,p.correction,stop,[&](std::size_t additional) {
         require(additional<=p.declared_buffer_bytes-retained_bytes,"exact multiplicity working byte admission");
         retained_bytes+=additional;
-        multiplier *= harmonic;
-    }
-    if (p.correction == "bonferroni") {
-        for (auto &value : adjusted) value = std::min(Rational{1}, Rational{value * multiplier});
-    } else if (p.correction != "none") {
-        std::vector<std::size_t> order(m); std::iota(order.begin(), order.end(), 0);
-        std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) {return probabilities[a] < probabilities[b];});
-        Rational following{1};
-        for (std::size_t j = m; j > 0; --j) {
-            cancelled(stop);
-            following = std::min(following, Rational{probabilities[order[j - 1]] * multiplier / Rational(std::to_string(j))});
-            adjusted[order[j - 1]] = following;
-        }
-    }
+    });
     auto complete_tests = Value::array();
     for (std::size_t i = 0; i < m; ++i) {
         auto test = tests.at(tested_indices[i]);

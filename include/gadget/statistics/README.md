@@ -13,6 +13,8 @@ law exactly without establishing that the law describes the observations.
 
 | Header | Purpose |
 | --- | --- |
+| [count_analysis.hpp](count_analysis.hpp) | Native Poisson and NB2 models, normalization, dispersion, Wald or likelihood ratio tests and effect shrinkage |
+| [counts.hpp](counts.hpp) | Prepared designs, count likelihoods, reference tails and exact or logarithmic multiple testing correction |
 | [pathways.hpp](pathways.hpp) | Pathway overrepresentation under a declared uniform subset law, with exact tails and selected multiple testing correction |
 | [execution.hpp](execution.hpp) | Contextual field analysis, prepared queries and numerical Green solves with retained residual diagnostics |
 
@@ -37,5 +39,5 @@ operations, metric moments and finite reference calculations retain their
 [scientific interfaces](../scientific.hpp). Statistical methods call those
 providers when applicable. Numerical kernels remain supplied by RexGraphCPP.
 
-Poisson and negative binomial likelihood models, Wald inference, dispersion
-pooling and effect shrinkage are not implemented in this module yet.
+The [count model guide](COUNTS.md) describes the statistical assumptions,
+request choices, retained diagnostics and resource controls.

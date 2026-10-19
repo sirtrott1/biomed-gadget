@@ -14,6 +14,8 @@ revisit results as evidence changes.
   across assays.
 - Run linear models, Hodge analysis, calibration, model comparisons and temporal
   queries with explicit inputs and assumptions.
+- Fit conventional count models and apply statistical tests through the separate
+  [statistics module](include/gadget/statistics/README.md).
 - Store versioned data, retrieve selected measurements and replay analyses.
 - Compose pipelines, with optional local models to propose queries and read
   checked results.

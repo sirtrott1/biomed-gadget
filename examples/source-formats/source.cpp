@@ -5,6 +5,7 @@
 #include <gadget/result_operations.hpp>
 #include <gadget/pipeline.hpp>
 #include <iostream>
+#include <fstream>
 #include <limits>
 
 using namespace gadget;
@@ -87,22 +88,33 @@ void gtex(const RawByteSource &bytes, const Json &q) {
     });
     if (!header || !summary.rows) throw std::invalid_argument("empty measurement carrier");
 }
-void bindingdb(const RawByteSource &bytes, const Json &q) {
-    const BindingDBBulkLimits limits{limit(q,"source_bytes"),limit(q,"rows"),limit(q,"columns"),limit(q,"field_bytes")};
-    const auto summary=visit_bindingdb_bulk(view(bytes),limits,[](const auto &){});
-    bool header{};
-    visit_bindingdb_bulk(view(bytes),limits,[&](const BindingDBBulkRowView &row) {
-        if (!header) {
+void bindingdb(const fs::path &path, const Json &q) {
+    BindingDBBulkLimits limits{limit(q,"source_bytes"),limit(q,"rows"),limit(q,"columns"),limit(q,"field_bytes")};
+    if(q.has("allow_unterminated_final_line"))limits.allow_unterminated_final_line=q.at("allow_unterminated_final_line").boolean();
+    const auto length=fs::file_size(path);
+    if(length>limits.source_bytes)throw std::length_error("original source byte admission");
+    limits.expected_source_bytes=static_cast<std::size_t>(length);
+    std::ifstream input(path,std::ios::binary);
+    if(!input)throw std::runtime_error("original source cannot be opened");
+    const auto summary=visit_bindingdb_bulk(input,limits,[](const auto &){});
+    input.clear();input.seekg(0);
+    if(!input)throw std::runtime_error("original source cannot be rewound");
+    if(!summary.rows)throw std::invalid_argument("empty original evidence carrier");
+    const auto header=[&](const BindingDBBulkHeader &source_header) {
             auto h=Json::object(), endpoints=Json::array();h.set("event",text("header"));h.set("rows",number(summary.rows));
-            h.set("columns",number(row.affinities.size()));h.set("source_columns",strings(row.header.columns));
-            for (const auto &affinity:row.affinities) {
-                auto endpoint=Json::object();endpoint.set("column",number(affinity.column));endpoint.set("endpoint",text(affinity.endpoint));
+            h.set("source_columns",strings(source_header.columns));
+            for(std::size_t column=0;column<source_header.columns.size();++column) {
+                const auto name=source_header.columns[column];
+                if(name!="Ki (nM)"&&name!="Kd (nM)"&&name!="IC50 (nM)"&&name!="EC50 (nM)")continue;
+                auto endpoint=Json::object();endpoint.set("column",number(column));endpoint.set("endpoint",text(name.substr(0,name.size()-5)));
                 endpoints.push(endpoint);
             }
+            h.set("columns",number(endpoints.size()));
             h.set("endpoints",endpoints);
-            if(row.header.chain_start) h.set("chain_start",number(*row.header.chain_start));
-            emit(h);header=true;
-        }
+            if(source_header.chain_start) h.set("chain_start",number(*source_header.chain_start));
+            emit(h);
+    };
+    const auto converted=visit_bindingdb_bulk(input,limits,[&](const BindingDBBulkRowView &row) {
         auto item=Json::object(),values=Json::array(),comparisons=Json::array();
         item.set("event",text("row"));item.set("index",number(row.ordinal));item.set("offset",number(row.byte_offset));item.set("length",number(row.byte_length));
         item.set("fields",strings(row.fields));
@@ -111,8 +123,9 @@ void bindingdb(const RawByteSource &bytes, const Json &q) {
             comparisons.push(affinity.relation?Json::integer(static_cast<std::int64_t>(*affinity.relation)+1):Json{});
         }
         item.set("values",values);item.set("comparisons",comparisons);emit(item);
-    });
-    if (!header) throw std::invalid_argument("empty original evidence carrier");
+    },{},header);
+    if(converted.rows!=summary.rows||fs::file_size(path)!=length)
+        throw std::runtime_error("original source changed during conversion");
 }
 }
 int main(int argc,char **argv) {
@@ -143,9 +156,10 @@ int main(int argc,char **argv) {
             }
             return 0;
         }
-        const auto q=Json::parse(read_text(argv[3]));const auto bytes=source(argv[2],limit(q,"source_bytes"));
+        const auto q=Json::parse(read_text(argv[3]));
+        if(format=="bindingdb"&&argc==4) {bindingdb(argv[2],q);return 0;}
+        const auto bytes=source(argv[2],limit(q,"source_bytes"));
         if (format=="gtex" && argc==4) gtex(bytes,q);
-        else if (format=="bindingdb" && argc==4) bindingdb(bytes,q);
         else if (format=="pubchem" && argc>=5) {
             using N=NativeRecordValue;std::vector<RawByteSource> original{bytes};
             N::Object root{{{"schema",N(std::string("gadget.pubchem.sources.native.v1"))},

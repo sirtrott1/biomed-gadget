@@ -74,7 +74,8 @@
               "metric_relative_novelty",
               "relational_gluing",
               "declared_set_enrichment",
-              "evidence_correspondences"
+              "evidence_correspondences",
+              "count_model_inference"
             ]
           },
           "bindings": {
