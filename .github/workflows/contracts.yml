@@ -2,6 +2,8 @@ name: C++ contracts
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
 
@@ -28,6 +30,7 @@ jobs:
       actions: read
     outputs:
       contracts: ${{ steps.plan.outputs.contracts }}
+      matching_qualification: ${{ steps.plan.outputs.matching_qualification }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,7 +39,8 @@ jobs:
       - name: Select native qualification
         id: plan
         env:
-          BASE_SHA: ${{ github.event.before }}
+          # Checkout and GITHUB_SHA use the tested PR merge snapshot.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           GH_TOKEN: ${{ github.token }}
         run: python3 tools/ci_checks.py plan --base "$BASE_SHA" --head "$GITHUB_SHA" --output "$GITHUB_OUTPUT"
       - name: Check CI selection and documentation
@@ -174,3 +178,26 @@ jobs:
             build/presets/cpu/build-info.json
             build/presets/cpu/dependency.json
             build/presets/cpu/Testing/Temporary/LastTest.log
+  qualification:
+    name: Native qualification
+    needs: [checks, contracts]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report native acceptance
+        env:
+          INPUT_RESULT: ${{ needs.checks.result }}
+          CONTRACTS_REQUIRED: ${{ needs.checks.outputs.contracts }}
+          CONTRACTS_RESULT: ${{ needs.contracts.result }}
+          MATCHING_QUALIFICATION: ${{ needs.checks.outputs.matching_qualification }}
+        run: >-
+          python3 tools/ci_checks.py report
+          --checks-result "$INPUT_RESULT"
+          --required "$CONTRACTS_REQUIRED"
+          --contracts-result "$CONTRACTS_RESULT"
+          --matching-qualification "$MATCHING_QUALIFICATION"
+          --summary "$GITHUB_STEP_SUMMARY"

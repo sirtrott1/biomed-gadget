@@ -46,6 +46,10 @@ def matching_qualification(head, repository, root=ROOT):
     try:
         runs = api(f"repos/{repository}/actions/workflows/contracts.yml/runs?status=success&per_page=20")
         for run in runs["workflow_runs"]:
+            # PR API head_sha is the feature head, while checkout tests a merge
+            # snapshot. Only these events identify the actual tested checkout.
+            if run.get("event") not in ("push", "workflow_dispatch"):
+                continue
             paths = changed_paths(run["head_sha"], head, root)
             if paths is None or (paths and needs_contracts(paths)):
                 continue
@@ -56,6 +60,18 @@ def matching_qualification(head, repository, root=ROOT):
     except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError):
         return None
     return None
+
+
+def qualification_status(checks_result, required, contracts_result, matching):
+    if checks_result != "success":
+        raise ValueError("Input/documentation checks did not succeed; native acceptance is unqualified")
+    if required == "true":
+        if contracts_result != "success":
+            raise ValueError("Required native compiler contracts did not succeed; native acceptance is unqualified")
+        return "PASS_CURRENT_NATIVE_CONTRACTS"
+    if required == "false" and contracts_result == "skipped" and matching:
+        return "PASS_PREVIOUS_EQUIVALENT_NATIVE_CONTRACTS"
+    raise ValueError("No successful native compiler qualification was established")
 
 
 def check_document(path):
@@ -101,6 +117,12 @@ def main():
     plan.add_argument("--base", default="")
     plan.add_argument("--head", default="HEAD")
     plan.add_argument("--output", type=Path)
+    report = commands.add_parser("report")
+    report.add_argument("--checks-result", required=True)
+    report.add_argument("--required", required=True)
+    report.add_argument("--contracts-result", required=True)
+    report.add_argument("--matching-qualification", default="")
+    report.add_argument("--summary", type=Path)
     commands.add_parser("docs")
     commands.add_parser("preflight")
     args = parser.parse_args()
@@ -114,8 +136,26 @@ def main():
         if args.output:
             with args.output.open("a") as output:
                 output.write(f"contracts={str(required).lower()}\n")
-        print(json.dumps({"contracts": required, "changed_paths": paths,
-                          "matching_qualification": qualified}))
+                output.write(f"matching_qualification={qualified or ''}\n")
+        print(json.dumps({"contracts": required, "base": args.base, "head": args.head,
+                          "changed_paths": paths, "matching_qualification": qualified}))
+    elif args.command == "report":
+        try:
+            status = qualification_status(args.checks_result, args.required,
+                                          args.contracts_result, args.matching_qualification)
+            detail = ("Both native compiler suites passed for this snapshot."
+                      if args.required == "true" else
+                      "Native compilation was reused from an executable-input-equivalent run: "
+                      + args.matching_qualification)
+        except ValueError as error:
+            status, detail = "UNQUALIFIED", str(error)
+        if args.summary:
+            with args.summary.open("a") as output:
+                output.write(f"Native qualification: {status}\n\n{detail}\n")
+                output.write("\nPassing input/documentation checks alone does not qualify native behavior.\n")
+        print(json.dumps({"status": status, "detail": detail}))
+        if status == "UNQUALIFIED":
+            raise SystemExit(1)
     elif args.command == "docs":
         paths = (ROOT / "README.md", *sorted((ROOT / "examples").rglob("README.md")),
                  *sorted((ROOT / "tools").rglob("README.md")))
