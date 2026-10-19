@@ -99,12 +99,12 @@ depths. It does not distinguish the experimental causes of their disagreement.
 ## Reproduce
 
 Build GADGET against the independent RexGraphCpp project as described in the
-[build instructions](../../README.md#build-and-test). The CPU preset builds both
-the application and the verifier. The following commands use repository relative
+[build instructions](../../cmake/README.md#build). Enable examples to build
+the application and verifier. The following commands use repository relative
 paths and download the complete public inputs into a new data directory.
 
 ```sh
-cmake --preset cpu
+cmake --preset cpu -DGADGET_BUILD_EXAMPLES=ON
 cmake --build --preset cpu
 python3 examples/bioinformatics/prepare_chip.py data/chip \
   --gadget build/presets/cpu/gadget --source-namespace 908105 --download

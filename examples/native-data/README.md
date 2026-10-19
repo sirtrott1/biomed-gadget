@@ -12,6 +12,8 @@ original bytes and coordinates the declared work. This target does not require
 JSON. For file intake, paged exploration and selected dataset materialization,
 use the [Python data API](../../tools/rcdb/DATA.md).
 
+## Read a publication
+
 `NativeStudy::read(path)` detects RFCXS and RFCX from their canonical byte
 signatures, regardless of file extension. RFCXS supplies its actual namespace;
 an optional cutoff selects an existing endpoint. RFCX requires an explicit
@@ -31,6 +33,8 @@ or occurrences, bind source aspect factors, and retain authored
 `TemporalSourceLayoutProgram` instructions. Persist the complete endpoint with
 RexGraph's native RFCXS codec. GADGET accepts that endpoint or its canonical
 binary directly, without recreating its topology from a semantic catalogue.
+
+## Original bytes and declared layouts
 
 Original input bytes are `RawByteSource` owners, including arbitrary binary,
 NUL bytes and invalid UTF8. A provenance record is an authored native Product
@@ -69,6 +73,8 @@ aspect planes and executes the retained instructions with private scratch.
 It preserves inactive occurrences, occurrence order and final word masks.
 No adjacency construction or replacement algorithm is introduced.
 
+## Glue declared sources
+
 `execute_native_gluing` accepts a prepared native gluing plan, authentic field
 pins, explicit availability and a canonical CPU reservation. Results retain
 the native preparation, source inputs and ordered boundary lineage. There is
@@ -78,6 +84,8 @@ zeros. Persist the output through RFCXS and the original source square through
 `write_native_atlas`; keep original raw files alongside those binaries.
 Output publication namespaces remain explicit. This does not imply a signature
 recoding or transport of arbitrary declared stalk payloads through the pushout.
+
+## Run the example
 
 The native contract executable exercises two different authored machine
 programs over 130 original occurrences, custom factor ordering, raw opaque byte
@@ -89,6 +97,8 @@ cmake --preset contracts
 cmake --build --preset contracts --target gadget_native_data_tests
 build/presets/cpu/gadget_native_data_tests "native example"
 ```
+
+## Select a history
 
 `NativeStudy::from_history(history, sources, cutoff)` selects an immutable
 publication from an admitted series. Omitting `cutoff`, or supplying the final
@@ -103,6 +113,8 @@ The caller's byte and codec resource limits are enforced before admission.
 
 The [native load profiler](../../tools/native-load/README.md) separates decoding
 and accession costs and reports retained component capacity.
+
+## Create records
 
 `NativeRecord` compiles application values into canonical composite declarations
 on an actual endpoint. Objects use Products, alternatives retain their chosen
@@ -124,6 +136,8 @@ temporary endpoint storage before canonical freezing. Records retain their SDK
 publication, so writing again reuses its encoded components. `RawByteSource::rekey`
 assigns another declared identity to the same frozen byte owner. Transferred
 vectors with possible mutable aliases are copied before that owner is shared.
+
+## Stream result collections
 
 For a large result collection, `NativeRecordValue::PackedArray` accepts a count
 and a synchronous producer. The producer emits complete values in order:
@@ -161,6 +175,8 @@ composite binary formats are unchanged. Packed collections reduce expanded
 application value storage; the actual scientific complex, fields, source bytes
 and complete results still occupy memory and storage.
 
+## Annotations and progress
+
 New compact biomedical annotations pack their complete top level collections,
 including fields, contexts and document bindings. The declared producer history
 and its measured tensors are retained unchanged. Ordinary and earlier study
@@ -174,6 +190,8 @@ The consuming `derive` and `create_from_endpoint` overloads and
 `retain_operation` accept an optional `NativeRecordObserver`. It reports
 completed source declaration, composite value, declaration channel, canonical
 freeze and record binding stages. An observer exception aborts construction.
+
+## Files and display views
 
 Biomedical stores, scientific studies, assay workspaces, snapshots, workflow
 histories and pipeline artifacts use these native owners. A snapshot directory
