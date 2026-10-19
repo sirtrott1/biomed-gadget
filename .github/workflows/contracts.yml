@@ -42,6 +42,8 @@ jobs:
       - name: Check CI selection and documentation
         run: |
           python3 tests/ci_checks.py
+          python3 tests/publication.py
+          python3 tools/check_publication.py --history
           python3 tools/ci_checks.py docs
           python3 tests/dependency.py
           python3 tests/source_export.py "$RUNNER_TEMP/source-export-contracts"

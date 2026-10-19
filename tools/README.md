@@ -22,13 +22,15 @@ python3 tools/export_source.py --out build/gadget-source.zip \
 ```
 
 The exporter checks the selected build and SDK, then includes public source,
-licensing files, available Git history and `SHA256SUMS`. It leaves the source
+licensing files, Git branches and tags and `SHA256SUMS`. It leaves the source
 repository unchanged. Use `unzip` to restore executable file modes and inspect
 history with `git log --all` in the extracted `gadget/` directory.
 
 `--without-history` creates a source snapshot. `--git-dir` selects Git metadata
 managed separately from the worktree; that history must be readable. The export
-preserves every available object and ref while excluding local ref journals.
+preserves the selected branches, tags and their complete reachable history.
+Local saved work, ref journals and unreachable objects are excluded.
+Source and selected history must pass the publication check before export.
 
 Research inputs, generated results, model weights, workspace notes and build
 products are excluded. Git checkouts also exclude ignored files. Without Git,

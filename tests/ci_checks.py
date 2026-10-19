@@ -45,7 +45,7 @@ class CIContracts(unittest.TestCase):
     def test_every_other_input_requires_native_contracts(self):
         for path in ("src/query.cpp", "include/gadget/native_data.hpp", "CMakeLists.txt",
                      "CMakePresets.json", "cmake/RexGraph.lock.cmake", "schemas/query.json",
-                     "tests/requirements.txt", "tools/rcdb/requirements.lock",
+                     "tests/requirements.txt", "tools/rcdb/pyproject.toml",
                      "tests/fixtures/source.rfcxs", "tools/reader.py",
                      ".github/workflows/contracts.yml", "LICENSE", "new/provider.py"):
             with self.subTest(path=path):

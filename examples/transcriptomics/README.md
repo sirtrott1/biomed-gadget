@@ -12,4 +12,4 @@ Declare sample correspondence and normalization before calculation. The observed
 contrast is not a fitted population effect or a sampling probability.
 
 See the [assay query schema](../../schemas/assays-query.schema.json),
-[pipeline guide](../pipelines/README.md) and [C++ interface](https://github.com/sirtrott1/biomed-gadget/blob/main/include/gadget/README.md).
+[pipeline guide](../pipelines/README.md) and [C++ interface](../../include/gadget/README.md).
