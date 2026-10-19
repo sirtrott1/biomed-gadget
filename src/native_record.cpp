@@ -9,11 +9,7 @@
 #include <rfc/storage/mapped_file.hpp>
 #include <rfc/storage/native_series_prefix.hpp>
 #include <set>
-#if defined(__APPLE__)
-#include <unistd.h>
-#else
 #include <sys/random.h>
-#endif
 #include <tuple>
 
 namespace gadget {
