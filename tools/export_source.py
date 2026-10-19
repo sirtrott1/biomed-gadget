@@ -126,6 +126,10 @@ def main():
                                 capture_output=True, text=True)
     if candidates.returncode == 0:
         eligible = set(candidates.stdout.split('\0'))
+        tracked = subprocess.run([*selection, 'ls-tree', '-rz', '--name-only', 'HEAD'],
+                                 capture_output=True, text=True)
+        if tracked.returncode == 0:
+            eligible.update(tracked.stdout.split('\0'))
         files = [path for path in files if path.relative_to(ROOT).as_posix() in eligible]
     elif args.git_dir:
         raise ValueError('Selected Git metadata cannot enumerate the public worktree')

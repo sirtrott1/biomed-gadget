@@ -93,3 +93,38 @@ refused = subprocess.run([sys.executable, str(project / 'tools/export_source.py'
     '--git-dir', str(metadata), '--without-history'], capture_output=True)
 assert refused.returncode and not (root / 'conflict.zip').exists() and full.read_bytes() == before
 print('Published branches, extracted index and exclusion of local refs and objects passed')
+
+# A bare repository can have a valid commit and no index. Its tracked examples
+# must survive source selection even when their extensions are ignored.
+(project / 'examples').mkdir()
+example = project / 'examples/reads.fastq'
+example.write_bytes(b'@read\nA\n+\n!\n')
+with (project / '.gitignore').open('a') as stream:
+    stream.write('*.fastq\n')
+subprocess.run([*selected, 'add', '.gitignore'], check=True)
+subprocess.run([*selected, 'add', '-f', 'examples/reads.fastq'], check=True)
+subprocess.run([*selected, '-c', 'user.name=Export contract',
+                '-c', 'user.email=export@example.invalid', 'commit', '--quiet',
+                '-m', 'Retain example input'], check=True)
+updated_head = subprocess.check_output([*selected, 'rev-parse', 'HEAD']).strip()
+without_index = root / 'without-index.git'
+subprocess.run(['git', 'init', '--quiet', '--bare', '--initial-branch=main', str(without_index)], check=True)
+subprocess.run(['git', '--git-dir', str(without_index), 'fetch', '--quiet', '--no-tags',
+                '--no-write-fetch-head', str(metadata), updated_head.decode() + ':refs/heads/main'], check=True)
+assert not (without_index / 'index').exists()
+complete = root / 'complete.zip'
+subprocess.run([sys.executable, str(project / 'tools/export_source.py'), '--out', str(complete),
+                '--git-dir', str(without_index)], check=True, capture_output=True, text=True)
+restored = root / 'complete'
+with zipfile.ZipFile(complete) as output:
+    assert output.read('gadget/examples/reads.fastq') == example.read_bytes()
+    assert not any('internal/' in name or 'generated/' in name for name in output.namelist())
+    output.extractall(restored)
+    for member in output.infolist():
+        if not member.is_dir():
+            (restored / member.filename).chmod((member.external_attr >> 16) & 0o777)
+subprocess.run(['git', '-C', str(restored / 'gadget'), 'fsck', '--full', '--strict'],
+               check=True, capture_output=True)
+assert subprocess.check_output(['git', '-C', str(restored / 'gadget'), 'status', '--porcelain']) == b''
+assert not (without_index / 'index').exists()
+print('Tracked example inputs survive exports from Git metadata without an index')
