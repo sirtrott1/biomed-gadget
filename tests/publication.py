@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('publication', Path(__file__).resolve().parents[1] / 'tools/check_publication.py')
 publication = importlib.util.module_from_spec(spec)
@@ -48,6 +49,40 @@ class PublicationContracts(unittest.TestCase):
         self.assertGreater(publication.content_findings(gzip.compress(local)), 0)
         self.assertEqual(publication.content_findings(gzip.compress(b'declared test input')), 0)
         self.assertGreater(publication.content_findings(gzip.compress(b'a' * ((16 << 20) + 1))), 0)
+
+    def test_generated_files_and_native_data(self):
+        generated = ('AGENTS.md', 'experiments/notes.md', '.llama-source/CMakeLists.txt',
+                     'tools/rcdb/dist/package.whl', 'tools/rcdb/build/lib/module.py',
+                     'examples/counts.native/catalog', 'tools/store.sqlite3',
+                     'tools/selected.rcbd', 'tools/measurements.rcdb', 'tools/counts.npy')
+        for name in generated:
+            with self.subTest(name=name):
+                self.assertGreater(publication.path_findings(name), 0)
+        for name in ('examples/measurements.csv', 'examples/scientific/coverage.rfcxs',
+                     'src/native_record.cpp'):
+            with self.subTest(name=name):
+                self.assertEqual(publication.path_findings(name), 0)
+
+    def test_generated_outputs_are_ignored(self):
+        root = Path(__file__).resolve().parents[1]
+        names = ('counts.native/catalog', 'measurements.rcdb', 'selected.rcbd',
+                 'result.rfcxs.gz', 'cache.rcblob', 'store.sqlite3', 'store.sqlite3-wal',
+                 'counts.npy', '.llama-source/README.md', 'tools/rcdb/dist/package.whl')
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['git', 'init', '--quiet', directory], check=True, capture_output=True)
+            (Path(directory) / '.gitignore').write_bytes((root / '.gitignore').read_bytes())
+            result = subprocess.check_output(['git', '-C', directory, 'check-ignore',
+                                               '--no-index', '--stdin', '-z'],
+                                              input=b'\0'.join(name.encode() for name in names) + b'\0')
+            self.assertEqual(set(result.decode().strip('\0').split('\0')), set(names))
+
+    def test_excluded_data_is_rejected_without_reading_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(['git', 'init', '--quiet', directory], check=True, capture_output=True)
+            (root / 'measurements.npy').write_bytes(b'excluded data')
+            with patch.object(Path, 'read_bytes', side_effect=AssertionError('Excluded data was read')):
+                self.assertGreater(publication.check(root), 0)
 
 
 if __name__ == '__main__':

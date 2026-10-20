@@ -26,6 +26,10 @@ licensing files, Git branches and tags and `SHA256SUMS`. It leaves the source
 repository unchanged. Use `unzip` to restore executable file modes and inspect
 history with `git log --all` in the extracted `gadget/` directory.
 
+An export with history requires the source files and executable modes to match
+the selected commit. Commit public changes first. Untracked source files and
+missing tracked files are refused so the restored checkout matches its history.
+
 `--without-history` creates a source snapshot. `--git-dir` selects Git metadata
 managed separately from the worktree; that history must be readable. The export
 preserves the selected branches, tags and their complete reachable history.

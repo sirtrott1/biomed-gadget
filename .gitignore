@@ -10,11 +10,11 @@
 /models/
 /results/
 /releases/
-/dist/
+dist/
 /archives/
 /*_HANDOFF_*/
-/*.zip
-/*.tar.gz
+*.zip
+*.tar.gz
 /*.sha256
 
 # Builds and generated runtime files
@@ -49,13 +49,39 @@ node_modules/
 
 # Native publications and biomedical data files
 *.rfcxs
+*.rfcxs.gz
 *.rfcx
+*.rfcx.gz
 *.rcf
+*.rcf.gz
 *.rcbf
-*.rcbd/
-*.rcdb/
+*.rcbf.gz
+*.rcbd
+*.rcbd.gz
+*.rcdb
+*.rcdb.gz
+*.rcblob
+*.native/
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.egg-info/
+*.whl
+*.egg
 /tools/rcdb/build/
+*.npy
+*.npz
+*.h5
+*.hdf5
 *.h5ad
 *.bam
 *.cram
@@ -88,13 +114,14 @@ id_ed25519
 .coverage
 htmlcov/
 /.ninja_*
-/*.tar
-/*.tar.xz
-/*.tar.zst
-/*.tgz
-/*.bundle
+*.tar
+*.tar.xz
+*.tar.zst
+*.tgz
+*.bundle
 /.rfc-download/
 /.rfc-source/
+/.llama-source/
 
 # Development records
 /docs/*.json

@@ -13,12 +13,21 @@ WORK_NOTES = re.compile(rb'\b(?:worktree|handoff|session [ABC])\b', re.I)
 DEVELOPMENT_REPORT = re.compile(rb'qualification\s+workstation|development\s+host|'
                                 rb'(?:CPU|protocol|planning) qualification (?:on|used)', re.I)
 PRIVATE_ROOTS = {'internal', 'private', 'research', 'verification', 'migration',
-                 'data', 'models', 'results', 'archives', 'releases'}
+                 'data', 'models', 'results', 'archives', 'releases', 'experiments',
+                 'build', 'dist', '.venv', '.rfc-source', '.rfc-download', '.llama-source'}
+GENERATED_SUFFIXES = {'.whl', '.egg', '.o', '.obj', '.a', '.so', '.dylib', '.dll', '.exe',
+                      '.rcdb', '.rcbd', '.rcblob', '.sqlite', '.sqlite3', '.npy', '.npz',
+                      '.h5', '.hdf5', '.h5ad', '.db', '.zip', '.bundle'}
 
 
 def path_findings(name):
     path = Path(name)
     if path.parts and path.parts[0] in PRIVATE_ROOTS:
+        return 1
+    if (path.name == 'AGENTS.md' or any(part in ('__pycache__', '.cache', 'build', 'dist', 'CMakeFiles')
+                                      or part.endswith(('.native', '.rcdb', '.rcbd', '.egg-info'))
+                                      for part in path.parts)
+            or any(suffix in GENERATED_SUFFIXES for suffix in path.suffixes)):
         return 1
     if path.parent == Path('docs') and path.suffix == '.json':
         return 1
@@ -61,10 +70,15 @@ def check(root, git_dir=None, history=False):
             path = root / name
             if not name or not path.is_file():
                 continue
-            count += path_findings(name) + content_findings(path.read_bytes(), name)
+            excluded = path_findings(name)
+            count += excluded
+            if not excluded:
+                count += content_findings(path.read_bytes(), name)
         return count
     names = subprocess.check_output(git + ['log', '--all', '--root', '-m', '--format=', '--name-only', '-z']).decode().split('\0')
     count += sum(path_findings(name.strip()) for name in set(names) if name.strip())
+    if count:
+        return count
     objects = subprocess.check_output(git + ['rev-list', '--objects', '--all']).splitlines()
     reader = subprocess.Popen(git + ['cat-file', '--batch'], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     for entry in objects:

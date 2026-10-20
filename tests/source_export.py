@@ -128,3 +128,34 @@ subprocess.run(['git', '-C', str(restored / 'gadget'), 'fsck', '--full', '--stri
 assert subprocess.check_output(['git', '-C', str(restored / 'gadget'), 'status', '--porcelain']) == b''
 assert not (without_index / 'index').exists()
 print('Tracked example inputs survive exports from Git metadata without an index')
+
+def refuse_inconsistent_source(label):
+    destination = root / (label + '.zip')
+    result = subprocess.run([sys.executable, str(project / 'tools/export_source.py'),
+        '--out', str(destination), '--git-dir', str(without_index)], capture_output=True)
+    assert result.returncode and not destination.exists(), label
+
+readme = project / 'README.md'
+original = readme.read_bytes()
+readme.write_bytes(b'Uncommitted source text\n')
+refuse_inconsistent_source('modified-source')
+snapshot = root / 'snapshot.zip'
+subprocess.run([sys.executable, str(project / 'tools/export_source.py'), '--out', str(snapshot),
+                '--without-history'], check=True, capture_output=True)
+with zipfile.ZipFile(snapshot) as output:
+    assert output.read('gadget/README.md') == readme.read_bytes()
+    assert not any(name.startswith('gadget/.git/') for name in output.namelist())
+readme.write_bytes(original)
+untracked = project / 'tools/untracked.py'
+untracked.write_bytes(b'value = 2\n')
+refuse_inconsistent_source('untracked-source')
+untracked.unlink()
+readme.unlink()
+refuse_inconsistent_source('missing-source')
+readme.write_bytes(original)
+executable = project / 'tools/method.py'
+executable.chmod(0o644)
+refuse_inconsistent_source('changed-mode')
+executable.chmod(0o755)
+assert not (without_index / 'index').exists()
+print('History exports refuse modified, untracked, missing and mode changed source; snapshots stay explicit')

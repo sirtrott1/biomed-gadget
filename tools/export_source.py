@@ -23,6 +23,39 @@ def digest(path):
         while chunk := stream.read(1024 * 1024): h.update(chunk)
     return h.hexdigest()
 
+def verify_snapshot(selection, files):
+    head = subprocess.run([*selection, 'rev-parse', '--verify', 'HEAD'],
+                          capture_output=True, text=True)
+    if head.returncode:
+        return
+    entries = subprocess.check_output([*selection, 'ls-tree', '-rz',
+                                       head.stdout.strip()]).split(b'\0')
+    tracked = {}
+    for entry in entries:
+        if entry:
+            attributes, name = entry.split(b'\t', 1)
+            mode, kind, oid = attributes.decode().split()
+            if kind != 'blob':
+                raise ValueError('Source history contains an unsupported external object')
+            tracked[name.decode()] = (mode, oid)
+    selected = {path.relative_to(ROOT).as_posix() for path in files}
+    if selected != tracked.keys():
+        raise ValueError('Source selection differs from the selected commit; commit public files '
+                         'before exporting history, or use --without-history')
+    algorithm = subprocess.check_output([*selection, 'rev-parse', '--show-object-format'],
+                                        text=True).strip()
+    for path in files:
+        mode, expected = tracked[path.relative_to(ROOT).as_posix()]
+        actual = hashlib.new(algorithm, b'blob ' + str(path.stat().st_size).encode() + b'\0')
+        with path.open('rb') as stream:
+            while chunk := stream.read(1024 * 1024):
+                actual.update(chunk)
+        executable = bool(path.stat().st_mode & 0o100)
+        if (actual.hexdigest() != expected or mode not in ('100644', '100755')
+                or executable != (mode == '100755')):
+            raise ValueError('Source differs from the selected commit; commit public changes '
+                             'before exporting history, or use --without-history')
+
 def object_inventory(git_dir):
     command = ['git', '--git-dir', str(git_dir), 'cat-file', '--batch-all-objects',
                '--batch-check=%(objectname) %(objecttype) %(objectsize)']
@@ -135,10 +168,12 @@ def main():
         raise ValueError('Selected Git metadata cannot enumerate the public worktree')
     assert all(not path.is_symlink() for path in files), 'Public source symlinks require an explicit export declaration'
     files = sorted(set(files))
-    if any(publication.path_findings(path.relative_to(ROOT).as_posix()) +
+    if any(publication.path_findings(path.relative_to(ROOT).as_posix()) or
            publication.content_findings(path.read_bytes(), path.relative_to(ROOT).as_posix())
            for path in files):
         raise ValueError('Selected source failed the publication check')
+    if not args.without_history:
+        verify_snapshot(selection, files)
     inventory = {'gadget/' + path.relative_to(ROOT).as_posix(): digest(path) for path in files}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     staging = ROOT / 'build'
