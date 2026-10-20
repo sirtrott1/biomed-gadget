@@ -1,5 +1,5 @@
 #include <algorithm>
-#include <array>
+#include <vector>
 #include <cctype>
 #include <cmath>
 #include <fstream>
@@ -313,7 +313,7 @@ std::string sha256_file(const fs::path &path) {
         std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>(EVP_MD_CTX_new(), EVP_MD_CTX_free);
     if (!stream || !digest || EVP_DigestInit_ex(digest.get(), EVP_sha256(), nullptr) != 1)
         throw std::runtime_error("cannot initialize file identity");
-    std::array<char, 1024 * 1024> buffer{};
+    std::vector<char> buffer(64 * 1024);
     while (stream) {
         stream.read(buffer.data(), buffer.size());
         if (EVP_DigestUpdate(digest.get(), buffer.data(), stream.gcount()) != 1)

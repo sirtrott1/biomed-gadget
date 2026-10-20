@@ -1,5 +1,5 @@
 #include "scientific_detail.hpp"
-#include <array>
+#include <vector>
 #include <fstream>
 #include <gadget/table.hpp>
 #include <rfc/core/builder.hpp>
@@ -96,7 +96,7 @@ void import_table(const fs::path &specification, const fs::path &destination) {
         require(static_cast<bool>(stream), "table source open");
         // A transfer chunk is not a source size limit. Read exactly the admitted
         // image and reject growth/truncation before a larger file can be retained.
-        std::array<char, 1024 * 1024> buffer{};
+        std::vector<char> buffer(64 * 1024);
         for (std::uintmax_t copied = 0; copied < source_bytes;) {
             const auto n = static_cast<std::size_t>(
                 std::min<std::uintmax_t>(source_bytes - copied, buffer.size()));

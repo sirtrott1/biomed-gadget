@@ -82,4 +82,13 @@ jobs:
       - name: Exercise native execution, resources, file publication and source formats
         run: >-
           ctest --test-dir "$RUNNER_TEMP/portability" --output-on-failure --no-tests=error
-          -R '^gadget_(native_record|platform_observation|memory_observation|execution_resource|genomic_integer_portability|file_publication|count(_reference|_native)?|bindingdb_bulk(_reference)?)_contracts$'
+          -R '^gadget_(native_record|platform_observation|memory_observation|execution_resource|assay_intake|genomic_integer_portability|file_publication|count(_reference|_native)?|bindingdb_bulk(_reference)?)_contracts$'
+      - name: Retain failed contract diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-contract-diagnostics
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/portability/Testing/Temporary/LastTest.log
+            ${{ runner.temp }}/portability/test-data/count-models

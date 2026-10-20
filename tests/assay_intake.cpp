@@ -5,12 +5,43 @@
 #include <csignal>
 #include <exception>
 #include <iostream>
+#include <pthread.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 
 namespace {
+void hash_small_stack(const gadget::fs::path &path, const std::string &expected) {
+    struct Request {
+        gadget::fs::path path;
+        std::string digest;
+        std::exception_ptr error;
+    } request{path, {}, {}};
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes))
+        throw std::runtime_error("cannot initialize hashing thread attributes");
+    if (pthread_attr_setstacksize(&attributes, 512 * 1024)) {
+        pthread_attr_destroy(&attributes);
+        throw std::runtime_error("cannot set hashing thread stack size");
+    }
+    pthread_t thread;
+    const auto created = pthread_create(&thread, &attributes, [](void *opaque) -> void * {
+        auto &call = *static_cast<Request *>(opaque);
+        try { call.digest = gadget::sha256_file(call.path); }
+        catch (...) { call.error = std::current_exception(); }
+        return nullptr;
+    }, &request);
+    pthread_attr_destroy(&attributes);
+    if (created)
+        throw std::runtime_error("cannot create hashing thread");
+    if (pthread_join(thread, nullptr))
+        std::terminate();
+    if (request.error)
+        std::rethrow_exception(request.error);
+    if (request.digest != expected)
+        throw std::logic_error("small stack hashing changed original source bytes");
+}
 void io_boundary(const gadget::fs::path &root) {
     using namespace gadget;
     fs::create_directories(root);
@@ -27,6 +58,12 @@ void io_boundary(const gadget::fs::path &root) {
     write_text(source, original);
     check(read_text(source) == original && sha256_file(source) == sha256(original),
           "all original bytes or complete file hash changed");
+    hash_small_stack(source, sha256(original));
+    std::string large(3 * 1024 * 1024 + 17, '\0');
+    for (std::size_t i = 0; i < large.size(); ++i)
+        large[i] = static_cast<char>(i % 251);
+    write_text(root / "large", large);
+    hash_small_stack(root / "large", sha256(large));
     const fs::path nul(source.string() + std::string(1, '\0') + "suffix");
     rejects([&] { (void)read_text(nul); });
     rejects([&] { (void)sha256_file(nul); });
@@ -54,6 +91,7 @@ void io_boundary(const gadget::fs::path &root) {
     check(read_text(source) == original && read_text(hard) == "independent replacement" &&
               !fs::equivalent(source, hard), "replacement mutated another linked original");
     write_text(root / "empty", "");
+    hash_small_stack(root / "empty", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     check(read_text(root / "empty", 0).empty(), "empty file or zero-byte budget refused");
     const auto previous = fs::current_path();
     fs::current_path(root);

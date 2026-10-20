@@ -34,7 +34,7 @@ def main(binary, consumer, root):
         return path
     def run(*args, fail=False):
         result = subprocess.run(list(map(str,args)), capture_output=True, text=True, timeout=120)
-        assert bool(result.returncode) == fail, result.stderr
+        assert bool(result.returncode) == fail, (args, result.returncode, result.stdout, result.stderr)
         return json.loads(result.stdout) if result.stdout.strip() and not fail else result
     run(binary, 'import-assays', '--spec', root/'inputs/import.json', '--out', root/'workspace')
     workspace = root/'workspace/workspace.rfcxs'
