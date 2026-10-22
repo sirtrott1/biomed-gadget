@@ -17,6 +17,7 @@
 #include <gadget/workflow.hpp>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <cstdio>
 #include <cstdlib>
@@ -87,7 +88,7 @@ int main(int argc, char **argv) {
                    "--prompt QUESTION [--threads N --context-tokens N --output-tokens N "
                    "--gpu-layers N]\n"
                    "       recipe-proposal --workspace MANIFEST --intent FILE --request FILE "
-                   "--prompt TEXT [--out NEW_DIRECTORY]\n"
+                   "--prompt TEXT [--out NEW_DIRECTORY --out-record FILE.rfcxs --admission typed]\n"
                    "       plan-recipes --workspace MANIFEST --intent FILE --model LOCAL_GGUF "
                    "--prompt TEXT [--out NEW_DIRECTORY]\n"
                    "       statistics --study DECLARATION --request FILE --out-record FILE\n"
@@ -147,7 +148,7 @@ int main(int argc, char **argv) {
              {"--workspace", "--context", "--model", "--prompt", "--threads", "--context-tokens",
               "--output-tokens", "--gpu-layers"}},
             {"recipe-proposal",
-             {"--workspace", "--intent", "--request", "--prompt", "--out", "--profile"}},
+             {"--workspace", "--intent", "--request", "--prompt", "--out", "--out-record", "--admission", "--profile"}},
             {"plan-recipes",
              {"--workspace", "--intent", "--model", "--prompt", "--out", "--threads",
               "--context-tokens", "--output-tokens", "--gpu-layers", "--profile"}},
@@ -329,6 +330,7 @@ int main(int argc, char **argv) {
             auto workspace =
                 std::make_shared<const gadget::AssayWorkspace>(required("--workspace"));
             gadget::Json intent;
+            std::optional<gadget::NativeRecord> intent_record;
             std::shared_ptr<const gadget::ScientificFacts> facts;
             if (command == "fact-catalog" || command == "claim-proposal" ||
                 command == "read-facts") {
@@ -379,7 +381,9 @@ int main(int argc, char **argv) {
             }
             if (command == "recipe-catalog" || command == "recipe-proposal" ||
                 command == "plan-recipes") {
-                intent = static_cast<gadget::Json>(gadget::read_record(required("--intent")));
+                const auto retained_intent = gadget::read_record(required("--intent"));
+                intent_record = retained_intent.native();
+                intent = static_cast<gadget::Json>(retained_intent);
                 if (options.contains("--profile") &&
                     options.at("--profile") != intent.at("profile").text())
                     throw std::invalid_argument("selected profile differs from recipe intent");
@@ -453,12 +457,33 @@ int main(int argc, char **argv) {
             const auto retained_declaration=gadget::read_record(required("--request"));
             const auto declaration = static_cast<gadget::Json>(retained_declaration);
             if (command == "recipe-proposal") {
-                auto answer = gadget::admit_recipe_proposal(*workspace, intent, declaration,
-                                                            required("--prompt"));
-                if (answer.at("status").text() == "admitted" && options.contains("--out"))
+                if (options.contains("--admission") && options.at("--admission") != "typed")
+                    throw std::invalid_argument("recipe admission policy must be typed");
+                if (options.contains("--out-record") && gadget::fs::exists(required("--out-record")))
+                    throw std::invalid_argument("admission destination already exists");
+                gadget::Json answer;
+                const auto admission = gadget::recipe_proposal_record(*workspace, *intent_record,
+                    retained_declaration.native(), required("--prompt"), &answer);
+                if (options.contains("--out-record")) admission.write(required("--out-record"));
+                const bool typed = !options.contains("--admission") ||
+                    answer.at("scientific_admission").at("status").text() == "satisfied";
+                if (answer.at("status").text() == "admitted" && options.contains("--out") && typed)
                     answer.set("execution", gadget::execute_pipeline(
-                                                workspace, answer.at("pipeline"), required("--out"),
-                                                {}, {}, nullptr, &answer));
+                        workspace, answer.at("pipeline"), required("--out"), {}, {}, nullptr, &answer));
+                if (answer.at("status").text() == "admitted" && options.contains("--out") && !typed)
+                    answer.set("execution_withheld", gadget::Json::string(
+                        "Automatic recipe execution requires a declared typed answer contract"));
+                if (options.contains("--out-record")) {
+                    auto observation = gadget::Json::object();
+                    for (const auto *key : {"status", "source_digest", "intent_sha256"})
+                        observation.set(key, answer.at(key));
+                    observation.set("scientific_status", answer.at("scientific_admission").at("status"));
+                    observation.set("executed", gadget::Json::boolean(answer.has("execution")));
+                    if (answer.has("execution_withheld"))
+                        observation.set("execution_withheld", answer.at("execution_withheld"));
+                    std::cout << observation.dump() << '\n';
+                    return 0;
+                }
                 std::cout << answer.dump() << '\n';
                 return 0;
             }

@@ -105,6 +105,34 @@ def main(binary, consumer, parent):
     assert planning["status"] == "admitted"
     planning_path = root / "pipeline" / planning["execution"]["planning"]
     checks += native("--planning", planning_path)["native_checks"]
+    admission_path = root / "recipe-admission.rfcxs"
+    admitted = run("recipe-proposal", "--workspace", workspace, "--intent", intent_path,
+        "--request", root / "proposal.json", "--prompt", question,
+        "--admission", "typed", "--out-record", admission_path)
+    assert admitted["scientific_status"] == "satisfied" and not admitted["executed"]
+    checks += native("--planning", admission_path)["native_checks"]
+    untyped = copy.deepcopy(intent)
+    del untyped["answer_contract"]
+    untyped_path = save("untyped-intent.json", untyped)
+    untyped_catalog = run("recipe-catalog", "--workspace", workspace, "--intent", untyped_path)
+    untyped_proposal = dict(proposal, intent_sha256=untyped_catalog["intent_sha256"])
+    withheld = root / "untyped-execution"
+    observed = run("recipe-proposal", "--workspace", workspace, "--intent", untyped_path,
+        "--request", save("untyped-proposal.json", untyped_proposal), "--prompt", question,
+        "--admission", "typed", "--out-record", root / "untyped-admission.rfcxs", "--out", withheld)
+    assert observed["scientific_status"] == "untyped" and not observed["executed"] and not withheld.exists()
+    assert observed["execution_withheld"]
+    run("recipe-proposal", "--workspace", workspace, "--intent", intent_path,
+        "--request", root / "proposal.json", "--prompt", question + " changed",
+        "--admission", "typed", "--out-record", root / "wrong-question.rfcxs", fail=True)
+    assert not (root / "wrong-question.rfcxs").exists()
+    checks += 4
+    checks += native("--reserved-pipeline", workspace,
+        save("reserved-pipeline.json", planning["pipeline"]), root / "reserved-pipeline")["native_checks"]
+    assert json.loads((root / "reserved-pipeline/glue/result.json").read_text()) == json.loads(
+        (root / "pipeline/glue/result.json").read_text())
+    checks += 1
+    checks += native("--replay", root / "reserved-pipeline/glue/result.rfcxs")["native_checks"]
     # Archives contain all original sources; remove former intake locations from
     # view before a fresh process reopens and reexecutes every native result.
     (root / "inputs").rename(root / "moved-inputs")

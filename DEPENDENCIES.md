@@ -35,7 +35,7 @@ packages in the Python repository. The repositories retain separate histories,
 builds and licenses. GADGET does not bundle their source or compiled libraries.
 Core, the C++ SDK and the optional Python bridge publish Apache 2.0 licenses.
 The bridge retains its own
-[license notice](https://github.com/sirtrott1/rexgraph-python/blob/5f9f4f9a7934c5c14e3f7344b15c0d8ea4147605/bindings/cpp/LICENSE).
+[license notice](https://github.com/sirtrott1/rexgraph-python/blob/732f822aa367ad161d5131c747b91f69e05ae7a8/bindings/cpp/LICENSE).
 
 ## Install from source
 
@@ -44,8 +44,8 @@ are pinned before compilation so the C++ application and Python bridge use the
 same SDK. Existing checkouts can instead use these revisions in separate clones.
 
 ```sh
-git -C ../rexgraph-python checkout --detach 5f9f4f9a7934c5c14e3f7344b15c0d8ea4147605
-git -C ../rexgraphcpp checkout --detach 4d52e37296a31bc6d7e6b43cdf091261e41518d6
+git -C ../rexgraph-python checkout --detach 732f822aa367ad161d5131c747b91f69e05ae7a8
+git -C ../rexgraphcpp checkout --detach cc367801df8b2316be9d7930fa4cbcaabed655ad
 ```
 
 On Debian or Ubuntu, install the system requirements:

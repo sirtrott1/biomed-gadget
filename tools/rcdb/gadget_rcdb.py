@@ -618,3 +618,111 @@ def install_rcql_field_selector(*, selector, gadget):
     register_signature(signature)
     register_operator(name)(select)
     return name
+
+
+def recipe_catalog(workspace, intent, *, gadget, max_bytes):
+    """Read the native catalog of complete recipe declarations and their sources."""
+    import json
+    binary = str(Path(gadget).resolve(strict=True))
+    _positive_byte_budget(max_bytes, "recipe")
+    with TemporaryDirectory(prefix="gadget-recipe-catalog-") as folder:
+        root = Path(folder)
+        for name, raw in (("workspace", workspace), ("intent", intent)):
+            if type(raw) is not bytes or not raw.startswith(_MAGIC) or len(raw) > max_bytes:
+                raise ValueError("recipe inputs require admitted RFCXS bytes within the declared budget")
+            (root / (name + ".rfcxs")).write_bytes(raw)
+        process = subprocess.run([binary, "recipe-catalog", "--workspace", str(root / "workspace.rfcxs"),
+            "--intent", str(root / "intent.rfcxs")], capture_output=True)
+        if process.returncode:
+            raise ValueError("GADGET recipe catalog failed: " + process.stderr.decode(errors="replace").strip())
+        if len(process.stdout) > max_bytes:
+            raise ValueError("recipe catalog exceeds the declared byte budget")
+        return json.loads(process.stdout)
+
+
+def recipe_publications(workspace, intent, proposal, question, *, execute, gadget, max_bytes):
+    """Native admission and explicitly typed execution with complete RFCXS outputs."""
+    import json
+    binary = str(Path(gadget).resolve(strict=True))
+    _positive_byte_budget(max_bytes, "recipe")
+    if type(execute) is not bool or type(proposal) is not str or type(question) is not str:
+        raise TypeError("recipe proposal/question require text and execute requires bool")
+    if not question or "\0" in question or len(proposal.encode()) + len(question.encode()) > max_bytes:
+        raise ValueError("recipe control exceeds its declared text/byte contract")
+    with TemporaryDirectory(prefix="gadget-recipe-proposal-") as folder:
+        root = Path(folder)
+        for name, raw in (("workspace", workspace), ("intent", intent)):
+            if type(raw) is not bytes or not raw.startswith(_MAGIC) or len(raw) > max_bytes:
+                raise ValueError("recipe inputs require admitted RFCXS bytes within the declared budget")
+            (root / (name + ".rfcxs")).write_bytes(raw)
+        (root / "proposal.json").write_text(proposal, encoding="utf-8")
+        command = [binary, "recipe-proposal", "--workspace", str(root / "workspace.rfcxs"),
+            "--intent", str(root / "intent.rfcxs"), "--request", str(root / "proposal.json"),
+            "--prompt", question, "--admission", "typed", "--out-record", str(root / "admission.rfcxs")]
+        if execute:
+            command += ["--out", str(root / "execution")]
+        process = subprocess.run(command, capture_output=True)
+        if process.returncode:
+            raise ValueError("GADGET recipe admission failed: " + process.stderr.decode(errors="replace").strip())
+        if len(process.stdout) > max_bytes:
+            raise ValueError("recipe observation exceeds the declared byte budget")
+        observation = json.loads(process.stdout)
+        paths = [root / "admission.rfcxs"] + sorted((root / "execution").rglob("*.rfcxs"))
+        if sum(path.stat().st_size for path in paths) > max_bytes:
+            raise ValueError("recipe publications exceed the declared aggregate byte budget")
+        publications = {path.relative_to(root).as_posix(): _read_regular_file(path,
+            max_bytes=max_bytes, resource="recipe publication") for path in paths}
+        # Native archive validation retains complete actual owners, never a rendered inverse.
+        for raw in publications.values():
+            validate_publication(raw, gadget=binary)
+        return {"observation": observation, "publications": publications}
+
+
+def install_rcql_recipes(*, gadget, max_bytes):
+    """Register native recipe operations with explicit source versions in RCQL."""
+    import hashlib
+    import json
+    from rcql import Domain, Exactness, OperatorSignature, RCType, TypePattern, ValueKind
+    from rcql.types import Effect
+    from rcql.execution_trace import record_method
+    from rcql.operators import register as register_operator
+    from rcql.signatures import register as register_signature
+    binary = str(Path(gadget).resolve(strict=True))
+    _positive_byte_budget(max_bytes, "recipe")
+    pins = (TypePattern("workspace_id", literal=str), TypePattern("workspace_version", literal=int),
+            TypePattern("intent_id", literal=str), TypePattern("intent_version", literal=int))
+    for name in ("GADGET_RECIPE_CATALOG", "GADGET_RECIPE_PROPOSAL"):
+        catalog = name == "GADGET_RECIPE_CATALOG"
+        signature = OperatorSignature(name=name, source_kind=ValueKind.RCDB_STORE,
+            inputs=pins if catalog else pins + (TypePattern("proposal", literal=str),
+                TypePattern("question", literal=str), TypePattern("execute", literal=bool)),
+            result=RCType("GadgetRecipeCatalog" if catalog else "GadgetRecipePublications",
+                kind=ValueKind.TEXT if catalog else ValueKind.RECORD,
+                domain=Domain.BYTES, exactness=Exactness.STRUCTURAL),
+            implementation_key="gadget.native-recipe-catalog.v1" if catalog else "gadget.native-recipe-proposal.v1",
+            requires=frozenset({"identity", "records", "files", "gadget_execute"}),
+            effects=frozenset({Effect.READ, Effect.FILESYSTEM}), source_methods=frozenset({"read_record"}))
+        binding = (signature.implementation_key, binary, max_bytes)
+        if _rcql_operator_installed(signature, binding):
+            continue
+        def operation(source, workspace_id, workspace_version, intent_id, intent_version,
+                      *arguments, _catalog=catalog):
+            workspace = read_publication(source, workspace_id, version=workspace_version)
+            intent = read_publication(source, intent_id, version=intent_version)
+            if _catalog:
+                result = json.dumps(recipe_catalog(workspace.value, intent.value,
+                    gadget=binary, max_bytes=max_bytes), separators=(",", ":"))
+            else:
+                result = recipe_publications(workspace.value, intent.value, *arguments[:2],
+                    execute=arguments[2], gadget=binary, max_bytes=max_bytes)
+            record_method("gadget-native-recipe-catalog" if _catalog else "gadget-native-recipe-proposal",
+                workspace_id=workspace.record.id, workspace_version=workspace.record.version,
+                workspace_state_digest=workspace.state_digest, intent_id=intent.record.id,
+                intent_version=intent.record.version, intent_state_digest=intent.state_digest,
+                **({} if _catalog else {"proposal_sha256": hashlib.sha256(arguments[0].encode()).hexdigest(),
+                    "question_sha256": hashlib.sha256(arguments[1].encode()).hexdigest(),
+                    "execution_requested": arguments[2]}))
+            return result
+        operation._gadget_rcql_binding = binding
+        register_signature(signature)
+        register_operator(name)(operation)

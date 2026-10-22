@@ -1,6 +1,7 @@
 #include "../src/pipeline_answers.hpp"
 #include "../src/source_grade_fields.hpp"
 #include <gadget/assay.hpp>
+#include <gadget/pipeline.hpp>
 #include <gadget/record_view.hpp>
 #include <rfc/storage/rfcx.hpp>
 #include <rfc/storage/temporal_finite.hpp>
@@ -194,6 +195,27 @@ void allocation(const NativeRecord &fields) {
 } // namespace
 int main(int argc, char **argv) {
     try {
+        if (argc == 5 && std::string(argv[1]) == "--reserved-pipeline") {
+            const auto hardware = runtime::detect_hardware();
+            runtime::CpuResourcePolicy policy;
+            policy.worker_limit = hardware.allowed_cpus.size();
+            policy.declared_buffer_byte_limit = 64 * 1024 * 1024;
+            const auto resources = std::make_shared<CpuResources>(hardware, policy,
+                [] { return runtime::detect_hardware(); });
+            auto &coordinator = resources->coordinator();
+            auto retained = coordinator.reserve(1, 4096);
+            coordinator.resize(retained, 0, 4096);
+            const auto available = coordinator.available_declared_buffer_bytes();
+            const auto workspace = std::make_shared<const AssayWorkspace>(argv[2]);
+            const auto result = execute_pipeline(workspace, Json::parse(read_text(argv[3])), argv[4], {}, resources);
+            check(result.at("status").text() == "complete", "resident bytes blocked pipeline execution");
+            check(coordinator.available_declared_buffer_bytes() == available,
+                  "pipeline changed another owner's retained byte charge");
+            check(coordinator.available_workers() == coordinator.capacity(),
+                  "pipeline leaked its worker reservation");
+            std::cout << "{\"status\":\"PASS\",\"native_checks\":" << checks << "}\n";
+            return 0;
+        }
         if (argc == 3 && std::string(argv[1]) == "--consensus-artifact") {
             const auto publication = NativeRecord::read(argv[2]);
             const auto certificate = publication.at("result"), fields = certificate.at("result");
@@ -240,17 +262,24 @@ int main(int argc, char **argv) {
             std::cout << "{\"status\":\"PASS\",\"native_checks\":" << checks << "}\n";
             return 0;
         }
-        if (argc == 3 && std::string(argv[1]) == "--planning") {
+        if (argc == 3 && (std::string(argv[1]) == "--planning" || std::string(argv[1]) == "--admission")) {
+            const bool require_section = std::string(argv[1]) == "--planning";
             const auto planning = NativeRecord::read(argv[2]).at("result");
             check(planning.at("schema").text() == "gadget.scientific.fields.v1", "planning retained numerical admission displays");
             for (const auto *name : {"scientific_admission", "available_answers"}) {
                 const auto reference = planning.at("view").at(name);
                 check(reference.at("schema").text() == "gadget.scientific.publication.view.v1", "planning lost finite publication owner");
                 const auto owner = NativeRecord::decode(reference.at("publication").bytes());
+                if (!require_section && owner.at("status").text() == "untyped") {
+                    check(!owner.has("native"), "untyped admission invented a finite constraint family");
+                    continue;
+                }
                 const auto system = storage::temporal_finite_constraint_system<std::int64_t>(*owner.endpoint(), 1);
                 const auto section = storage::temporal_finite_section<std::int64_t>(*owner.endpoint(), 1, 1);
-                check(system.globally_valid(section), "planning section is not valid on its actual carrier");
-                check(owner.at("native").at("global_section_exists").boolean(), "planning section display changed");
+                const bool valid = system.globally_valid(section);
+                check(valid == owner.at("native").at("global_section_exists").boolean(),
+                      "admission family differs from its actual native section validity");
+                check(!require_section || valid, "planning section is not valid on its actual carrier");
             }
             std::cout << "{\"status\":\"PASS\",\"native_checks\":" << checks << "}\n";
             return 0;

@@ -13,6 +13,10 @@ Json pipeline_model_catalog(const AssayWorkspace &workspace);
 Json recipe_model_catalog(const AssayWorkspace &workspace, const Json &intent);
 Json admit_recipe_proposal(const AssayWorkspace &workspace, const Json &intent,
                            const Json &proposal, const std::string &question);
+// Retain the actual finite admission families and original declarations.
+NativeRecord recipe_proposal_record(const AssayWorkspace &workspace,
+    const NativeRecord &intent, const NativeRecord &proposal, const std::string &question,
+    Json *observation = nullptr);
 // Every producing artifact is retained separately, with owning native jobs and
 // an atomic result index. Derived workspaces become inputs of dependent steps.
 Json execute_pipeline(std::shared_ptr<const AssayWorkspace> workspace, const Json &pipeline,

@@ -204,3 +204,127 @@ The local profile requires trusted directories and cooperating writers.
 The `tests/rcdb_*.py` contracts cover registration, backends, original byte
 comparisons, native execution, replay, transfer, compression and recovery.
 Optional Agent tests require its server dependencies and an owned listener.
+
+## Agent and Hive
+
+Install Core, RCDB, RCQL and Agent from the same RexGraph Python checkout, as
+described in the [dependency guide](../../DEPENDENCIES.md). The adapter requires
+`RelationalSession` and Hive workflows; older packages with the same version
+number may lack these interfaces. The tested source revisions are recorded in
+the [dependency lock](../../cmake/RexGraph.lock.cmake).
+
+Then install the optional Agent integration from this package:
+
+```sh
+python -m pip install './tools/rcdb[agent]'
+```
+
+`gadget_data.agent.GadgetSession` connects an existing scoped Agent session to
+GADGET's publication codec and RCQL providers. Supply the compiled executable
+and a publication byte budget. Declare the codec when creating the store:
+
+```python
+from agent import RelationalSession
+from agent.hive import Hive
+from agent.hive_workflow import WorkflowStep
+from gadget_data.agent import GadgetSession
+from gadget_rcdb import install_codec
+from rcdb import LocalStore
+from rcdb.header import DEFAULT_RECORD_CODECS
+
+binary = '/absolute/path/to/gadget'
+budget = 64 * 1024**2
+codec = install_codec(gadget=binary, max_bytes=budget)
+store = LocalStore('experiment.rcdb', record_codecs=(*DEFAULT_RECORD_CODECS, codec))
+session = RelationalSession(store)
+gadget = GadgetSession(session, gadget=binary, max_bytes=budget,
+                       capabilities=('execute',))
+hive = Hive('research')
+try:
+    gadget.publish_file('workspace', 'workspace.rfcxs', expected_version=0)
+    gadget.publish_file('request', 'request.rfcxs', expected_version=0)
+    hive.add_worker('gadget', gadget, capability='analyze')
+    flow = hive.run_workflow([WorkflowStep('query', 'gadget', {
+        'query': 'FROM $db RETURN GADGET_ASSAY_QUERY("workspace",1,"request",1)',
+        'save_as': 'query-result', 'expected_version': 0,
+    })])
+    if not flow.ok:
+        raise RuntimeError('GADGET workflow failed; inspect the workflow steps')
+    archive = flow.outputs['query'].values[0]
+finally:
+    hive.stop_all()
+    store.close()
+```
+
+Pass the caller's existing authenticated context to `RelationalSession` when
+workspace isolation is needed. The adapter keeps that scoped store, record
+versions, activity and audit boundaries. Retrieval is enabled by default;
+`execute`, `replay` and `select` are explicit capabilities. Field selection also
+requires the compiled selector path. Stored read programs use `run_program`;
+filesystem operations retain RCQL's action boundary.
+
+Local model workers may propose declared operations and read final certificate
+observations. Hive dispatches accepted requests to the GADGET worker; GADGET
+performs native admission and exact execution. Complete RFCXS values and RCQL
+results can be stored without decoding their intermediary fields into model
+text. The adapter belongs to this package; RexGraph Agent supplies the common
+session, runtime and worker interfaces.
+
+## Model recipe workers
+
+For a local model choosing analyses, use the native recipe workflow. A model's
+label alone does not establish that an operation answers the question.
+Publish a workspace and a [recipe intent](../../schemas/pipeline-intent.schema.json)
+as native records. The intent binds the original numerical parameters, source
+maps and available goals. A typed answer contract declares the requested
+observables and the exact question. New questions need their own declarations.
+
+```python
+worker = gadget.recipe_worker(
+    hive, 'local-model',
+    workspace={'record_id': 'workspace', 'version': 1},
+    intent={'record_id': 'recipe-intent', 'version': 1},
+    generation={'max_tokens': 512, 'temperature': 0},
+)
+hive.add_worker('research-recipes', worker, capability='analyze')
+flow = hive.run_workflow([WorkflowStep('propose', 'research-recipes', {
+    'question': declared_question,
+    'save_as': 'recipe-result', 'expected_version': 0,
+})])
+result = flow.outputs['propose']
+observation = result.values[0]['observation']
+publications = result.values[0]['publications']
+```
+
+The model must already be attached to the Hive, for example through `Hive.spawn`.
+The GADGET session requires the `execute` capability for this native workflow.
+The worker reads the selected versions through RCQL, presents GADGET's native
+catalog and asks the model to propose goal names or request clarification.
+The output grammar bounds the selection by the actual number of declared
+recipes. GADGET rejects duplicate goal names; repeated names cannot request
+repeated execution. This finite bound does not impose an arbitrary recipe limit.
+The schema places the action and its selection or clarification before fixed
+source identifiers, so constrained decoding starts with the model's decision.
+GADGET checks the complete proposal against its original sources and answer
+obligations. Automatic execution requires satisfied typed admission. An untyped
+proposal remains prospective even when its goal name exists.
+
+`publications` retains the complete native admission archive and, after actual
+execution, every RFCXS output under its original relative name. The declared
+publication byte budget also bounds their aggregate size. The result retains
+model output, catalog reads and actual record versions. Store or copy the whole
+RCQL result to preserve this closure without decoding intermediary fields.
+`execute=False` on `recipe_worker` requests admission without execution.
+
+The corresponding RCQL operators are `GADGET_RECIPE_CATALOG` and
+`GADGET_RECIPE_PROPOSAL`. Both are native filesystem actions under the existing
+source policy. The proposal operator takes workspace ID/version, intent
+ID/version, original proposal JSON, exact question and an execution boolean.
+Its native command uses `recipe-proposal --admission typed --out-record`;
+`--out` additionally requests execution. Direct queries remain
+available through the existing query interface.
+
+If model output is unavailable, incomplete or invalid JSON, the worker returns
+an unresolved observation with the original model evidence and catalog packet.
+It produces no native result or admission family for an unfinished proposal.
+The unresolved result can be stored and inspected through the same RCDB path.

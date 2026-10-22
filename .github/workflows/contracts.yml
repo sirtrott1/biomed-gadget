@@ -89,8 +89,12 @@ jobs:
           revision = re.search(r'GADGET_QUALIFIED_REXGRAPH_REVISION\s+"([0-9a-f]{40})"', lock)
           if revision is None:
               raise ValueError('SDK source revision is missing from the dependency lock')
+          python_revision = re.search(r'GADGET_QUALIFIED_REXGRAPH_PYTHON_REVISION\s+"([0-9a-f]{40})"', lock)
+          if python_revision is None:
+              raise ValueError('Python source revision is missing from the dependency lock')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('revision=' + revision.group(1) + '\n')
+              output.write('python_revision=' + python_revision.group(1) + '\n')
           PY
       - name: Retrieve the SDK archive
         if: env.SDK_MODE == 'archive' && env.SDK_REPOSITORY != ''
@@ -110,7 +114,7 @@ jobs:
           persist-credentials: false
           path: .rfc-source
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ clang pkg-config libgmp-dev libssl-dev libjson-c-dev python3-numpy python3-sympy python3-scipy python3-jsonschema python3-matplotlib
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ clang pkg-config libgmp-dev libssl-dev libjson-c-dev python3-venv python3-numpy python3-sympy python3-scipy python3-jsonschema python3-matplotlib
       - name: Check the test environment
         run: /usr/bin/python3 tools/ci_checks.py preflight
       - name: Fetch the qualified SDK
@@ -144,6 +148,19 @@ jobs:
                       raise ValueError('SDK archive contains a symbolic link')
               archive.extractall(target)
           PY
+      - name: Install the independent Python stack and Agent adapter
+        if: matrix.compiler == 'g++'
+        env:
+          REXGRAPH_PYTHON_REVISION: ${{ steps.sdk.outputs.python_revision }}
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/sirtrott1/rexgraph-python.git "$RUNNER_TEMP/rexgraph-python"
+          git -C "$RUNNER_TEMP/rexgraph-python" checkout --detach "$REXGRAPH_PYTHON_REVISION"
+          python3 -m venv "$RUNNER_TEMP/gadget-agent"
+          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install --config-settings=compile-args=-j1 "$RUNNER_TEMP/rexgraph-python"
+          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install "$RUNNER_TEMP/rexgraph-python/rcdb" "$RUNNER_TEMP/rexgraph-python/rcql"
+          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install "$RUNNER_TEMP/rexgraph-python/agent" './tools/rcdb[agent]' pytest
+          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip check
       - name: Configure
         id: configure
         env:
@@ -156,11 +173,15 @@ jobs:
           fi
           sdk_root="$(realpath -e "$sdk_root")"
           printf 'sdk_root=%s\n' "$sdk_root" >> "$GITHUB_OUTPUT"
+          agent_options=()
+          if test "$CXX" = 'g++'; then
+            agent_options=(-DGADGET_TEST_AGENT=ON "-DGADGET_AGENT_PYTHON_EXECUTABLE=$RUNNER_TEMP/gadget-agent/bin/python")
+          fi
           if test -f "$sdk_root/lib/cmake/RFC/RFCConfig.cmake"; then
-            cmake --preset contracts -DGADGET_USE_INSTALLED_RFC=ON -DCMAKE_PREFIX_PATH="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3 -DGADGET_COMPILE_JOBS="$CMAKE_BUILD_PARALLEL_LEVEL"
+            cmake --preset contracts -DGADGET_USE_INSTALLED_RFC=ON -DCMAKE_PREFIX_PATH="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3 -DGADGET_COMPILE_JOBS="$CMAKE_BUILD_PARALLEL_LEVEL" "${agent_options[@]}"
           else
             test -f "$sdk_root/CMakeLists.txt"
-            cmake --preset contracts -DREXGRAPH_SOURCE_DIR="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3 -DGADGET_COMPILE_JOBS="$CMAKE_BUILD_PARALLEL_LEVEL"
+            cmake --preset contracts -DREXGRAPH_SOURCE_DIR="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3 -DGADGET_COMPILE_JOBS="$CMAKE_BUILD_PARALLEL_LEVEL" "${agent_options[@]}"
           fi
       - name: Build
         id: build

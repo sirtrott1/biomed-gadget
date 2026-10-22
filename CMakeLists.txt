@@ -475,6 +475,18 @@ if(BUILD_TESTING)
   add_executable(gadget_packed_bench tests/packed_bench.cpp)
   target_link_libraries(gadget_packed_bench PRIVATE gadget::core)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  option(GADGET_TEST_AGENT "Test the optional installed Agent integration" OFF)
+  set(GADGET_AGENT_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH
+    "Python interpreter with the GADGET Agent extra installed")
+  if(GADGET_TEST_AGENT)
+    add_test(NAME gadget_agent_contracts COMMAND "${CMAKE_COMMAND}" -E env
+      "GADGET_TEST_BINARY=$<TARGET_FILE:gadget>"
+      "REXGRAPH_CONFIG_DIR=${GADGET_TEST_DATA_DIR}/agent-config"
+      "${GADGET_AGENT_PYTHON_EXECUTABLE}" -m pytest --import-mode=importlib
+      -p no:cacheprovider -q "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_agent.py"
+      --basetemp "${GADGET_TEST_DATA_DIR}/agent-contracts")
+    set_tests_properties(gadget_agent_contracts PROPERTIES TIMEOUT 300)
+  endif()
   add_executable(gadget_result_binding_tests tests/pipeline_result_binding.cpp)
   target_link_libraries(gadget_result_binding_tests PRIVATE gadget::core)
   target_compile_options(gadget_result_binding_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)

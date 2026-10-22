@@ -831,6 +831,46 @@ Json admit_recipe_proposal(const AssayWorkspace &workspace, const Json &intent,
         out.set("source_context", prepared.catalog.at("source_context"));
     return out;
 }
+namespace {
+NativeRecord retain_recipe_planning(const AssayWorkspace &workspace, const Json &planning,
+    const NativeRecord &request, const NativeRecord *original_planning = nullptr,
+    const NativeRecord *intent_record = nullptr) {
+    const auto intent = static_cast<Json>(planning.at("intent"));
+    const auto catalog = recipe_model_catalog(workspace, intent);
+    const auto selected = static_cast<Json>(planning.at("included_goals"));
+    const auto question = planning.at("question").text();
+    const auto available = pipeline_detail::answer_admission_record(intent, catalog, nullptr, &question);
+    const auto *selection = planning.at("proposal").at("action").text() == "clarify" ? nullptr : &selected;
+    const auto scientific = pipeline_detail::answer_admission_record(intent, catalog, selection, &question);
+    auto controls = Json::parse(planning.dump());
+    json_object_object_del(controls.raw(), "scientific_admission");
+    json_object_object_del(controls.raw(), "available_answers");
+    scientific_detail::ResultFields fields(workspace.native_publication());
+    auto view = scientific_detail::ResultValue(controls);
+    view.set("scientific_admission", fields.publication(scientific));
+    view.set("available_answers", fields.publication(available));
+    if (original_planning) {
+        auto binding = scientific_detail::ResultValue::object();
+        binding.set("original_planning", fields.publication(original_planning->owning_publication()));
+        fields.bind(std::move(binding));
+    }
+    if (intent_record) {
+        auto binding = scientific_detail::ResultValue::object();
+        binding.set("intent_publication", fields.publication(*intent_record));
+        fields.bind(std::move(binding));
+    }
+    const auto native_planning = fields.finish(std::move(view));
+    return retain_operation(native_planning, request, native_planning.unbound_value());
+}
+} // namespace
+NativeRecord recipe_proposal_record(const AssayWorkspace &workspace,
+    const NativeRecord &intent, const NativeRecord &proposal, const std::string &question,
+    Json *observation) {
+    const auto checked = admit_recipe_proposal(workspace, render_record_view(intent),
+                                               render_record_view(proposal), question);
+    if (observation) *observation = checked;
+    return retain_recipe_planning(workspace, checked, proposal, nullptr, &intent);
+}
 static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace>,const Json &,
     const fs::path &,const WorkflowModels &,std::shared_ptr<CpuResources>,
     const EvidenceStore *,const Json *,const NativeRecord *,const NativeRecord *);
@@ -916,7 +956,9 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
         for (const auto &input : selected)
             workspace_consumers[input] = rfc::machine::checked_size_add(workspace_consumers[input], 1);
     }
-    const auto buffer = resources->coordinator().policy().declared_buffer_byte_limit /
+    // Resident models and other retained owners keep their native byte charges.
+    // Delegate only currently available capacity to the pipeline jobs.
+    const auto buffer = resources->coordinator().available_declared_buffer_bytes() /
                         std::min(concurrency, nodes.size());
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         const auto node = native_plan.member("steps").element(i);
@@ -1177,29 +1219,8 @@ static Json execute_pipeline_impl(std::shared_ptr<const AssayWorkspace> workspac
         }
         const auto bytes = planning_record->dump();
         write_text(stage / "planning.json", bytes);
-        // Revalidate original declarations with the native finite provider. The
-        // retained child publications own their obligation carriers and charts;
-        // the planning display is never admitted as their numerical source.
-        const auto intent = static_cast<Json>(planning_record->at("intent"));
-        const auto catalog = recipe_model_catalog(*workspace, intent);
-        const auto selected = static_cast<Json>(planning_record->at("included_goals"));
-        const auto question = planning_record->at("question").text();
-        const auto available = pipeline_detail::answer_admission_record(intent, catalog, nullptr, &question);
-        const auto scientific = pipeline_detail::answer_admission_record(intent, catalog, &selected, &question);
-        auto controls = static_cast<Json>(*planning_record);
-        json_object_object_del(controls.raw(), "scientific_admission");
-        json_object_object_del(controls.raw(), "available_answers");
-        scientific_detail::ResultFields fields(workspace->native_publication());
-        auto view = scientific_detail::ResultValue(controls);
-        view.set("scientific_admission", fields.publication(scientific));
-        view.set("available_answers", fields.publication(available));
-        if (original_planning) {
-            auto binding = scientific_detail::ResultValue::object();
-            binding.set("original_planning", fields.publication(original_planning->owning_publication()));
-            fields.bind(std::move(binding));
-        }
-        const auto native_planning = fields.finish(std::move(view));
-        retain_operation(native_planning, native_plan.native(), native_planning.unbound_value()).write(stage/"planning.rfcxs");
+        retain_recipe_planning(*workspace, *planning_record, native_plan.native(), original_planning)
+            .write(stage / "planning.rfcxs");
         index.set("planning", Json::string("planning.rfcxs"));
         index.set("planning_sha256", Json::string("sha256:" + sha256_file(stage/"planning.rfcxs")));
     }

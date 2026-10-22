@@ -14,6 +14,7 @@ license-files = ["LICENSE", "NOTICE"]
 
 [project.optional-dependencies]
 native = ["rexgraph-cpp-bindings>=0.1.0"]
+agent = ["rexgraph-agent>=1.3.2", "httpx>=0.27"]
 
 [project.scripts]
 gadget-data = "gadget_data.cli:main"
