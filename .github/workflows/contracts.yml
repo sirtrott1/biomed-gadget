@@ -114,7 +114,7 @@ jobs:
           persist-credentials: false
           path: .rfc-source
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ clang pkg-config libgmp-dev libssl-dev libjson-c-dev python3-venv python3-numpy python3-sympy python3-scipy python3-jsonschema python3-matplotlib
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build g++ clang pkg-config libgmp-dev libssl-dev libjson-c-dev libopenblas-dev python3-venv python3-numpy python3-sympy python3-scipy python3-jsonschema python3-matplotlib
       - name: Check the test environment
         run: /usr/bin/python3 tools/ci_checks.py preflight
       - name: Fetch the qualified SDK
