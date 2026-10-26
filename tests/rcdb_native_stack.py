@@ -21,6 +21,25 @@ def main():
     build = json.loads(args.build_info.read_text())
     report = checker.check_stack(build)
     assert report["status"] == "PASS"
+    checker.require_profile(report, copy.deepcopy(report))
+    for group, name, key in (("projects", "rexgraph", "files_sha256"),
+                             ("native_providers", "rexgraph_cpp._bridge", "sha256")):
+        altered = copy.deepcopy(report)
+        altered[group][name][key] = "0" * 64
+        try:
+            checker.require_profile(report, altered)
+        except ValueError as error:
+            assert name in str(error)
+        else:
+            raise AssertionError("different installed contents were accepted")
+    altered = copy.deepcopy(report)
+    altered["native_providers"]["rexgraph_cpp._bridge"]["receipts"]["build_info"]["binding_digest"] = "0" * 64
+    try:
+        checker.require_profile(report, altered)
+    except ValueError as error:
+        assert "rexgraph_cpp._bridge" in str(error)
+    else:
+        raise AssertionError("different binding implementation was accepted")
 
     def refuses(candidate, message):
         try:
@@ -50,7 +69,7 @@ def main():
         refuses(build, "rexgraph_cpp._model_storage.model_storage_build_info")
     finally:
         module.model_storage_build_info = original
-    print(f"PASS: {len(report['native_providers'])} native providers and four mismatch controls")
+    print(f"PASS: {len(report['native_providers'])} native providers and seven mismatch controls")
 
 
 if __name__ == "__main__":

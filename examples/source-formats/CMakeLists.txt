@@ -22,14 +22,13 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:gadget_source>" "${source_test_data_dir}/feature_context"
       "$<TARGET_FILE:gadget>" "$<TARGET_FILE:gadget_result_binding_tests>")
   set_tests_properties(gadget_pubchem_source_cli_contracts PROPERTIES TIMEOUT 120 FIXTURES_REQUIRED gadget_typed_evidence_inputs)
-  option(GADGET_TEST_NATIVE_PYTHON "Test source intake with installed native Python providers" OFF)
   if(GADGET_TEST_NATIVE_PYTHON)
-    execute_process(COMMAND "${Python3_EXECUTABLE}" -I -c "import rexgraph, rexgraph_cpp, rcdb, rcql, sqlalchemy"
+    execute_process(COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" -I -c "import rexgraph, rexgraph_cpp, rcdb, rcql, sqlalchemy"
       RESULT_VARIABLE gadget_native_python_status ERROR_VARIABLE gadget_native_python_error)
     if(NOT gadget_native_python_status EQUAL 0)
       message(FATAL_ERROR "Native Python source tests require Core, bridge, RCDB, RCQL and SQLAlchemy: ${gadget_native_python_error}")
     endif()
-    add_test(NAME gadget_source_native_contracts COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_native.py"
+    add_test(NAME gadget_source_native_contracts COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_native.py"
         "$<TARGET_FILE:gadget_source>" "$<TARGET_FILE:gadget>" "$<TARGET_FILE:gadget_native_field_import>" "$<TARGET_FILE:gadget_result_binding_tests>"
         "${source_test_data_dir}/source-native")
     set_tests_properties(gadget_source_native_contracts PROPERTIES TIMEOUT 180 LABELS native-python)

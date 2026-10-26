@@ -476,6 +476,9 @@ if(BUILD_TESTING)
   target_link_libraries(gadget_packed_bench PRIVATE gadget::core)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   option(GADGET_TEST_AGENT "Test the optional installed Agent integration" OFF)
+  option(GADGET_TEST_DATA_PYTHON "Test the installed native dataset integration" ${GADGET_TEST_AGENT})
+  option(GADGET_TEST_NATIVE_PYTHON "Test optional compiled scientific Python providers" OFF)
+  option(GADGET_TEST_NATIVE_MODELS "Test optional native field and temporal model providers" OFF)
   set(GADGET_AGENT_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH
     "Python interpreter with the GADGET Agent extra installed")
   if(GADGET_TEST_AGENT)
@@ -486,6 +489,43 @@ if(BUILD_TESTING)
       -p no:cacheprovider -q "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_agent.py"
       --basetemp "${GADGET_TEST_DATA_DIR}/agent-contracts")
     set_tests_properties(gadget_agent_contracts PROPERTIES TIMEOUT 300)
+  endif()
+  if(GADGET_TEST_DATA_PYTHON)
+    add_test(NAME gadget_data_capability_contracts COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" -I
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_capabilities.py")
+    add_test(NAME gadget_data_journal_contracts COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" -I
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_journal.py")
+    add_test(NAME gadget_data_binding_contracts COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" -I
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_bindings.py")
+    add_test(NAME gadget_data_io_contracts COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" -I
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_io.py" "${GADGET_TEST_DATA_DIR}/data-io-contracts"
+      --importer "$<TARGET_FILE:gadget_native_field_import>"
+      --consumer "$<TARGET_FILE:gadget_data_field_tests>"
+      --selector "$<TARGET_FILE:gadget_native_field_query>")
+    set_tests_properties(gadget_data_capability_contracts gadget_data_journal_contracts
+      gadget_data_binding_contracts gadget_data_io_contracts PROPERTIES TIMEOUT 300)
+  endif()
+  if(GADGET_TEST_NATIVE_PYTHON)
+    add_test(NAME gadget_python_native_stack_contracts COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" -I
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rcdb_native_stack.py" "${CMAKE_CURRENT_BINARY_DIR}/build-info.json")
+    add_test(NAME gadget_data_workflow_contracts COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" -I
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_workflow.py" "${GADGET_TEST_DATA_DIR}/data-workflow-contracts"
+      --importer "$<TARGET_FILE:gadget_native_field_import>")
+    set_tests_properties(gadget_python_native_stack_contracts gadget_data_workflow_contracts PROPERTIES TIMEOUT 300)
+  endif()
+  if(GADGET_TEST_NATIVE_MODELS)
+    if(NOT GADGET_TEST_NATIVE_PYTHON)
+      message(FATAL_ERROR "Native model tests require GADGET_TEST_NATIVE_PYTHON")
+    endif()
+    execute_process(COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" -I -c
+      "from rcql import CWorkflow, TemporalModel; from rexgraph_cpp import NativeSource; import rexgraph_temporal, rexgraph.cpp_graded_stalk_transport"
+      RESULT_VARIABLE gadget_native_model_status ERROR_VARIABLE gadget_native_model_error)
+    if(NOT gadget_native_model_status EQUAL 0)
+      message(FATAL_ERROR "Native model tests require field and temporal providers: ${gadget_native_model_error}")
+    endif()
+    add_test(NAME gadget_data_native_program_contracts COMMAND "${GADGET_AGENT_PYTHON_EXECUTABLE}" -I
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/data_native_programs.py")
+    set_tests_properties(gadget_data_native_program_contracts PROPERTIES TIMEOUT 300)
   endif()
   add_executable(gadget_result_binding_tests tests/pipeline_result_binding.cpp)
   target_link_libraries(gadget_result_binding_tests PRIVATE gadget::core)

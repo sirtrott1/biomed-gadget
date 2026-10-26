@@ -136,6 +136,8 @@ def main():
     if native_children:
         answer = run('assay-query', '--workspace', ws, '--request', save('batch.json', batch))['result']
         check(answer['dispatcher'] == 'rfc::runtime::WorkGraph', 'Canonical dispatcher owns jobs')
+        check(answer['executions'] == 3, 'Repeated field summaries share complete executions')
+        check(len(answer['results']) == 17, 'Every original query occurrence remains retained')
         for i, entry in enumerate(answer['results']):
             check(entry['id'] == f'job{i}', 'Declared publication order')
             result = entry['answer']['result']['answers'][0]['certificate']['result']

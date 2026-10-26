@@ -48,6 +48,15 @@ def test_optional_setup_rejects_invalid_capabilities_and_requires_a_session():
         GadgetSession(session, gadget="unused", max_bytes=1, capabilities=("select",))
 
 
+def test_operation_inspection_keeps_native_execution_ungranted(native):
+    service, _, _, _, _ = native
+    report = service.operation_capabilities(("GADGET_DATA_FIELD", "DEMAND_RUN", "C_EVALUATE"))
+    assert report["declared_permissions"] == ["identity", "read", "records"]
+    assert all(row["platform_qualification"] == "unverified" for row in report["operations"])
+    assert all(row["biomedical_qualification"] == "unverified" for row in report["operations"])
+    assert "gadget_execute" not in report["declared_permissions"]
+
+
 def test_gadget_optional_dependency_is_loaded_only_when_requested(monkeypatch):
     import builtins
     previous = builtins.__import__
@@ -119,6 +128,93 @@ def test_stored_read_program_keeps_historical_publication_and_complete_steps(nat
     assert result.values == (packets[1][1],)
     assert result.native_plan["step_results"][0]["values"] == (packets[0][1],)
     assert len(result.native_plan["step_results"]) == 2
+
+
+@pytest.fixture
+def native_data(native, tmp_path):
+    import numpy as np
+    from gadget_data import DataStore, DataWriter
+    service, _, _, _, _ = native
+    with DataWriter(tmp_path / "counts", name="counts") as writer:
+        writer.axis("rows", ("a", "b"), offset=0)
+        writer.axis("columns", ("x", "y"), offset=0)
+        writer.field("counts", axes=("rows", "columns"), shape=(2, 2), quantity="count", units="count")
+        writer.dense("counts", np.array(((0, 2), (3, 4)), dtype=np.int32),
+                     np.ones((2, 2), dtype=bool), offset=(0, 0))
+        writer.finish()
+    with DataStore(tmp_path / "counts") as store:
+        reference = next(iter(store.manifest["fields"]["counts"]["blocks"]))
+        owner = service.bind_native("counts", store, reference)
+        yield service, store, reference, owner
+
+
+def test_native_dataset_query_and_stored_program_use_the_same_actual_owner(native_data):
+    from rcql import Program, ProgramInput, ProgramStep, Result, parse
+    from unittest.mock import patch
+    service, store, _, owner = native_data
+    with patch.object(store, "read", side_effect=AssertionError("native source decoded again")):
+        field, = service.query("FROM $counts RETURN GADGET_DATA_FIELD([0])").values
+        assert field.source.source is owner.value
+        program = Program("read_counts", (ProgramStep("selected",
+            parse("FROM $counts RETURN GADGET_DATA_FIELD($columns)")),), (ProgramInput("columns"),))
+        service.session.publish_program("reader", program, expected_version=0)
+        service.session.save_result("columns", Result(((1, 0),)), expected_version=0)
+        output = service.run_program("reader", version=1,
+            record_parameters={"columns": {"record_id": "columns", "version": 1, "output": 0}},
+            save_as="readout")
+        assert output.values[0].source.source is owner.value
+        assert output.values[0].values.tolist() == [[2, 0], [4, 3]]
+        assert output.native_plan["record_parameters"]["columns"]["version"] == 1
+        restored = service.session.read("readout", 1).value
+        assert restored.values[0].coefficient_digest == output.values[0].coefficient_digest
+
+
+def test_native_program_capture_replays_with_fresh_explicit_dataset_bindings(native_data, tmp_path):
+    from gadget_data import DataStore
+    from rcql import Program, ProgramStep, parse
+    service, store, reference, owner = native_data
+    program = Program("read_counts", (ProgramStep("selected",
+        parse("FROM $counts RETURN GADGET_DATA_FIELD([0,1])")),))
+    service.session.publish_program("reader", program, expected_version=0)
+    service.capture_program("reader", tmp_path / "execution", version=1)
+    store.close()
+    fresh = GadgetSession(service.session, gadget=service.gadget, max_bytes=service.max_bytes)
+    with DataStore(tmp_path / "counts") as reopened:
+        rebound = fresh.bind_native("counts", reopened, reference)
+        result = fresh.replay_program(tmp_path / "execution")
+        assert result.values[0].source.source is rebound.value
+        assert result.values[0].source.source is not owner.value
+        assert result.values[0].values.tolist() == [[0, 2], [3, 4]]
+    with pytest.raises(ValueError, match="store is closed"):
+        fresh.replay_program(tmp_path / "execution")
+
+
+def test_native_binding_revocation_during_query_prevents_saved_results(native_data):
+    from rcql import Executor
+    from unittest.mock import patch
+    service, store, _, _ = native_data
+    execute = Executor.execute
+    def close_after_query(executor, query):
+        result = execute(executor, query)
+        store.close()
+        return result
+    with patch.object(Executor, "execute", close_after_query):
+        with pytest.raises(ValueError, match="store is closed"):
+            service.query("FROM $counts RETURN GADGET_DATA_FIELD([0])", save_as="invalid")
+    with pytest.raises(KeyError):
+        service.session.read("invalid", 1)
+
+
+def test_worker_arguments_cannot_bind_datasets_or_raise_source_permissions(native_data):
+    service, store, reference, _ = native_data
+    for key in ("bindings", "sources", "store"):
+        with pytest.raises(ValueError, match="worker"):
+            service({"query": "FROM $counts RETURN GADGET_DATA_FIELD([0])", key: {"counts": reference}})
+    with pytest.raises(ValueError, match="read and identity"):
+        service.bind_native("other", store, reference, permissions=("train",))
+    service.unbind_native("counts")
+    with pytest.raises((KeyError, ValueError)):
+        service.query("FROM $counts RETURN GADGET_DATA_FIELD([0])")
 
 
 def test_gadget_corrupt_publication_and_stale_writes_preserve_prior_state(native):

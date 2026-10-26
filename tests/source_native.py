@@ -93,7 +93,14 @@ def main(reader, binary, importer, witness, root):
     retained = driver.analyze(root / "counts", driver_output, binding=selected_binding, query=query,
         binary=binary, importer=importer, namespace=806202, limits=limits)
     driven = run("record-view", "--input", retained, "--member", "result")
-    assert driven["result"]["strata"][0]["models"][1]["responses"] == full["responses"]
+    def checked_responses(responses, original):
+        fields = []
+        for response in responses:
+            meaning = response["meaning"]
+            assert meaning["evidence"] == [dict(document="data", start=0, end=original.stat().st_size)]
+            fields.append(dict(response, meaning={key: value for key, value in meaning.items() if key != "evidence"}))
+        return fields
+    assert checked_responses(driven["result"]["strata"][0]["models"][1]["responses"], driver_output / "data.rfcxs") == checked_responses(full["responses"], data)
     wrong = dict(binding, data_sha256="sha256:" + "0" * 64)
     run("bind-data-study", "--input", data, "--request", save("wrong.json", wrong), "--out-record", root / "wrong.rfcxs", fail=True)
     assert not (root / "wrong.rfcxs").exists()

@@ -498,6 +498,7 @@ class DataStore:
         from .catalog import Entries
         self.path = Path(path).resolve(strict=True)
         self.limits = limits or Limits()
+        self._closed = False
         self.store = _open_store(self.path / "data.rcdb")
         try:
             row = self.store.get_record("dataset")
@@ -525,11 +526,10 @@ class DataStore:
             self.store.close()
             raise
 
-    def read(self, reference):
-        """Return the recorded native owner after checking its address and identity.
-
-        A missing record or a different version, store or digest refuses the read.
-        """
+    def check_reference(self, reference):
+        """Check pinned record metadata and decode admission without decoding values."""
+        if self._closed:
+            raise ValueError("native data store is closed")
         if reference["store_id"] != self.store.store_id:
             raise ValueError("foreign native store reference")
         row = next((row for row in self.store.history(reference["id"])
@@ -538,11 +538,15 @@ class DataStore:
                 row.envelope is None or row.envelope.object_digest != reference["state_digest"]):
             raise ValueError("native record address or retained envelope differs")
         self.limits.admit(max(reference["native_bytes"], row.envelope.payload_size), "decode_bytes")
+        if row.meta.get("dataset") != self.identity:
+            raise ValueError("foreign native dataset block")
+
+    def read(self, reference):
+        """Return the recorded native owner after checking its address and identity."""
+        self.check_reference(reference)
         snapshot = self.store.read_record(reference["id"], version=reference["version"])
         if snapshot is None or snapshot.state_digest != reference["state_digest"]:
             raise ValueError("missing or substituted native record version")
-        if row.meta.get("dataset") != self.identity:
-            raise ValueError("foreign native dataset block")
         if reference.get("kind") != "declaration" and declaration(snapshot.value)["dataset"] != self.identity:
             raise ValueError("foreign native dataset owner")
         return snapshot.value
@@ -588,10 +592,35 @@ class DataStore:
         from .selection import select
         return select(self, field, rows=rows, columns=columns)
 
-    def native(self, reference, *, dependencies=()):
+    def selection_plan(self, field, *, rows, columns):
+        """Inspect bounded field metadata before reading scientific coefficients."""
+        from .selection import coordinates, selection_item_bytes
+        specification = self.manifest["fields"][field]
+        if specification["layout"] == "sparse_occurrences":
+            raise ValueError("sparse occurrence arithmetic requires an explicit aggregation declaration")
+        rows = coordinates(rows, specification["shape"][0], max_bytes=self.limits.selection_bytes)
+        columns = coordinates(columns, specification["shape"][1], max_bytes=self.limits.selection_bytes)
+        slots = len(rows) * len(columns) * selection_item_bytes(specification)
+        count = encoded = largest = 0
+        for block in self._blocks(field, rows, columns):
+            count += 1
+            encoded += block["native_bytes"]
+            largest = max(largest, block["native_bytes"])
+        return {"parent": dict(self.reference), "field": field, "field_id": specification["identity"],
+                "axes": specification["axes"], "quantity": specification["quantity"],
+                "units": specification["units"], "shape": (len(rows), len(columns)),
+                "rows": rows, "columns": columns, "records": count,
+                "encoded_record_bytes": encoded, "largest_encoded_record_bytes": largest,
+                "fixed_selection_bytes": slots, "selection_limit_bytes": self.limits.selection_bytes,
+                "fixed_slots_admitted": slots <= self.limits.selection_bytes,
+                "support": "uninspected", "process_rss_bound": False,
+                "exact_integer_capacity": "admitted during decoding",
+                "metadata_cache": self.metadata_cache_usage()}
+
+    def native(self, reference, *, dependencies=(), owners=()):
         """Restore a retained native value using explicitly supplied dataset stores."""
         from .workflow import restore
-        return restore(self, reference, dependencies=dependencies)
+        return restore(self, reference, dependencies=dependencies, owners=owners)
 
     def contexts(self, axis_reference, *, dependencies=()):
         """Resolve shared context owners without inferring joins or merging assertions."""
@@ -647,13 +676,17 @@ class DataStore:
         return self._metadata(reference, "page", load)
 
     def _metadata(self, reference, kind, load):
+        from ._metadata import retained_metadata_bytes
+        if reference["store_id"] != self.store.store_id:
+            raise ValueError("foreign native store reference")
         while self._cache_bytes > self.limits.catalog_bytes:
             _, (_, old_weight) = self._page_cache.popitem(last=False)
             self._cache_bytes -= old_weight
-        key = (kind, reference["id"], reference["version"], reference["state_digest"],
+        key = (kind, reference["id"], reference["version"], reference["state_digest"], reference["native_bytes"],
                reference.get("axis"), reference.get("offset"), reference.get("count"))
         if key not in self._page_cache:
-            value, weight = load(), reference["native_bytes"]
+            value = load()
+            weight = retained_metadata_bytes(key, value, self.limits.catalog_bytes)
             if weight > self.limits.catalog_bytes:
                 return value
             while self._cache_bytes + weight > self.limits.catalog_bytes:
@@ -692,6 +725,11 @@ class DataStore:
     def clear_metadata_cache(self):
         self._page_cache.clear()
         self._cache_bytes = 0
+
+    def metadata_cache_usage(self):
+        """Report retained Python catalog accounting, excluding transient decode and RSS."""
+        return {"entries": len(self._page_cache), "retained_python_bytes": self._cache_bytes,
+                "limit_bytes": self.limits.catalog_bytes}
 
     def occurrences(self, field, *, rows, columns):
         from .selection import occurrences
@@ -852,8 +890,10 @@ class DataStore:
         return count
 
     def close(self):
-        self.clear_metadata_cache()
-        self.store.close()
+        if not self._closed:
+            self._closed = True
+            self.clear_metadata_cache()
+            self.store.close()
 
     def __enter__(self):
         return self

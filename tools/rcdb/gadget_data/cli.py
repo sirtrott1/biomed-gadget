@@ -36,6 +36,9 @@ def main(argv=None):
     parser.add_argument("--selection-mib", type=int, default=64)
     parser.add_argument("--catalog-mib", type=int, default=4)
     commands = parser.add_subparsers(dest="command", required=True)
+    capabilities = commands.add_parser("capabilities", help="Inspect installed RCQL operation contracts")
+    capabilities.add_argument("operator", nargs="+")
+    capabilities.add_argument("--primitives", action="store_true")
     dense = commands.add_parser("import-dense", help="Read an original NPY matrix or selected HDF5 dataset")
     dense.add_argument("source", type=Path); dense.add_argument("output", type=Path)
     dense.add_argument("--reader", choices=("npy", "hdf5"), required=True)
@@ -77,18 +80,25 @@ def main(argv=None):
     bundle.add_argument("--dependency", action="append", type=Path, default=[])
     bundle.add_argument("--source-root", type=Path)
     for name, help_text in (("explore", "Inspect source, axis and field declarations without decoding field blocks"),
+                            ("plan", "Inspect selected records and allocation admissions before decoding fields"),
+                            ("window", "Retain an original field window with its full parent reference"),
                             ("verify", "Check every native record and optional original sources"),
                             ("select", "Publish a selected native dataset with original coordinate maps"),
                             ("provenance", "Map selected coordinates to native records and original sources"),
                             ("export-native", "Export a selected field to a GADGET native publication")):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("store", type=Path)
-        if name in ("select", "export-native", "provenance"):
-            if name != "provenance":
+        if name in ("select", "export-native", "provenance", "plan", "window"):
+            if name in ("select", "export-native", "window"):
                 command.add_argument("output", type=Path)
             command.add_argument("--field", required=True)
             command.add_argument("--rows", type=_coordinates, required=True)
             command.add_argument("--columns", type=_coordinates, required=True)
+        if name == "window":
+            command.add_argument("--scope", choices=("connected", "whole-declared-source"), required=True)
+            command.add_argument("--evidence-revision", type=int, required=True)
+            command.add_argument("--parameter-revision", type=int, required=True)
+            command.add_argument("--time-axis")
         if name == "verify":
             command.add_argument("--source-root", type=Path)
         if name == "export-native":
@@ -97,7 +107,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     limits = Limits(args.record_mib * 1024**2, args.decode_mib * 1024**2,
                     args.selection_mib * 1024**2, args.catalog_mib * 1024**2)
-    if args.command == "import-dense":
+    if args.command == "capabilities":
+        from .capabilities import operation_capabilities, native_primitive_capabilities
+        from .query import install
+        install()
+        result = {"operations": operation_capabilities(args.operator)}
+        if args.primitives:
+            result["native_primitives"] = native_primitive_capabilities()
+    elif args.command == "import-dense":
         from .readers import import_dense
         result = import_dense(args.source, args.output, reader=args.reader, name=args.name, field=args.field,
             dataset=args.dataset, quantity=args.quantity, units=args.units, missing=args.missing,
@@ -156,6 +173,17 @@ def main(argv=None):
         with DataStore(args.store, limits=limits) as store:
             if args.command == "explore":
                 result = store.catalog()
+            elif args.command == "plan":
+                result = store.selection_plan(args.field, rows=args.rows, columns=args.columns)
+            elif args.command == "window":
+                from . import DataWriter, QueryScope, SourceWindow, record_link
+                window = SourceWindow.create(store, args.field, rows=args.rows, columns=args.columns,
+                    scope=QueryScope(args.scope, args.evidence_revision, args.parameter_revision), time_axis=args.time_axis)
+                selected = window.verify(store)
+                with DataWriter(args.output, name=args.field, limits=limits) as writer:
+                    result = writer.native("window", window.to_record(), dependencies=tuple(
+                        record_link(store, ref) for ref in selected.dependencies))
+                    writer.finish()
             elif args.command == "verify":
                 count = store.verify()
                 originals = None if args.source_root is None else {

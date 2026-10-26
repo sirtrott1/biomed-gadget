@@ -67,8 +67,17 @@ def block_values(owner, rows, columns):
         raise ValueError("native field coefficient or support extent differs")
     if prod(shape) % 8 and int(packed[-1]) >> (prod(shape) % 8):
         raise ValueError("native observed support has nonzero padding")
-    flat = np.asarray(rows, dtype=np.int64)[:, None] * shape[1] + np.asarray(columns, dtype=np.int64)
-    present = ((packed[flat // 8] >> (flat % 8)) & 1).astype(bool)
+    present = np.empty((len(rows), len(columns)), dtype=bool)
+    slots = 64 * 1024 // np.dtype(np.int64).itemsize
+    for column_start in range(0, len(columns), slots):
+        selected_columns = np.asarray(columns[column_start:column_start + slots], dtype=np.int64)
+        row_count = max(1, slots // len(selected_columns))
+        for row_start in range(0, len(rows), row_count):
+            selected_rows = np.asarray(rows[row_start:row_start + row_count], dtype=np.int64)
+            flat = selected_rows[:, None] * shape[1] + selected_columns
+            present[row_start:row_start + len(selected_rows),
+                    column_start:column_start + len(selected_columns)] = (
+                        (packed[flat // 8] >> (flat % 8)) & 1).astype(bool)
     return raw[np.ix_(rows, columns)], present
 
 
@@ -217,6 +226,11 @@ class OccurrenceSelection:
         return self.specification["implicit"]
 
 
+def selection_item_bytes(specification):
+    """Fixed selection slots, including separate observed and coverage masks."""
+    return 96 if specification["layout"] == "exact" else np.dtype(specification["dtype"]).itemsize + 2
+
+
 def select(store, name, *, rows, columns):
     specification = store.manifest["fields"][name]
     if specification["layout"] == "sparse_occurrences":
@@ -226,7 +240,7 @@ def select(store, name, *, rows, columns):
     count = len(rows) * len(columns)
     # Exact selections retain fixed tensors and Python scalar objects. The
     # allocation admission counts slots conservatively, not total process RSS.
-    item_bytes = 96 if specification["layout"] == "exact" else np.dtype(specification["dtype"]).itemsize + 1
+    item_bytes = selection_item_bytes(specification)
     store.limits.admit(count * item_bytes, "selection_bytes")
     dtype = object if specification["layout"] == "exact" else np.dtype(specification["dtype"])
     values = np.empty((len(rows), len(columns)), dtype=dtype)
