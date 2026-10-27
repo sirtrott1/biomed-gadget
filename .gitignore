@@ -121,6 +121,7 @@ htmlcov/
 *.bundle
 /.rfc-download/
 /.rfc-source/
+/.python-source/
 /.llama-source/
 
 # Development records

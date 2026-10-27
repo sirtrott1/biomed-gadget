@@ -22,7 +22,8 @@ class CIContracts(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, str(checks.ROOT / "tools/ci_checks.py"), "report",
                      "--checks-result", "success", "--required", "true",
-                     "--contracts-result", "success", "--test-preset", profile,
+                     "--contracts-result", "success", "--bindings-result", "success",
+                     "--test-preset", profile,
                      "--summary", str(summary)], capture_output=True, text=True, check=True)
                 self.assertEqual(json.loads(result.stdout)["status"], "PASS_CURRENT_NATIVE_CONTRACTS")
                 self.assertIn(f"CTest profile {profile}", json.loads(result.stdout)["detail"])
@@ -37,12 +38,14 @@ class CIContracts(unittest.TestCase):
         import json
         runs = {"workflow_runs": [{"id": 1, "event": "push", "head_sha": "original", "html_url": "passed-run"}]}
         success = {"jobs": [{"name": "contracts (g++)", "conclusion": "success"},
-                            {"name": "contracts (clang++)", "conclusion": "success"}]}
+                            {"name": "contracts (clang++)", "conclusion": "success"},
+                            {"name": "Python bindings", "conclusion": "success"}]}
         for changes, jobs, expected in (
                 (["README.md"], success, "passed-run"),
                 ([], success, "passed-run"),
                 (["CMakeLists.txt", "README.md"], success, None),
                 (None, success, None),
+                (["README.md"], {"jobs": success["jobs"][:2]}, None),
                 (["README.md"], {"jobs": success["jobs"][:1]}, None),
                 (["README.md"], {"jobs": [{"name": "contracts (g++)", "conclusion": None}]}, None)):
             with self.subTest(changes=changes, jobs=jobs):
@@ -102,7 +105,7 @@ class CIContracts(unittest.TestCase):
             self.assertIsNone(checks.changed_paths("f" * 40, "HEAD", root))
 
     def test_native_acceptance_cannot_be_replaced_by_input_checks(self):
-        self.assertEqual(checks.qualification_status("success", "true", "success", ""),
+        self.assertEqual(checks.qualification_status("success", "true", "success", "", "success"),
                          "PASS_CURRENT_NATIVE_CONTRACTS")
         self.assertEqual(checks.qualification_status("success", "false", "skipped", "passed-run"),
                          "PASS_PREVIOUS_EQUIVALENT_NATIVE_CONTRACTS")
@@ -118,6 +121,43 @@ class CIContracts(unittest.TestCase):
             with self.subTest(inputs=inputs, required=required, native=native):
                 with self.assertRaises(ValueError):
                     checks.qualification_status(inputs, required, native, matching)
+
+    def test_python_bindings_cannot_be_omitted_from_acceptance(self):
+        for result in ("failure", "cancelled", "skipped", ""):
+            with self.subTest(result=result), self.assertRaisesRegex(ValueError, "Python binding"):
+                checks.qualification_status("success", "true", "success", "", result)
+        with self.assertRaises(ValueError):
+            checks.qualification_status("success", "false", "skipped", "passed-run", "failure")
+
+    def test_compiler_workers_respect_memory_and_cpu_limits(self):
+        gib = 1024**3
+        self.assertEqual(checks.build_jobs(2, 4, 16 * gib), 2)
+        self.assertEqual(checks.build_jobs(8, 4, 7 * gib), 2)
+        self.assertEqual(checks.build_jobs(8, 1, 16 * gib), 1)
+        self.assertEqual(checks.build_jobs(8, 4, 6 * gib), 1)
+        for memory in (0, 3 * gib, 4 * gib - 1):
+            with self.subTest(memory=memory), self.assertRaisesRegex(ValueError, "available memory"):
+                checks.build_jobs(2, 4, memory)
+        for requested, cpus in ((0, 4), (-1, 4), (2, 0)):
+            with self.subTest(requested=requested, cpus=cpus), self.assertRaises(ValueError):
+                checks.build_jobs(requested, cpus, 16 * gib)
+
+    def test_linux_resources_apply_ancestor_container_limits(self):
+        files = {"/proc/meminfo": "MemAvailable: 16777216 kB\n",
+                 "/proc/self/cgroup": "0::/runner/job\n",
+                 "/sys/fs/cgroup/runner/job/memory.max": "max\n",
+                 "/sys/fs/cgroup/runner/job/memory.current": "0\n",
+                 "/sys/fs/cgroup/runner/job/cpu.max": "max 100000\n",
+                 "/sys/fs/cgroup/runner/memory.max": str(8 * 1024**3),
+                 "/sys/fs/cgroup/runner/memory.current": str(1024**3),
+                 "/sys/fs/cgroup/runner/cpu.max": "250000 100000\n"}
+        with patch.object(checks.os, "sched_getaffinity", return_value=set(range(8))), \
+             patch.object(Path, "read_text", lambda path: files[str(path)]), \
+             patch.object(Path, "is_file", lambda path: str(path) in files):
+            cpus, memory = checks.linux_build_resources()
+        self.assertEqual(cpus, 2)
+        self.assertEqual(memory, 7 * 1024**3)
+        self.assertEqual(checks.build_jobs(8, cpus, memory), 2)
 
     def test_pr_selection_uses_the_tested_merge_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:

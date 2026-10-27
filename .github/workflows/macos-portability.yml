@@ -17,7 +17,11 @@ concurrency:
 jobs:
   portability:
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+      CCACHE_MAXSIZE: 1G
+      CCACHE_COMPILERCHECK: content
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,11 +52,19 @@ jobs:
           path: .llama-source
           persist-credentials: false
       - name: Install build dependencies
-        run: brew install cmake ninja pkg-config gmp json-c openssl@3 htslib
+        run: brew install ccache cmake ninja pkg-config gmp json-c openssl@3 htslib
+      - name: Restore compiler cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: .cache/ccache
+          key: compile-${{ runner.os }}-${{ runner.arch }}-appleclang-${{ hashFiles('cmake/RexGraph.lock.cmake') }}-${{ github.sha }}
+          restore-keys: |
+            compile-${{ runner.os }}-${{ runner.arch }}-appleclang-${{ hashFiles('cmake/RexGraph.lock.cmake') }}-
       - name: Configure all contracts with HTS admission and the local model adapter
         run: >-
           cmake -S . -B "$RUNNER_TEMP/portability" -G Ninja
           -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-fexperimental-library
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DBUILD_TESTING=ON -DGADGET_BUILD_EXAMPLES=ON -DGADGET_ENABLE_HTSLIB=ON
           -DGADGET_ENABLE_LOCAL_MODEL=ON -DGGML_METAL=OFF
           -DLLAMA_SOURCE_DIR="$GITHUB_WORKSPACE/.llama-source"
@@ -83,6 +95,9 @@ jobs:
         run: >-
           ctest --test-dir "$RUNNER_TEMP/portability" --output-on-failure --no-tests=error
           -R '^gadget_(native_record|platform_observation|memory_observation|execution_resource|assay_intake|genomic_integer_portability|file_publication|count(_reference|_native)?|bindingdb_bulk(_reference)?)_contracts$'
+      - name: Report compiler cache
+        if: always()
+        run: ccache --show-stats
       - name: Retain failed contract diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
