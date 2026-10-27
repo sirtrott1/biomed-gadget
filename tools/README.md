@@ -30,11 +30,10 @@ An export with history requires the source files and executable modes to match
 the selected commit. Commit public changes first. Untracked source files and
 missing tracked files are refused so the restored checkout matches its history.
 
-`--without-history` creates a source snapshot. `--git-dir` selects Git metadata
-managed separately from the worktree; that history must be readable. The export
-preserves the selected branches, tags and their complete reachable history.
-Local saved work, ref journals and unreachable objects are excluded.
-Source and selected history must pass the publication check before export.
+`--without-history` creates a source snapshot. `--git-dir` accepts a `.git`
+directory or a bare repository. Exports preserve its branches, tags and reachable
+history; stashes, reflogs and unreachable objects are excluded. Source and history
+must pass the publication check before export.
 
 Research inputs, generated results, model weights, workspace notes and build
 products are excluded. Git checkouts also exclude ignored files. Without Git,

@@ -147,7 +147,7 @@ def main():
     save('example-result.json',answer)
     verify_factors(example,answer['result'])
     check([(Q(b['lower']),Q(b['upper'])) for b in answer['result']['contrasts'][0]['bounds']]==[(-12,-9),(-3,0),(-10,-2)],
-          'public illustration exact assignment-robust contrasts')
+          'example contrast bounds cover every feasible assignment')
 
     rng = random.Random(20261004)
     for case in range(24):

@@ -165,7 +165,7 @@ def main():
             eligible.update(tracked.stdout.split('\0'))
         files = [path for path in files if path.relative_to(ROOT).as_posix() in eligible]
     elif args.git_dir:
-        raise ValueError('Selected Git metadata cannot enumerate the public worktree')
+            raise ValueError('Selected Git repository cannot enumerate the public source')
     assert all(not path.is_symlink() for path in files), 'Public source symlinks require an explicit export declaration'
     files = sorted(set(files))
     if any(publication.path_findings(path.relative_to(ROOT).as_posix()) or

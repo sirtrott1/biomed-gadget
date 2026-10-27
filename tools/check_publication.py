@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Check source and Git history for material that does not belong in a publication."""
 import argparse
+import ast
+import io
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tokenize
 import zlib
 
 
@@ -12,6 +15,15 @@ LOCAL_PATH = re.compile(rb'/(?:home|Users)/[^/\s"\x27`<>]+/|~/(?:projects|dev)/'
 WORK_NOTES = re.compile(rb'\b(?:worktree|handoff|session [ABC])\b', re.I)
 DEVELOPMENT_REPORT = re.compile(rb'qualification\s+workstation|development\s+host|'
                                 rb'(?:CPU|protocol|planning) qualification (?:on|used)', re.I)
+ATTRIBUTION = re.compile(rb'\b(?:co[d]ex|chat[g]pt|co[- ]?author(?:ed)?(?:[- ]?by)?|signed[- ]?off[- ]?by)\b', re.I)
+PRIVATE_REFERENCE = re.compile(rb'\b(?:internal|private|experiments)[/\\][^\s\x22\x27)`<>]+', re.I)
+DEVELOPMENT_LABEL = re.compile(rb'\b(?:batch|checkpoint|milestone|phase|handoff|session|implementation|review|report)'
+                               rb'\s*(?:[:#/-]\s*)?[A-FQ][0-9]{1,3}\b', re.I)
+PROMOTIONAL = re.compile(rb'\b(?:leverage|delve|seamless(?:ly)?|empower(?:ing)?|supercharg\w*|'
+                         rb'game.chang\w*|world.class|cutting.edge|state.of.the.art|groundbreaking|'
+                         rb'revolutionary|best.in.class|transformative|effortlessly|holistic|synerg\w*|'
+                         rb'harness|foster|comprehensive|elegant|powerful)\b', re.I)
+DIVIDER = re.compile(rb'^[ \t]*(?:(?://|#|/\*|\*|<!--)[ \t]*)?[-=_*]{3,}(?:[ \t].*)?$', re.M)
 PRIVATE_ROOTS = {'internal', 'private', 'research', 'verification', 'migration',
                  'data', 'models', 'results', 'archives', 'releases', 'experiments',
                  'build', 'dist', '.venv', '.rfc-source', '.rfc-download', '.llama-source'}
@@ -20,9 +32,36 @@ GENERATED_SUFFIXES = {'.whl', '.egg', '.o', '.obj', '.a', '.so', '.dylib', '.dll
                       '.h5', '.hdf5', '.h5ad', '.db', '.zip', '.bundle'}
 
 
+def prose(data, name):
+    """Select documentation and comments while preserving technical identifiers."""
+    suffix = Path(name).suffix.lower()
+    if not name or suffix in ('.md', '.rst', '.txt', '.cff'):
+        return data
+    if suffix == '.py':
+        text = data.decode('utf-8', errors='replace')
+        parts = []
+        try:
+            parts.extend(token.string for token in tokenize.generate_tokens(io.StringIO(text).readline)
+                         if token.type == tokenize.COMMENT)
+            tree = ast.parse(text)
+            parts.extend(value for node in ast.walk(tree)
+                         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                         and (value := ast.get_docstring(node)))
+        except (SyntaxError, tokenize.TokenError, IndentationError):
+            parts.extend(re.findall(r'(?m)^\s*#.*$', text))
+        return '\n'.join(parts).encode()
+    if suffix in ('.cpp', '.hpp', '.c', '.h'):
+        tokens = re.findall(rb'"(?:\\.|[^"\\])*"|\x27(?:\\.|[^\x27\\])*\x27|//[^\n]*|/\*.*?\*/',
+                            data, re.S)
+        return b'\n'.join(token for token in tokens if token.startswith((b'//', b'/*')))
+    return b'\n'.join(re.findall(rb'(?m)^\s*#.*$', data))
+
+
 def path_findings(name):
     path = Path(name)
-    if path.parts and path.parts[0] in PRIVATE_ROOTS:
+    if (path.parts and path.parts[0] in PRIVATE_ROOTS or
+            any(part.lower() in {'internal', 'private', 'experiments', 'verification', 'migration'}
+                for part in path.parts)):
         return 1
     if (path.name == 'AGENTS.md' or any(part in ('__pycache__', '.cache', 'build', 'dist', 'CMakeFiles')
                                       or part.endswith(('.native', '.rcdb', '.rcbd', '.egg-info'))
@@ -49,6 +88,17 @@ def content_findings(data, name=''):
             return 1
         return content_findings(expanded, name.removesuffix('.gz'))
     count = int(LOCAL_PATH.search(data) is not None)
+    count += int(ATTRIBUTION.search(data) is not None)
+    text = prose(data, name)
+    # Test source can contain synthetic exclusion inputs. Its comments and
+    # documentation follow the same publication rules as other source files.
+    references = text if name.startswith('tests/') else data
+    if name != '.gitignore':
+        count += int(PRIVATE_REFERENCE.search(references) is not None)
+    count += int(DEVELOPMENT_LABEL.search(text) is not None)
+    count += int(PROMOTIONAL.search(text) is not None)
+    count += int(DIVIDER.search(text) is not None)
+    count += int('\u2014' in text.decode('utf-8', errors='replace'))
     if name.endswith(('.md', '.rst')):
         count += int(DEVELOPMENT_REPORT.search(data) is not None)
     if name in ('NOTICE', 'tools/rcdb/NOTICE'):
@@ -91,7 +141,8 @@ def check(root, git_dir=None, history=False):
         if header[1] == b'blob':
             count += content_findings(data, name.decode())
         elif header[1] == b'commit':
-            message = data.split(b'\n\n', 1)[1]
+            metadata, message = data.split(b'\n\n', 1)
+            count += int(ATTRIBUTION.search(metadata) is not None)
             count += content_findings(message) + int(WORK_NOTES.search(message) is not None)
     reader.stdin.close()
     reader.stdout.close()
