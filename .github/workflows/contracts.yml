@@ -117,9 +117,11 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: .cache/native-wheels
-          key: wheels-${{ runner.os }}-${{ runner.arch }}-${{ steps.abi.outputs.digest }}-${{ needs.checks.outputs.revision }}-${{ needs.checks.outputs.python_revision }}-${{ hashFiles('.github/workflows/contracts.yml') }}
+          key: wheels-${{ runner.os }}-${{ runner.arch }}-${{ steps.abi.outputs.digest }}-${{ needs.checks.outputs.revision }}-${{ needs.checks.outputs.python_revision }}
+          restore-keys: |
+            wheels-${{ runner.os }}-${{ runner.arch }}-${{ steps.abi.outputs.digest }}-${{ needs.checks.outputs.revision }}-${{ needs.checks.outputs.python_revision }}-
       - name: Build native wheels
-        if: steps.wheels.outputs.cache-hit != 'true'
+        if: steps.wheels.outputs.cache-hit == ''
         run: |
           cmake -S .rfc-source -B "$RUNNER_TEMP/native-sdk-build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DRFC_ENABLE_VULKAN=OFF \
@@ -131,9 +133,9 @@ jobs:
           builder="$RUNNER_TEMP/wheel-builder/bin/python"
           wheels="$GITHUB_WORKSPACE/.cache/native-wheels"
           mkdir -p "$wheels"
-          "$builder" -m pip wheel --no-deps --wheel-dir "$wheels" ./.python-source \
+          "$builder" -m pip wheel --verbose --no-deps --wheel-dir "$wheels" ./.python-source \
             --config-settings="compile-args=-j$CMAKE_BUILD_PARALLEL_LEVEL"
-          "$builder" -m pip wheel --no-deps --wheel-dir "$wheels" ./.python-source/bindings/cpp \
+          "$builder" -m pip wheel --verbose --no-deps --wheel-dir "$wheels" ./.python-source/bindings/cpp \
             --config-settings="build.tool-args=-j$CMAKE_BUILD_PARALLEL_LEVEL" \
             --config-settings="cmake.define.CMAKE_PREFIX_PATH=$RUNNER_TEMP/native-sdk"
           "$builder" -m pip wheel --no-deps --wheel-dir "$wheels" \
@@ -147,7 +149,7 @@ jobs:
     needs: checks
     if: needs.checks.outputs.contracts == 'true'
     runs-on: ${{ vars.GADGET_CI_RUNNER || 'ubuntu-24.04' }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ github.event.inputs.test_preset == 'contracts' && 120 || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -269,7 +271,8 @@ jobs:
         run: >-
           tar -C build/presets/cpu -czf "$RUNNER_TEMP/native-consumers.tar.gz"
           gadget gadget_native_field_import gadget_native_field_query gadget_data_field_tests
-          gadget_native_biomedical_fields_tests build-info.json
+          gadget_native_biomedical_fields_tests gadget_result_binding_tests
+          examples/source-formats/gadget_source build-info.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: matrix.compiler == 'g++'
         with:
@@ -337,7 +340,7 @@ jobs:
       - name: Test Python bindings with compiled consumers
         run: >-
           ctest --preset "$CONTRACT_TEST_PRESET" --parallel 2 --output-junit bindings.xml
-          -R '^gadget_(agent|data_(capability|journal|binding|io|workflow|native_program)|python_native_stack)_contracts$'
+          -R '^gadget_(agent|source_native|data_(capability|journal|binding|io|workflow|native_program)|python_native_stack)_contracts$'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

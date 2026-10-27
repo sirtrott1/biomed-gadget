@@ -2,12 +2,15 @@
 
 The workflow runs the `cpu` test profile with GCC and Clang against the independent
 public RexGraphCPP SDK. It enforces the header inventory and revision recorded
-in [RexGraph.lock.cmake](../cmake/RexGraph.lock.cmake).
+in [RexGraph.lock.cmake](../cmake/RexGraph.lock.cmake). Python dependency wheels
+build alongside the compiler suites. Binding checks then use the GCC suite
+binaries, with every native provider checked against the same SDK inventory.
 
 Every push checks CI selection, README links, dependency verification and source
 export. Eligible README changes can reuse a completed compiler qualification
-with identical executable inputs. Missing qualification, other input changes
-and manual dispatch run both compiler suites.
+with identical executable inputs. Reuse requires successful compiler and Python
+binding checks. Missing qualification, other input changes and manual dispatch
+run both compiler suites and the binding checks.
 
 macOS also compiles all configured contracts, including the HTS and local model
 adapters. It checks native CPU and memory observations before compiling the
@@ -28,7 +31,10 @@ revision. Repository variables can select another source or compiler runner:
 | `GADGET_CI_RUNNER` | Runner label for the compiler jobs |
 
 The complete header lock remains enforced when a source override is used.
-No compiled SDK objects are uploaded or cached by this workflow.
+Native dependency wheels are cached by source revision and toolchain. Compiler
+caches are limited to 1 GB for each compiler and validate source, header and
+compiler inputs before reusing an object. C++ consumers are transferred within
+the current run so Python checks do not compile them again.
 
 ## Archive mode
 
@@ -49,6 +55,10 @@ after changing SDK settings to qualify the selected inputs.
 ## Resource use
 
 The workflow checks numerical imports and figure rendering before compilation.
+Linux compiler concurrency respects processor affinity, CPU quotas and available
+host or container memory. The default request is three workers, admitted with
+3 GiB per worker and 1 GiB of additional headroom.
+
 Independent tests run two at a time. Numerical libraries use one thread per
 process. A new push cancels the previous run for the same branch.
 
