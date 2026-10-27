@@ -8,7 +8,7 @@ installation of the complete stack. Run the commands below from the GADGET root.
 ## Requirements
 
 The Linux CPU build needs C++20, CMake 3.24 or newer, Ninja, `pkg-config`, GMP
-with GMPXX, `json-c`, OpenSSL Crypto and threads. Use SDK 0.2.1 with the tested
+with GMPXX, `json-c`, OpenSSL Crypto and threads. Use SDK 0.3.0 with the tested
 revision in [RexGraph.lock.cmake](RexGraph.lock.cmake).
 
 On Debian or Ubuntu:

@@ -69,7 +69,15 @@ def main():
         refuses(build, "rexgraph_cpp._model_storage.model_storage_build_info")
     finally:
         module.model_storage_build_info = original
-    print(f"PASS: {len(report['native_providers'])} native providers and seven mismatch controls")
+    module = importlib.import_module("rexgraph_cpp._source_evolution")
+    original = module.source_evolution_build_info
+    receipt = dict(original(), engine="0" * 64)
+    module.source_evolution_build_info = lambda: receipt
+    try:
+        refuses(build, "rexgraph_cpp._source_evolution.source_evolution_build_info")
+    finally:
+        module.source_evolution_build_info = original
+    print(f"PASS: {len(report['native_providers'])} native providers and eight mismatch controls")
 
 
 if __name__ == "__main__":

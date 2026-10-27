@@ -86,6 +86,10 @@ def check_stack(build, *, services=False):
             if not isinstance(receipt, dict):
                 raise ValueError(f"{name}.{key}: native provider receipt must be a mapping")
             digests = [receipt[k] for k in ("engine_digest", "engine_headers") if k in receipt]
+            engine = receipt.get("engine")
+            if (isinstance(engine, str) and len(engine) == 64
+                    and all(c in "0123456789abcdef" for c in engine)):
+                digests.append(engine)
             if not digests or any(digest != expected for digest in digests):
                 raise ValueError(f"{name}.{key}: Python native SDK differs from GADGET; "
                                  f"expected {expected}, received {digests}")

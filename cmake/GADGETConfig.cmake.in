@@ -1,9 +1,9 @@
 @PACKAGE_INIT@
 include(CMakeFindDependencyMacro)
 if(@GADGET_ENABLE_VULKAN@)
-  find_dependency(RFC 0.2.1 CONFIG COMPONENTS Vulkan)
+  find_dependency(RFC 0.3.0 CONFIG COMPONENTS Vulkan)
 else()
-  find_dependency(RFC 0.2.1 CONFIG)
+  find_dependency(RFC 0.3.0 CONFIG)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/GADGETVerifyRFC.cmake")
 gadget_verify_rfc("${CMAKE_CURRENT_LIST_DIR}/GADGETRFCHeaders.sha256" _gadget_pin_error)

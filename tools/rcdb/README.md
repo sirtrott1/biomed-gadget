@@ -20,7 +20,7 @@ RexGraph packages. From the GADGET root, use that Python environment to install:
 python -m pip install ./tools/rcdb
 ```
 
-Core, RCDB and RCQL 1.3.2 or newer are required. SQLite is the default working
+Core, RCDB and RCQL 1.4.0 or newer are required. SQLite is the default working
 store. HDF5 intake additionally needs `h5py`. Native C++ export needs the
 `rexgraph_cpp` bridge and GADGET's compiled field importer. Agent and System
 are optional services.

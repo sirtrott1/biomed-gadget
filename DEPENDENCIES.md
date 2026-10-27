@@ -35,7 +35,7 @@ packages in the Python repository. The repositories retain separate histories,
 builds and licenses. GADGET does not bundle their source or compiled libraries.
 Core, the C++ SDK and the optional Python bridge publish Apache 2.0 licenses.
 The bridge retains its own
-[license notice](https://github.com/sirtrott1/rexgraph-python/blob/732f822aa367ad161d5131c747b91f69e05ae7a8/bindings/cpp/LICENSE).
+[license notice](https://github.com/sirtrott1/rexgraph-python/blob/c82d330adb6402730d5f8f21f5b5a308569188c4/bindings/cpp/LICENSE).
 
 ## Install from source
 
@@ -44,8 +44,8 @@ are pinned before compilation so the C++ application and Python bridge use the
 same SDK. Existing checkouts can instead use these revisions in separate clones.
 
 ```sh
-git -C ../rexgraph-python checkout --detach 732f822aa367ad161d5131c747b91f69e05ae7a8
-git -C ../rexgraphcpp checkout --detach cc367801df8b2316be9d7930fa4cbcaabed655ad
+git -C ../rexgraph-python checkout --detach c82d330adb6402730d5f8f21f5b5a308569188c4
+git -C ../rexgraphcpp checkout --detach cd551ac26ce6aa8527baf69c0cdb51157ce99cfd
 ```
 
 On Debian or Ubuntu, install the system requirements:
@@ -65,7 +65,7 @@ First install the independent C++ SDK:
 ```sh
 export GADGET_RFC_PREFIX="$PWD/../rexgraph-install"
 cmake -S ../rexgraphcpp -B ../rexgraphcpp/build/sdk -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DRFC_ENABLE_VULKAN=OFF \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DRFC_ENABLE_VULKAN=OFF \
   -DRFC_BUILD_APPS=OFF -DRFC_BUILD_LOCAL_TOOLS=OFF \
   -DRFC_BUILD_TESTS=OFF -DRFC_BUILD_BENCHMARKS=OFF \
   -DRFC_BUILD_CAPABILITY_DEMO=OFF -DRFC_BUILD_LEARNING=OFF
@@ -90,6 +90,10 @@ The repository names do not change the distribution names: Core installs as
 `rexgraph` and the bridge as `rexgraph-cpp-bindings`. The Python repository also
 provides `make install-cpp CPP_SDK_PREFIX=...` for its own selected environment.
 Install Agent or System separately when an application uses those services.
+
+Whole function programs exposed through `rexgraph_temporal` require a separately
+installed RexTemporal SDK. They are an optional extension to the public SDK and
+standard bridge installed above.
 
 Build GADGET against the same SDK prefix:
 
@@ -130,13 +134,9 @@ transport and GPU adapters have separately selected dependencies.
 
 ## Dependency revisions
 
-The source pins are Python
-`5f9f4f9a7934c5c14e3f7344b15c0d8ea4147605`, version 1.3.2, and SDK
-`4d52e37296a31bc6d7e6b43cdf091261e41518d6`, version 0.2.1.
-The complete 470 header inventory has SHA256
-`1e6adda1dec387c54bac9acc513a62806c35991cf593a163f416bb21bd2186a6`.
-The SDK pin is in [cmake/RexGraph.lock.cmake](cmake/RexGraph.lock.cmake);
-`GADGET_ENFORCE_DEPENDENCY_LOCK=ON` requires that inventory.
+The source revisions and complete SDK header inventory are recorded in
+[cmake/RexGraph.lock.cmake](cmake/RexGraph.lock.cmake).
+`GADGET_ENFORCE_DEPENDENCY_LOCK=ON` requires that header inventory.
 
 Retained model records keep their original engine identities. Preserve their
 original runtimes. Installing a newer bridge does not certify an old model for

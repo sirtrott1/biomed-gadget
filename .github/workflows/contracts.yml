@@ -61,7 +61,7 @@ jobs:
     needs: checks
     if: needs.checks.outputs.contracts == 'true'
     runs-on: ${{ vars.GADGET_CI_RUNNER || 'ubuntu-24.04' }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -148,18 +148,34 @@ jobs:
                       raise ValueError('SDK archive contains a symbolic link')
               archive.extractall(target)
           PY
-      - name: Install the independent Python stack and Agent adapter
+      - name: Install the independent Python stack and native bridge
         if: matrix.compiler == 'g++'
         env:
           REXGRAPH_PYTHON_REVISION: ${{ steps.sdk.outputs.python_revision }}
         run: |
+          sdk_root="$RUNNER_TEMP/sdk/rexgraph-cpp/rexgraphcpp"
+          if test -d .rfc-source; then
+            sdk_root="$GITHUB_WORKSPACE/.rfc-source"
+          fi
+          if ! test -f "$sdk_root/lib/cmake/RFC/RFCConfig.cmake"; then
+            cmake -S "$sdk_root" -B "$RUNNER_TEMP/native-sdk-build" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DRFC_ENABLE_VULKAN=OFF \
+              -DRFC_BUILD_APPS=OFF -DRFC_BUILD_LOCAL_TOOLS=OFF -DRFC_BUILD_TESTS=OFF \
+              -DRFC_BUILD_BENCHMARKS=OFF -DRFC_BUILD_LEARNING=OFF -DRFC_BUILD_CAPABILITY_DEMO=OFF
+            cmake --build "$RUNNER_TEMP/native-sdk-build" --parallel 1
+            cmake --install "$RUNNER_TEMP/native-sdk-build" --prefix "$RUNNER_TEMP/native-sdk"
+            sdk_root="$RUNNER_TEMP/native-sdk"
+          fi
+          printf 'GADGET_NATIVE_SDK_PREFIX=%s\n' "$sdk_root" >> "$GITHUB_ENV"
           git clone --filter=blob:none --no-checkout https://github.com/sirtrott1/rexgraph-python.git "$RUNNER_TEMP/rexgraph-python"
           git -C "$RUNNER_TEMP/rexgraph-python" checkout --detach "$REXGRAPH_PYTHON_REVISION"
           python3 -m venv "$RUNNER_TEMP/gadget-agent"
           "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install --upgrade pip
           "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install --config-settings=compile-args=-j1 "$RUNNER_TEMP/rexgraph-python"
-          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install "$RUNNER_TEMP/rexgraph-python/rcdb" "$RUNNER_TEMP/rexgraph-python/rcql"
-          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install "$RUNNER_TEMP/rexgraph-python/agent" './tools/rcdb[agent]' pytest
+          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install "$RUNNER_TEMP/rexgraph-python/rcdb[sql]" "$RUNNER_TEMP/rexgraph-python/rcql"
+          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install "$RUNNER_TEMP/rexgraph-python/bindings/cpp" \
+            --config-settings="cmake.define.CMAKE_PREFIX_PATH=$sdk_root"
+          "$RUNNER_TEMP/gadget-agent/bin/python" -m pip install "$RUNNER_TEMP/rexgraph-python/agent" './tools/rcdb[agent,native]' pytest h5py
           "$RUNNER_TEMP/gadget-agent/bin/python" -m pip check
       - name: Configure
         id: configure
@@ -171,11 +187,17 @@ jobs:
           if test -d .rfc-source; then
             sdk_root="$GITHUB_WORKSPACE/.rfc-source"
           fi
+          if test -n "${GADGET_NATIVE_SDK_PREFIX:-}"; then
+            sdk_root="$GADGET_NATIVE_SDK_PREFIX"
+          fi
           sdk_root="$(realpath -e "$sdk_root")"
           printf 'sdk_root=%s\n' "$sdk_root" >> "$GITHUB_OUTPUT"
           agent_options=()
           if test "$CXX" = 'g++'; then
-            agent_options=(-DGADGET_TEST_AGENT=ON "-DGADGET_AGENT_PYTHON_EXECUTABLE=$RUNNER_TEMP/gadget-agent/bin/python")
+            agent_options=(-DGADGET_TEST_AGENT=ON -DGADGET_TEST_DATA_PYTHON=ON
+              -DGADGET_TEST_NATIVE_PYTHON=ON -DGADGET_TEST_NATIVE_MODELS=ON
+              -DGADGET_TEST_TEMPORAL_PYTHON=OFF
+              "-DGADGET_AGENT_PYTHON_EXECUTABLE=$RUNNER_TEMP/gadget-agent/bin/python")
           fi
           if test -f "$sdk_root/lib/cmake/RFC/RFCConfig.cmake"; then
             cmake --preset contracts -DGADGET_USE_INSTALLED_RFC=ON -DCMAKE_PREFIX_PATH="$sdk_root" -DGADGET_ENFORCE_DEPENDENCY_LOCK=ON -DPython3_EXECUTABLE=/usr/bin/python3 -DGADGET_COMPILE_JOBS="$CMAKE_BUILD_PARALLEL_LEVEL" "${agent_options[@]}"

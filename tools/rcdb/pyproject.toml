@@ -8,13 +8,13 @@ version = "0.2.0"
 description = "Native dataset I/O and RexGraph storage integration for GADGET"
 readme = "DATA.md"
 requires-python = ">=3.11"
-dependencies = ["numpy>=2", "SQLAlchemy>=2", "rexgraph>=1.3.2", "rexgraph-rcdb>=1.3.2", "rexgraph-rcql>=1.3.2"]
+dependencies = ["numpy>=2", "SQLAlchemy>=2", "rexgraph>=1.4.0", "rexgraph-rcdb>=1.4.0", "rexgraph-rcql>=1.4.0"]
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 
 [project.optional-dependencies]
-native = ["rexgraph-cpp-bindings>=0.1.0"]
-agent = ["rexgraph-agent>=1.3.2", "httpx>=0.27"]
+native = ["rexgraph-cpp-bindings>=0.2.0"]
+agent = ["rexgraph-agent>=1.4.0", "httpx>=0.27"]
 
 [project.scripts]
 gadget-data = "gadget_data.cli:main"

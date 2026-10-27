@@ -1,14 +1,11 @@
-"""Retain exact transport families, function programs and parameter domains."""
-from fractions import Fraction as Q
+"""Retain exact transport families and original parameter domains."""
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools/rcdb"))
-from gadget_data import (DataStore, DataWriter, NativeBindings, capture_program, record_link,
-                         replay_program, native_owner)
-from gadget_data._records import graph
+from gadget_data import (DataStore, DataWriter, NativeBindings, record_link, native_owner)
 
 
 class NativePrograms(unittest.TestCase):
@@ -17,40 +14,41 @@ class NativePrograms(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.addCleanup(self.directory.cleanup)
 
-    def test_whole_function_derivative_and_structural_revision_replay(self):
-        from rcql import (TemporalModel, Program, ProgramInput, ProgramStep, OutputRef,
-                          Executor, parse, BoundSource, SourcePolicy)
-        model = TemporalModel.create(81).declare("coordinate",
-            {"name": "time", "clock": "event", "unit": "seconds", "origin": "zero"})
-        coordinate = model.selected
-        model = model.declare("function", {"coordinate": coordinate, "pieces": ({"numerator": (1, 2, 3)},)})
-        function = model.selected
-        model = model.declare("program", {"opcode": "input"})
-        input_program = model.selected
-        model = model.declare("program", {"opcode": "derivative", "operands": (input_program,)})
-        derivative = model.selected
-        with DataWriter(self.root / "owners", name="owners") as writer:
-            ref = writer.native("context", graph("context", ("original",)))
+    def test_source_revision_retains_fields_and_original_parent(self):
+        from rexgraph_cpp import NativeSource, NativeSourceEvolution
+        source = NativeSource.from_declaration({"profile": "declared-role-source-v1",
+            "namespace": 881, "semantic_scale": 0, "max_grade": 1,
+            "role_aspects": ("boundary",),
+            "types": ({"name": "original", "min_arity": 0, "max_arity": 3},),
+            "witnesses": (10, 20), "relations": ({"grade": 1, "key": 7, "type": 0,
+                "occurrences": (
+                    {"key": 1, "lower": 10, "exists": True, "negative": True,
+                     "magnitude": 1, "aspects": (0,)},
+                    {"key": 2, "lower": 20, "exists": False, "negative": False,
+                     "magnitude": 0, "aspects": ()})},),
+            "carriers": ({"key": 20, "kind": "source_grade", "grade": 0,
+                          "coordinates": 0, "size": 2},),
+            "fields": ({"key": 21, "carrier": 20, "entries": ((0, 3), (1, 0)),
+                        "support": (0, 1)},), "metrics": ()})
+        original = source.archive
+        original_snapshot = source.at(0).archive
+        child = NativeSourceEvolution(original).add_declarations({
+            "profile": "source-signature-additions-v1", "aspects": (),
+            "types": ({"name": "future", "min_arity": 0, "max_arity": 4},)}).source()
+        with DataWriter(self.root / "parent", name="parent") as writer:
+            parent_ref = writer.native("source", source)
             writer.finish()
-        program = Program("whole_function", (ProgramStep("function",
-            parse("FROM $source RETURN FUNCTION_APPLY($model,$operation,$inputs)")),),
-            tuple(ProgramInput(name) for name in ("model", "operation", "inputs")),
-            (("function", OutputRef("function")),))
-        parameters = {"model": model, "operation": derivative, "inputs": {1: function}}
-        with DataStore(self.root / "owners") as owners:
-            sources = {"source": BoundSource(owners.native(ref), SourcePolicy.allow("read", "identity"))}
-            capture_program(program, self.root / "execution", sources=sources, parameters=parameters,
-                            contributors=((owners, ref),))
-            result, = replay_program(self.root / "execution", sources=sources, parameters=parameters,
-                                     datasets=(owners,)).values
-            self.assertEqual(result.value(Q(1, 2)), 5)
-            self.assertEqual(result.value(2), 14)
-            revised = model.revise_program(derivative, {"opcode": "multiply",
-                "operands": (input_program, input_program)})
-            parameters = dict(parameters, model=revised, operation=revised.selected)
-            actual, = Executor(sources=sources, params=parameters).execute_program(program).values
-            self.assertEqual(actual.value(2), 289)
-            self.assertEqual(result.value(2), 14)
+        with DataStore(self.root / "parent") as parent:
+            with DataWriter(self.root / "child", name="child") as writer:
+                child_ref = writer.native("source", child,
+                    dependencies=(record_link(parent, parent_ref),))
+                writer.finish()
+            with DataStore(self.root / "child") as stored:
+                bound = NativeBindings().bind("source", stored, child_ref, dependencies=(parent,))
+                self.assertEqual(bound.value.field(21).values, (3, 0))
+                self.assertEqual(bound.value.field(21).support, (0, 1))
+                self.assertEqual(bound.value.at(0).archive, original_snapshot)
+                self.assertEqual(parent.native(parent_ref).archive, original)
 
     def test_parameter_rank_and_original_denominator_hole_survive_retention(self):
         from rcql import CWorkflow
